@@ -3,35 +3,56 @@
  * Handles API provider, keys, custom prompt, and theme persistence.
  */
 
+const memStorage = {};
+
+function safeGet(key, def = '') {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key) ?? def;
+    }
+  } catch (e) {}
+  return memStorage[key] ?? def;
+}
+
+function safeSet(key, val) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, val);
+      return;
+    }
+  } catch (e) {}
+  memStorage[key] = String(val);
+}
+
 export class StorageService {
   static getProvider() {
-    return localStorage.getItem('ce_tool_provider') || localStorage.getItem('chunklingo_provider') || 'gemini';
+    return safeGet('ce_tool_provider') || safeGet('chunklingo_provider') || 'gemini';
   }
 
   static getApiKey() {
-    return localStorage.getItem('ce_tool_api_key') || localStorage.getItem('chunklingo_api_key') || '';
+    return safeGet('ce_tool_api_key') || safeGet('chunklingo_api_key') || '';
   }
 
   static getCustomPrompt() {
-    return localStorage.getItem('ce_tool_prompt') || localStorage.getItem('chunklingo_prompt') || '';
+    return safeGet('ce_tool_prompt') || safeGet('chunklingo_prompt') || '';
   }
 
   static saveApiSettings(provider, apiKey, customPrompt) {
-    localStorage.setItem('ce_tool_provider', provider);
-    localStorage.setItem('ce_tool_api_key', apiKey);
-    localStorage.setItem('ce_tool_prompt', customPrompt);
+    safeSet('ce_tool_provider', provider);
+    safeSet('ce_tool_api_key', apiKey);
+    safeSet('ce_tool_prompt', customPrompt);
     // Backward compatibility
-    localStorage.setItem('chunklingo_provider', provider);
-    localStorage.setItem('chunklingo_api_key', apiKey);
-    localStorage.setItem('chunklingo_prompt', customPrompt);
+    safeSet('chunklingo_provider', provider);
+    safeSet('chunklingo_api_key', apiKey);
+    safeSet('chunklingo_prompt', customPrompt);
   }
 
   static getTheme() {
-    return localStorage.getItem('ce_tool_theme') || localStorage.getItem('chunklingo_theme') || 'dark';
+    return safeGet('ce_tool_theme') || safeGet('chunklingo_theme') || 'dark';
   }
 
   static saveTheme(theme) {
-    localStorage.setItem('ce_tool_theme', theme);
-    localStorage.setItem('chunklingo_theme', theme);
+    safeSet('ce_tool_theme', theme);
+    safeSet('chunklingo_theme', theme);
   }
 }

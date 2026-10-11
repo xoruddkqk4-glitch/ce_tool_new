@@ -3,14 +3,7 @@
  * Operates offline without external API dependencies.
  */
 
-import {
-  PRESETS,
-  PREPOSITIONS,
-  ADVERBS,
-  DICTIONARY,
-  VERB_MAP,
-  PRONOUNS
-} from '../config/fels-dict.js';
+import { PRESETS, PREPOSITIONS, ADVERBS, DICTIONARY, VERB_MAP, PRONOUNS } from '../config/fels-dict.js';
 
 export class RuleChunkEngine {
   constructor() {}

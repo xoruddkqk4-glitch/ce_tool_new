@@ -3,8 +3,39 @@
  * Accurately splits text into individual sentences while preserving abbreviations, decimals, and honorifics.
  */
 
-export function splitIntoSentences(text) {
+/**
+ * Detects whether a string is primarily Korean (Hangul instructions or Korean questions)
+ */
+export function isKoreanSentence(text) {
+  if (!text) return true;
+  const hangul = (text.match(/[가-힣]/g) || []).length;
+  const latin = (text.match(/[a-zA-Z]/g) || []).length;
+  // If no Latin letters at all, it's definitely not an English practice sentence
+  if (latin === 0) return true;
+  // If Hangul characters outnumber Latin letters, it's a Korean sentence
+  if (hangul > latin) return true;
+  return false;
+}
+
+/**
+ * Strips Korean question prefixes (e.g. '1번. 남: ') and inline Korean annotations
+ * to preserve a clean English practice sentence.
+ */
+export function cleanPracticeSentence(text) {
+  if (!text) return '';
+  // Strip leading question/speaker indicators like '1번. 남:', '여:', 'W:', 'M:', '[남]'
+  let cleaned = text.replace(/^[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/i, '').trim();
+  // Strip inline Korean parentheticals e.g. '(해설)', '[안내]'
+  cleaned = cleaned.replace(/\([가-힣\s,.:~]+\)/g, '');
+  cleaned = cleaned.replace(/\[[가-힣\s,.:~]+\]/g, '');
+  // Strip any stray Korean words from inside the English practice sentence
+  cleaned = cleaned.replace(/[가-힣]+/g, '');
+  return cleaned.replace(/\s{2,}/g, ' ').trim();
+}
+
+export function splitIntoSentences(text, options = {}) {
   if (!text) return [];
+  const filterKorean = options.filterKorean !== false;
   const abbreviations = ['mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'vs', 'etc', 'eg', 'ie', 'u.s', 'e.g', 'i.e'];
   let processed = text.replace(/\.{2,}/g, '__ELLIPSIS__');
   processed = processed.replace(/(\d+)\.(\d+)/g, '$1__DECIMAL_DOT__$2');
@@ -15,7 +46,9 @@ export function splitIntoSentences(text) {
   const parts = processed.split(/(?<=[.?!])\s+|\n+/);
   return parts
     .map(p => p.replace(/__ELLIPSIS__/g, '...').replace(/__DECIMAL_DOT__/g, '.').replace(/__ABBR_DOT__/g, '.').trim())
-    .filter(Boolean);
+    .map(p => cleanPracticeSentence(p))
+    .filter(Boolean)
+    .filter(p => !filterKorean || !isKoreanSentence(p));
 }
 
 /**

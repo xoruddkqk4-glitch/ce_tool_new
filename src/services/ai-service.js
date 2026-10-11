@@ -153,6 +153,92 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
   }
 
   /**
+   * Fast, reliable natural Korean translation with AI fallback to free Google Translate endpoint
+   */
+  async translateNatural(text) {
+    if (!text || !text.trim()) return '';
+    // If user has AI key configured, attempt full AI translate
+    if (this.hasKey()) {
+      try {
+        const res = await this.translate(text);
+        if (res && res.natural) return res.natural;
+      } catch (e) {
+        console.warn('AI translation failed, trying free translate:', e);
+      }
+    }
+
+    // Free high-quality Google Translate endpoint
+    try {
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(text.trim())}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          return data[0].map(item => item[0]).join('').trim();
+        }
+      }
+    } catch (e) {
+      console.warn('Public translation endpoint error:', e);
+    }
+
+    return null;
+  }
+
+  /**
+   * AI-powered Audio & Script Forced Alignment using Gemini Multimodal Audio
+   */
+  async alignAudioWithScript(base64Audio, mimeType, sentences) {
+    if (!this.hasKey() || this.provider !== 'gemini' || !base64Audio) {
+      return null;
+    }
+
+    const prompt = `Listen to this English audio carefully.
+We have the following exact English sentences in order:
+${sentences.map((s, idx) => `[S${idx + 1}] "${s}"`).join('\n')}
+
+For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this sentence in the audio.
+Ignore introductory chimes, directions, or non-English announcements at the beginning.
+
+Respond ONLY with valid JSON:
+{
+  "alignments": [
+    { "sentence_index": 0, "start": 3.2, "end": 7.5 }
+  ]
+}`;
+
+    try {
+      const payload = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: mimeType || 'audio/mp3',
+                  data: base64Audio
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json'
+        }
+      };
+
+      const result = await this.postToGemini(payload);
+      if (result && Array.isArray(result.alignments)) {
+        return result.alignments;
+      }
+    } catch (err) {
+      console.warn('Gemini audio-script alignment failed:', err);
+    }
+    return null;
+  }
+
+  /**
    * Transcribe Audio and generate 3x1 translation simultaneously using Gemini Multimodal Audio
    */
   async transcribeAndTranslateAudio(base64Audio, mimeType) {

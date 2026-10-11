@@ -12,7 +12,7 @@
  */
 
 import { appState } from '../core/app-state.js';
-import { splitIntoSentences, distributeChunksSequentially } from '../core/text-splitter.js';
+import { splitIntoSentences, distributeChunksSequentially, cleanPracticeSentence } from '../core/text-splitter.js';
 import { aiService } from '../services/ai-service.js';
 import { RuleChunkEngine } from '../core/rule-chunk-engine.js';
 import { decodeAudioFile, getAudioContext } from '../audio/audio-context.js';
@@ -44,6 +44,7 @@ export class InputView {
     this.parsedResultsSection = document.getElementById('parsedResultsSection');
     this.parsedSentenceList = document.getElementById('parsedSentenceList');
     this.resultsCountBadge = document.getElementById('resultsCountBadge');
+    this.btnAutoSyncAudio = document.getElementById('btnAutoSyncAudio');
     this.btnPrintHandout = document.getElementById('btnPrintHandout');
     this.btnStartPractice = document.getElementById('btnStartPractice');
     this.btnHeaderStartPractice = document.getElementById('btnHeaderStartPractice');
@@ -161,6 +162,11 @@ export class InputView {
     // Translate Trigger
     if (this.btnTranslate) {
       this.btnTranslate.addEventListener('click', () => this.handleTranslate());
+    }
+
+    // Auto Audio-Script Sync Trigger
+    if (this.btnAutoSyncAudio) {
+      this.btnAutoSyncAudio.addEventListener('click', () => this.autoSyncAudioScript());
     }
 
     // Handout Modal Triggers
@@ -417,31 +423,295 @@ export class InputView {
         }
       }
 
-      // Sentence splitting
-      let rawSentences = splitIntoSentences(text);
-      if (rawSentences.length === 0) rawSentences.push(text);
+      // Sentence splitting - strictly exclude Korean sentences from practice drill
+      let rawSentences = splitIntoSentences(text, { filterKorean: true });
+      if (rawSentences.length === 0) rawSentences.push(cleanPracticeSentence(text) || text);
 
-      const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      let boundaries = null;
+      // If authentic MP3 uploaded and Gemini key available, attempt AI audio-script alignment
+      if (appState.uploadedAudioFile && !appState.isSynthesizedAudio && aiService.hasKey() && aiService.provider === 'gemini') {
+        try {
+          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
+          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
+          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
+          if (alignments && alignments.length === rawSentences.length) {
+            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
+          }
+        } catch (alignErr) {
+          console.warn('AI audio alignment fallback:', alignErr);
+        }
+      }
 
-      const sentenceList = rawSentences.map((stnText, idx) => ({
-        index: idx,
-        text: stnText,
-        audioStart: boundaries[idx]?.start ?? null,
-        audioEnd: boundaries[idx]?.end ?? null,
-        result: this.ruleEngine.process(stnText)
-      }));
+      if (!boundaries) {
+        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      }
+
+      // Parallel fetch natural Korean translation for all sentences
+      const naturalTranslations = await Promise.all(
+        rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
+      );
+
+      const sentenceList = rawSentences.map((stnText, idx) => {
+        const res = this.ruleEngine.process(stnText);
+        if (naturalTranslations[idx]) {
+          res.natural = naturalTranslations[idx];
+        }
+        return {
+          index: idx,
+          text: stnText,
+          audioStart: boundaries[idx]?.start ?? null,
+          audioEnd: boundaries[idx]?.end ?? null,
+          result: res
+        };
+      });
 
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
 
       // Render Results Panel on Page 1
       this.renderParsedResults();
-      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 청크 분석 완료! 아래에서 검토 및 수정할 수 있습니다.`);
+      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 청크 분석 완료! 아래에서 검토 및 수정할 수 있습니다.`);
     } catch (err) {
       console.error('Translation error:', err);
       toast.show(`❌ 오류: ${err.message}`);
     } finally {
       this.setLoading(false);
+    }
+  }
+
+  /**
+   * One-click Audio and Script Auto Sync
+   */
+  async autoSyncAudioScript() {
+    if (!appState.uploadedAudioFile || !appState.sentenceList || appState.sentenceList.length === 0) {
+      toast.show('⚠️ 먼저 MP3 음성 파일과 스크립트를 입력해주세요.');
+      return;
+    }
+
+    toast.show('⚡ 음성과 스크립트 자동 Sync 계산 중...');
+    try {
+      const rawSentences = appState.sentenceList.map(s => s.text);
+      let boundaries = null;
+
+      if (aiService.hasKey() && aiService.provider === 'gemini' && !appState.isSynthesizedAudio) {
+        try {
+          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
+          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
+          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
+          if (alignments && alignments.length === rawSentences.length) {
+            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
+          }
+        } catch (aiErr) {
+          console.warn('AI audio alignment fallback:', aiErr);
+        }
+      }
+
+      if (!boundaries) {
+        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      }
+
+      if (boundaries && boundaries.length === appState.sentenceList.length) {
+        appState.sentenceList.forEach((stn, i) => {
+          stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
+          stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
+          stn.cachedPeaks = null;
+        });
+        this.renderParsedResults();
+        toast.show('✨ 음성-스크립트 자동 Sync 완료! 문장별 재생 구간이 최적화되었습니다.');
+      }
+    } catch (err) {
+      console.error('Auto sync error:', err);
+      toast.show(`❌ 자동 Sync 오류: ${err.message}`);
+    }
+  }
+
+  /**
+   * Merge sentence with previous sentence
+   */
+  mergeWithPreviousSentence(idx) {
+    if (idx <= 0 || !appState.sentenceList || idx >= appState.sentenceList.length) return;
+    const prev = appState.sentenceList[idx - 1];
+    const cur = appState.sentenceList[idx];
+
+    const mergedText = `${prev.text} ${cur.text}`.trim();
+    const mergedStart = prev.audioStart !== null ? prev.audioStart : cur.audioStart;
+    const mergedEnd = cur.audioEnd !== null ? cur.audioEnd : prev.audioEnd;
+    const mergedChunks = [...(prev.result?.chunks || []), ...(cur.result?.chunks || [])];
+    const mergedNatural = `${prev.result?.natural || ''} ${cur.result?.natural || ''}`.trim();
+
+    prev.text = mergedText;
+    prev.audioStart = mergedStart;
+    prev.audioEnd = mergedEnd;
+    prev.result = {
+      ...(prev.result || {}),
+      chunks: mergedChunks,
+      natural: mergedNatural,
+      chunk_text: mergedChunks.map(c => c.ko).join(' || '),
+      direct: mergedChunks.map(c => c.ko).join(' / ')
+    };
+    prev.cachedPeaks = null;
+
+    appState.sentenceList.splice(idx, 1);
+    appState.sentenceList.forEach((s, i) => { s.index = i; });
+    appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+
+    this.renderParsedResults();
+    toast.show(`🔗 문장 S${idx}와 S${idx + 1}이 하나로 결합되었습니다.`);
+
+    aiService.translateNatural(mergedText).then(natural => {
+      if (natural) {
+        prev.result.natural = natural;
+        const naturalInput = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .sentence-natural-input`);
+        if (naturalInput) naturalInput.value = natural;
+      }
+    }).catch(() => {});
+  }
+
+  /**
+   * Split sentence into two sentences at given word index
+   */
+  splitSentence(idx, splitWordIndex) {
+    if (!appState.sentenceList || idx < 0 || idx >= appState.sentenceList.length) return;
+    const cur = appState.sentenceList[idx];
+    const words = (cur.text || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length <= 1 || splitWordIndex < 0 || splitWordIndex >= words.length - 1) {
+      toast.show('⚠️ 분리할 위치를 올바르게 선택하세요.');
+      return;
+    }
+
+    const wordsPart1 = words.slice(0, splitWordIndex + 1);
+    const wordsPart2 = words.slice(splitWordIndex + 1);
+
+    let text1 = wordsPart1.join(' ').trim();
+    let text2 = wordsPart2.join(' ').trim();
+
+    if (!/[.!?]$/.test(text1) && /[.!?]$/.test(cur.text)) {
+      text1 += '.';
+    }
+
+    const totalDuration = (cur.audioStart !== null && cur.audioEnd !== null)
+      ? Math.max(0.6, cur.audioEnd - cur.audioStart)
+      : null;
+    let part1Start = cur.audioStart;
+    let part1End = null;
+    let part2Start = null;
+    let part2End = cur.audioEnd;
+
+    if (totalDuration !== null) {
+      const fraction1 = wordsPart1.length / words.length;
+      const splitTime = Math.round((cur.audioStart + totalDuration * fraction1) * 10) / 10;
+      part1End = splitTime;
+      part2Start = splitTime;
+    }
+
+    const res1 = this.ruleEngine.process(text1);
+    const res2 = this.ruleEngine.process(text2);
+
+    const newStn1 = {
+      index: idx,
+      text: text1,
+      audioStart: part1Start,
+      audioEnd: part1End,
+      result: res1
+    };
+
+    const newStn2 = {
+      index: idx + 1,
+      text: text2,
+      audioStart: part2Start,
+      audioEnd: part2End,
+      result: res2
+    };
+
+    appState.sentenceList.splice(idx, 1, newStn1, newStn2);
+    appState.sentenceList.forEach((s, i) => { s.index = i; });
+    appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+
+    this.renderParsedResults();
+    toast.show(`✂️ 문장이 S${idx + 1}과 S${idx + 2}로 분리되었습니다.`);
+
+    Promise.all([
+      aiService.translateNatural(text1),
+      aiService.translateNatural(text2)
+    ]).then(([nat1, nat2]) => {
+      if (nat1) {
+        newStn1.result.natural = nat1;
+        const inp1 = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"] .sentence-natural-input`);
+        if (inp1) inp1.value = nat1;
+      }
+      if (nat2) {
+        newStn2.result.natural = nat2;
+        const inp2 = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx + 1}"] .sentence-natural-input`);
+        if (inp2) inp2.value = nat2;
+      }
+    }).catch(() => {});
+  }
+
+  /**
+   * Toggle inline interactive sentence split bar
+   */
+  toggleSplitBar(itemCard, stn, idx) {
+    const splitBar = itemCard.querySelector('.sentence-split-bar');
+    if (!splitBar) return;
+
+    if (!splitBar.classList.contains('hidden')) {
+      splitBar.classList.add('hidden');
+      return;
+    }
+
+    const words = (stn.text || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length <= 1) {
+      toast.show('⚠️ 1개 단어로 된 문장은 더 이상 분리할 수 없습니다.');
+      return;
+    }
+
+    const container = splitBar.querySelector('.split-words-container');
+    container.innerHTML = '';
+
+    words.forEach((w, wIdx) => {
+      if (wIdx < words.length - 1) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'split-word-chip';
+        chip.innerHTML = `<span class="split-chip-word">${this.escapeHtml(w)}</span><span class="split-chip-cue">✂️ 여기서 분리</span>`;
+        chip.title = `'${w}' 뒤에서 문장 분리`;
+        chip.addEventListener('click', () => {
+          this.splitSentence(idx, wIdx);
+        });
+        container.appendChild(chip);
+      } else {
+        const lastWord = document.createElement('span');
+        lastWord.className = 'split-last-word';
+        lastWord.textContent = w;
+        container.appendChild(lastWord);
+      }
+    });
+
+    const btnCancel = splitBar.querySelector('.btn-cancel-split');
+    if (btnCancel) {
+      btnCancel.onclick = () => splitBar.classList.add('hidden');
+    }
+
+    splitBar.classList.remove('hidden');
+  }
+
+  /**
+   * Re-fetch natural translation for single sentence
+   */
+  async retranslateSentence(stn, naturalInput) {
+    toast.show('🤖 우리말 자연스러운 해석 가져오는 중...');
+    try {
+      const natural = await aiService.translateNatural(stn.text);
+      if (natural) {
+        if (!stn.result) stn.result = {};
+        stn.result.natural = natural;
+        if (naturalInput) naturalInput.value = natural;
+        toast.show('✨ 자연스러운 해석이 업데이트되었습니다!');
+      } else {
+        toast.show('⚠️ 번역 결과를 가져오지 못했습니다.');
+      }
+    } catch (e) {
+      toast.show(`❌ 재해석 실패: ${e.message}`);
     }
   }
 
@@ -478,38 +748,68 @@ export class InputView {
         <div class="sentence-item-header">
           <div class="stn-header-meta">
             <span class="stn-badge-pill">문장 ${idx + 1} (S${idx + 1})</span>
-            ${hasAudioTime ? `<span class="stn-audio-time">⏱ ${timeStr}</span>` : ''}
+            ${hasAudioTime ? `<span class="stn-audio-time" title="클릭하여 오디오 구간 수정">⏱ ${timeStr}</span>` : ''}
           </div>
-          <button class="stn-speak-btn" type="button" title="문장 음성 듣기">
-            <span>🔊 문장 듣기</span>
-          </button>
+          <div class="stn-header-btn-group">
+            <button class="stn-speak-btn" type="button" title="문장 음성 듣기">
+              <span>🔊 문장 듣기</span>
+            </button>
+            ${idx > 0 ? `
+            <button class="stn-merge-btn" type="button" title="이전 문장(S${idx})과 합치기">
+              <span>🔗 이전 문장과 결합</span>
+            </button>
+            ` : ''}
+            <button class="stn-split-btn" type="button" title="이 문장을 두 개로 분리하기">
+              <span>✂️ 문장 분리</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline Sentence Split Picker Bar -->
+        <div class="sentence-split-bar hidden">
+          <div class="split-bar-header">
+            <span>✂️ <strong>문장 분리:</strong> 분리할 기준 단어를 클릭하세요 (선택 단어 뒤에서 새로운 문장으로 분리):</span>
+            <button type="button" class="btn-cancel-split icon-btn" title="취소">✕</button>
+          </div>
+          <div class="split-words-container"></div>
         </div>
 
         <!-- Interactive Clickable Word-Divider Track -->
         <div class="word-divider-track"></div>
 
-        <!-- Editable Fields Grid -->
+        <!-- Strict 2x2 Editable Fields Grid -->
         <div class="sentence-edit-grid">
-          <div class="sentence-edit-field full-width-field">
-            <label class="edit-field-label">
-              <span>📝 영어 문장 원문 (Script):</span>
-              <span style="font-weight: 400; opacity: 0.7;">오탈자나 단어를 직접 수정하면 청크 분석 및 음성이 즉시 동기화됩니다</span>
-            </label>
-            <input type="text" class="sentence-script-input" value="${this.escapeHtml(stn.text || '')}">
-          </div>
+          <!-- Row 1, Col 1: 영어 문장 원문 -->
           <div class="sentence-edit-field">
             <label class="edit-field-label">
-              <span>✂️ 청크 구분(||) 텍스트 편집:</span>
-              <span style="font-weight: 400; opacity: 0.7;">단어 사이에 '||'를 직접 입력하거나 위 구분자를 클릭하세요</span>
+              <span>📝 영어 문장 원문 (Script):</span>
             </label>
-            <input type="text" class="chunk-text-input" value="${this.escapeHtml(this.getChunkString(stn.result.chunks))}">
+            <input type="text" class="sentence-script-input" value="${this.escapeHtml(stn.text || '')}" placeholder="영어 문장 원문">
           </div>
+
+          <!-- Row 1, Col 2: 우리말 해석 -->
           <div class="sentence-edit-field">
             <label class="edit-field-label">
               <span>✍️ 우리말 자연스러운 해석:</span>
-              <span style="font-weight: 400; opacity: 0.7;">학생 학습지 및 카드 뒷면에 반영됩니다</span>
+              <button type="button" class="btn-retranslate" title="자연스러운 해석 다시 가져오기">🔄 재해석</button>
             </label>
-            <input type="text" class="sentence-natural-input" value="${this.escapeHtml(stn.result.natural || '')}">
+            <input type="text" class="sentence-natural-input" value="${this.escapeHtml(stn.result?.natural || '')}" placeholder="자연스러운 우리말 해석">
+          </div>
+
+          <!-- Row 2, Col 1: 청크 구분 영어 문장 -->
+          <div class="sentence-edit-field">
+            <label class="edit-field-label">
+              <span>✂️ 청크 구분(||) 영어 문장:</span>
+            </label>
+            <input type="text" class="chunk-text-input" value="${this.escapeHtml(this.getChunkString(stn.result?.chunks))}" placeholder="단어 사이에 || 입력">
+          </div>
+
+          <!-- Row 2, Col 2: 직독직해 (순차 해석) -->
+          <div class="sentence-edit-field">
+            <label class="edit-field-label">
+              <span>🧩 직독직해 (순차 해석):</span>
+            </label>
+            <input type="text" class="chunk-direct-input" value="${this.escapeHtml(this.getDirectChunkString(stn.result?.chunks))}" placeholder="청크별 순차 해석 (|| 로 구분)">
           </div>
         </div>
       `;
@@ -522,43 +822,103 @@ export class InputView {
         });
       }
 
-      // 2. Render Interactive Word-Divider Track
-      const track = itemCard.querySelector('.word-divider-track');
-      const scriptInput = itemCard.querySelector('.sentence-script-input');
-      const chunkInput = itemCard.querySelector('.chunk-text-input');
-      const naturalInput = itemCard.querySelector('.sentence-natural-input');
-
-      if (track) {
-        this.renderWordDividerTrack(track, stn, chunkInput);
+      // 2. Hook up Merge button (if idx > 0)
+      const mergeBtn = itemCard.querySelector('.stn-merge-btn');
+      if (mergeBtn) {
+        mergeBtn.addEventListener('click', () => {
+          this.mergeWithPreviousSentence(idx);
+        });
       }
 
-      // 3. Hook up Script Input
+      // 3. Hook up Split button
+      const splitBtn = itemCard.querySelector('.stn-split-btn');
+      if (splitBtn) {
+        splitBtn.addEventListener('click', () => {
+          this.toggleSplitBar(itemCard, stn, idx);
+        });
+      }
+
+      // 4. Hook up Audio Time adjustment on click
+      const timeBadge = itemCard.querySelector('.stn-audio-time');
+      if (timeBadge && hasAudioTime) {
+        timeBadge.addEventListener('click', () => {
+          const currentStart = stn.audioStart !== null ? stn.audioStart : 0;
+          const currentEnd = stn.audioEnd !== null ? stn.audioEnd : 0;
+          const inputStr = prompt(`문장 S${idx + 1} 오디오 구간 (초 단위) 수정:\n예: 3.5 ~ 8.2`, `${currentStart} ~ ${currentEnd}`);
+          if (inputStr) {
+            const parts = inputStr.split('~').map(s => parseFloat(s.trim()));
+            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] > parts[0]) {
+              stn.audioStart = Math.round(parts[0] * 10) / 10;
+              stn.audioEnd = Math.round(parts[1] * 10) / 10;
+              stn.cachedPeaks = null;
+              timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+              toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
+            } else {
+              toast.show('⚠️ 올바른 시간 형식(예: 3.5 ~ 8.2)을 입력하세요.');
+            }
+          }
+        });
+      }
+
+      // 5. Render Interactive Word-Divider Track & Inputs
+      const track = itemCard.querySelector('.word-divider-track');
+      const scriptInput = itemCard.querySelector('.sentence-script-input');
+      const naturalInput = itemCard.querySelector('.sentence-natural-input');
+      const chunkInput = itemCard.querySelector('.chunk-text-input');
+      const directInput = itemCard.querySelector('.chunk-direct-input');
+      const retransBtn = itemCard.querySelector('.btn-retranslate');
+
+      if (track) {
+        this.renderWordDividerTrack(track, stn, chunkInput, directInput);
+      }
+
+      // 6. Hook up Retranslate Button
+      if (retransBtn) {
+        retransBtn.addEventListener('click', () => {
+          this.retranslateSentence(stn, naturalInput);
+        });
+      }
+
+      // 7. Hook up Script Input
       if (scriptInput) {
         scriptInput.addEventListener('change', () => {
-          this.updateSentenceScript(stn, scriptInput.value, chunkInput, track);
+          this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
         });
         scriptInput.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            this.updateSentenceScript(stn, scriptInput.value, chunkInput, track);
+            this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
           }
         });
       }
 
-      // 4. Hook up Chunk Text Input
+      // 8. Hook up Chunk Text Input (English ||)
       if (chunkInput) {
         chunkInput.addEventListener('change', () => {
-          this.updateChunksFromTextInput(stn, chunkInput.value, track);
+          this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
         });
         chunkInput.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            this.updateChunksFromTextInput(stn, chunkInput.value, track);
+            this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
           }
         });
       }
 
-      // 5. Hook up Natural Korean Input
+      // 9. Hook up Direct Chunk Input (Korean ||)
+      if (directInput) {
+        directInput.addEventListener('change', () => {
+          this.updateChunksFromDirectInput(stn, directInput.value);
+        });
+        directInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            this.updateChunksFromDirectInput(stn, directInput.value);
+          }
+        });
+      }
+
+      // 10. Hook up Natural Korean Input
       if (naturalInput) {
         naturalInput.addEventListener('input', () => {
           if (!stn.result) stn.result = {};
@@ -575,7 +935,7 @@ export class InputView {
     }, 100);
   }
 
-  renderWordDividerTrack(track, stn, chunkInput) {
+  renderWordDividerTrack(track, stn, chunkInput, directInput) {
     if (!track) return;
     track.innerHTML = '';
 
@@ -585,10 +945,10 @@ export class InputView {
     // Determine current boundary word indices
     const boundaryWordIndices = new Set();
     let runningWordCount = 0;
-    (stn.result.chunks || []).forEach((c, cIdx) => {
+    (stn.result?.chunks || []).forEach((c, cIdx) => {
       const cWords = (c.en || '').trim().split(/\s+/).filter(Boolean);
       runningWordCount += cWords.length;
-      if (cIdx < (stn.result.chunks || []).length - 1 && runningWordCount > 0 && runningWordCount < words.length) {
+      if (cIdx < (stn.result?.chunks || []).length - 1 && runningWordCount > 0 && runningWordCount < words.length) {
         boundaryWordIndices.add(runningWordCount - 1);
       }
     });
@@ -618,7 +978,10 @@ export class InputView {
           if (chunkInput) {
             chunkInput.value = this.getChunkString(stn.result.chunks);
           }
-          this.renderWordDividerTrack(track, stn, chunkInput);
+          if (directInput) {
+            directInput.value = this.getDirectChunkString(stn.result.chunks);
+          }
+          this.renderWordDividerTrack(track, stn, chunkInput, directInput);
           toast.show('✂️ 청크 구분이 업데이트되었습니다.');
         });
 
@@ -644,10 +1007,11 @@ export class InputView {
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+    stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
   }
 
-  updateChunksFromTextInput(stn, chunkedText, track) {
+  updateChunksFromTextInput(stn, chunkedText, directInput, track) {
     const parts = (chunkedText || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!parts.length) return;
 
@@ -661,15 +1025,35 @@ export class InputView {
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+    stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
 
+    if (directInput) {
+      directInput.value = this.getDirectChunkString(newChunks);
+    }
     if (track) {
-      this.renderWordDividerTrack(track, stn, null);
+      this.renderWordDividerTrack(track, stn, null, directInput);
     }
     toast.show('✂️ 청크 구분이 저장되었습니다.');
   }
 
-  updateSentenceScript(stn, newText, chunkInput, track) {
+  updateChunksFromDirectInput(stn, directStr) {
+    const parts = (directStr || '').split('||').map(p => p.trim()).filter(Boolean);
+    if (!stn.result) stn.result = {};
+    if (!stn.result.chunks) stn.result.chunks = [];
+
+    stn.result.chunks.forEach((chunk, i) => {
+      if (i < parts.length) {
+        chunk.ko = parts[i];
+      }
+    });
+
+    stn.result.chunk_text = stn.result.chunks.map(c => c.ko).join(' || ');
+    stn.result.direct = stn.result.chunks.map(c => c.ko).join(' / ');
+    toast.show('🧩 직독직해 해석이 저장되었습니다.');
+  }
+
+  async updateSentenceScript(stn, newText, chunkInput, directInput, naturalInput, track) {
     const cleanText = (newText || '').trim();
     if (!cleanText || cleanText === stn.text) return;
     stn.text = cleanText;
@@ -678,20 +1062,32 @@ export class InputView {
     const newResult = this.ruleEngine.process(cleanText);
     if (!stn.result) stn.result = {};
     stn.result.chunks = newResult.chunks;
+    stn.result.chunk_text = newResult.chunk_text;
     stn.result.direct = newResult.direct;
-    if (!stn.result.natural) stn.result.natural = newResult.natural;
     stn.cachedPeaks = null;
 
     if (chunkInput) {
       chunkInput.value = this.getChunkString(stn.result.chunks);
     }
+    if (directInput) {
+      directInput.value = this.getDirectChunkString(stn.result.chunks);
+    }
     if (track) {
-      this.renderWordDividerTrack(track, stn, chunkInput);
+      this.renderWordDividerTrack(track, stn, chunkInput, directInput);
     }
 
     // Sync global script text
     appState.scriptText = (appState.sentenceList || []).map(s => s.text).join(' ');
     toast.show(`📝 문장 S${stn.index + 1} 원문이 수정되었습니다.`);
+
+    // Auto-translate natural in background
+    try {
+      const natural = await aiService.translateNatural(cleanText);
+      if (natural) {
+        stn.result.natural = natural;
+        if (naturalInput) naturalInput.value = natural;
+      }
+    } catch (e) {}
   }
 
   escapeHtml(str) {
@@ -707,6 +1103,11 @@ export class InputView {
   getChunkString(chunks) {
     if (!chunks || !chunks.length) return '';
     return chunks.map(c => (c.en || '').trim()).filter(Boolean).join(' || ');
+  }
+
+  getDirectChunkString(chunks) {
+    if (!chunks || !chunks.length) return '';
+    return chunks.map(c => (c.ko || '').trim()).filter(Boolean).join(' || ');
   }
 
   playOrSpeakSentence(stn, speakBtn) {

@@ -49,6 +49,7 @@ const CONSTANTS = {
   ]
 };
 
+
   // =========================================================================
   // Module: src/config/fels-dict.js
   // =========================================================================
@@ -354,6 +355,7 @@ const PRESETS = {
   }
 };
 
+
   // =========================================================================
   // Module: src/core/text-splitter.js
   // =========================================================================
@@ -363,8 +365,39 @@ const PRESETS = {
  * Accurately splits text into individual sentences while preserving abbreviations, decimals, and honorifics.
  */
 
-function splitIntoSentences(text) {
+/**
+ * Detects whether a string is primarily Korean (Hangul instructions or Korean questions)
+ */
+function isKoreanSentence(text) {
+  if (!text) return true;
+  const hangul = (text.match(/[가-힣]/g) || []).length;
+  const latin = (text.match(/[a-zA-Z]/g) || []).length;
+  // If no Latin letters at all, it's definitely not an English practice sentence
+  if (latin === 0) return true;
+  // If Hangul characters outnumber Latin letters, it's a Korean sentence
+  if (hangul > latin) return true;
+  return false;
+}
+
+/**
+ * Strips Korean question prefixes (e.g. '1번. 남: ') and inline Korean annotations
+ * to preserve a clean English practice sentence.
+ */
+function cleanPracticeSentence(text) {
+  if (!text) return '';
+  // Strip leading question/speaker indicators like '1번. 남:', '여:', 'W:', 'M:', '[남]'
+  let cleaned = text.replace(/^[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/i, '').trim();
+  // Strip inline Korean parentheticals e.g. '(해설)', '[안내]'
+  cleaned = cleaned.replace(/\([가-힣\s,.:~]+\)/g, '');
+  cleaned = cleaned.replace(/\[[가-힣\s,.:~]+\]/g, '');
+  // Strip any stray Korean words from inside the English practice sentence
+  cleaned = cleaned.replace(/[가-힣]+/g, '');
+  return cleaned.replace(/\s{2,}/g, ' ').trim();
+}
+
+function splitIntoSentences(text, options = {}) {
   if (!text) return [];
+  const filterKorean = options.filterKorean !== false;
   const abbreviations = ['mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'vs', 'etc', 'eg', 'ie', 'u.s', 'e.g', 'i.e'];
   let processed = text.replace(/\.{2,}/g, '__ELLIPSIS__');
   processed = processed.replace(/(\d+)\.(\d+)/g, '$1__DECIMAL_DOT__$2');
@@ -375,7 +408,9 @@ function splitIntoSentences(text) {
   const parts = processed.split(/(?<=[.?!])\s+|\n+/);
   return parts
     .map(p => p.replace(/__ELLIPSIS__/g, '...').replace(/__DECIMAL_DOT__/g, '.').replace(/__ABBR_DOT__/g, '.').trim())
-    .filter(Boolean);
+    .map(p => cleanPracticeSentence(p))
+    .filter(Boolean)
+    .filter(p => !filterKorean || !isKoreanSentence(p));
 }
 
 /**
@@ -433,6 +468,8 @@ function distributeChunksSequentially(rawSentences, chunks) {
   return result;
 }
 
+
+
   // =========================================================================
   // Module: src/core/fels-engine.js
   // =========================================================================
@@ -471,6 +508,7 @@ function verifyAnswer(userVal, expectedWord) {
   const normExp = (expectedWord || '').trim().toLowerCase();
   return normUser === normExp;
 }
+
 
   // =========================================================================
   // Module: src/core/rule-chunk-engine.js
@@ -833,6 +871,7 @@ class RuleChunkEngine {
   }
 }
 
+
   // =========================================================================
   // Module: src/core/app-state.js
   // =========================================================================
@@ -971,6 +1010,7 @@ class AppState {
 // Global Singleton Instance
 const appState = new AppState();
 
+
   // =========================================================================
   // Module: src/services/storage-service.js
   // =========================================================================
@@ -980,38 +1020,60 @@ const appState = new AppState();
  * Handles API provider, keys, custom prompt, and theme persistence.
  */
 
+const memStorage = {};
+
+function safeGet(key, def = '') {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key) ?? def;
+    }
+  } catch (e) {}
+  return memStorage[key] ?? def;
+}
+
+function safeSet(key, val) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, val);
+      return;
+    }
+  } catch (e) {}
+  memStorage[key] = String(val);
+}
+
 class StorageService {
   static getProvider() {
-    return localStorage.getItem('ce_tool_provider') || localStorage.getItem('chunklingo_provider') || 'gemini';
+    return safeGet('ce_tool_provider') || safeGet('chunklingo_provider') || 'gemini';
   }
 
   static getApiKey() {
-    return localStorage.getItem('ce_tool_api_key') || localStorage.getItem('chunklingo_api_key') || '';
+    return safeGet('ce_tool_api_key') || safeGet('chunklingo_api_key') || '';
   }
 
   static getCustomPrompt() {
-    return localStorage.getItem('ce_tool_prompt') || localStorage.getItem('chunklingo_prompt') || '';
+    return safeGet('ce_tool_prompt') || safeGet('chunklingo_prompt') || '';
   }
 
   static saveApiSettings(provider, apiKey, customPrompt) {
-    localStorage.setItem('ce_tool_provider', provider);
-    localStorage.setItem('ce_tool_api_key', apiKey);
-    localStorage.setItem('ce_tool_prompt', customPrompt);
+    safeSet('ce_tool_provider', provider);
+    safeSet('ce_tool_api_key', apiKey);
+    safeSet('ce_tool_prompt', customPrompt);
     // Backward compatibility
-    localStorage.setItem('chunklingo_provider', provider);
-    localStorage.setItem('chunklingo_api_key', apiKey);
-    localStorage.setItem('chunklingo_prompt', customPrompt);
+    safeSet('chunklingo_provider', provider);
+    safeSet('chunklingo_api_key', apiKey);
+    safeSet('chunklingo_prompt', customPrompt);
   }
 
   static getTheme() {
-    return localStorage.getItem('ce_tool_theme') || localStorage.getItem('chunklingo_theme') || 'dark';
+    return safeGet('ce_tool_theme') || safeGet('chunklingo_theme') || 'dark';
   }
 
   static saveTheme(theme) {
-    localStorage.setItem('ce_tool_theme', theme);
-    localStorage.setItem('chunklingo_theme', theme);
+    safeSet('ce_tool_theme', theme);
+    safeSet('chunklingo_theme', theme);
   }
 }
+
 
   // =========================================================================
   // Module: src/services/ai-service.js
@@ -1172,6 +1234,92 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
   }
 
   /**
+   * Fast, reliable natural Korean translation with AI fallback to free Google Translate endpoint
+   */
+  async translateNatural(text) {
+    if (!text || !text.trim()) return '';
+    // If user has AI key configured, attempt full AI translate
+    if (this.hasKey()) {
+      try {
+        const res = await this.translate(text);
+        if (res && res.natural) return res.natural;
+      } catch (e) {
+        console.warn('AI translation failed, trying free translate:', e);
+      }
+    }
+
+    // Free high-quality Google Translate endpoint
+    try {
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(text.trim())}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          return data[0].map(item => item[0]).join('').trim();
+        }
+      }
+    } catch (e) {
+      console.warn('Public translation endpoint error:', e);
+    }
+
+    return null;
+  }
+
+  /**
+   * AI-powered Audio & Script Forced Alignment using Gemini Multimodal Audio
+   */
+  async alignAudioWithScript(base64Audio, mimeType, sentences) {
+    if (!this.hasKey() || this.provider !== 'gemini' || !base64Audio) {
+      return null;
+    }
+
+    const prompt = `Listen to this English audio carefully.
+We have the following exact English sentences in order:
+${sentences.map((s, idx) => `[S${idx + 1}] "${s}"`).join('\n')}
+
+For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this sentence in the audio.
+Ignore introductory chimes, directions, or non-English announcements at the beginning.
+
+Respond ONLY with valid JSON:
+{
+  "alignments": [
+    { "sentence_index": 0, "start": 3.2, "end": 7.5 }
+  ]
+}`;
+
+    try {
+      const payload = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: mimeType || 'audio/mp3',
+                  data: base64Audio
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json'
+        }
+      };
+
+      const result = await this.postToGemini(payload);
+      if (result && Array.isArray(result.alignments)) {
+        return result.alignments;
+      }
+    } catch (err) {
+      console.warn('Gemini audio-script alignment failed:', err);
+    }
+    return null;
+  }
+
+  /**
    * Transcribe Audio and generate 3x1 translation simultaneously using Gemini Multimodal Audio
    */
   async transcribeAndTranslateAudio(base64Audio, mimeType) {
@@ -1283,6 +1431,7 @@ Respond ONLY with valid JSON:
 
 const aiService = new AIService();
 
+
   // =========================================================================
   // Module: src/audio/audio-context.js
   // =========================================================================
@@ -1322,13 +1471,15 @@ async function decodeAudioFile(file) {
   return await ctx.decodeAudioData(arrayBuffer.slice(0));
 }
 
+
   // =========================================================================
   // Module: src/audio/silence-detector.js
   // =========================================================================
 
 /**
  * Audio Sentence Boundary Detection Engine
- * Combines Web Audio API PCM RMS energy silence detection with proportional time fallback.
+ * Combines Web Audio API PCM RMS energy analysis, VAD (Voice Activity Detection),
+ * speech onset/offset trimming, and adaptive energy valley alignment.
  */
 
 function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
@@ -1340,10 +1491,19 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
   }
 
   if (sentences.length === 1) {
+    // If audio buffer exists, find actual speech start and end
+    if (audioBuffer) {
+      try {
+        const { speechStart, speechEnd } = detectSpeechOnsetOffset(audioBuffer, duration);
+        return [{ start: speechStart, end: speechEnd }];
+      } catch (e) {
+        console.warn('Single sentence VAD fallback:', e);
+      }
+    }
     return [{ start: 0, end: Math.round(duration * 10) / 10 }];
   }
 
-  // Step 1: Attempt PCM RMS silence dip detection if audioBuffer exists
+  // Step 1: Attempt PCM RMS analysis with VAD and adaptive valley boundary detection
   if (audioBuffer) {
     try {
       const rawData = audioBuffer.getChannelData(0);
@@ -1352,74 +1512,115 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
       const windowSize = Math.floor(sampleRate * windowSec);
       const numWindows = Math.floor(rawData.length / windowSize);
 
-      const energies = [];
+      const energies = new Float32Array(numWindows);
       let maxRms = 0;
       for (let w = 0; w < numWindows; w++) {
         let sumSq = 0;
         const offset = w * windowSize;
-        for (let k = 0; k < windowSize; k += 4) {
+        const step = Math.max(1, Math.floor(windowSize / 128)); // Sample representative points for high speed
+        let count = 0;
+        for (let k = 0; k < windowSize; k += step) {
           const v = rawData[offset + k];
           sumSq += v * v;
+          count++;
         }
-        const rms = Math.sqrt(sumSq / (windowSize / 4));
-        energies.push(rms);
+        const rms = Math.sqrt(sumSq / count);
+        energies[w] = rms;
         if (rms > maxRms) maxRms = rms;
       }
 
-      const silenceThresh = maxRms * 0.08;
-      const silencePauses = [];
-      let inSilence = false;
-      let silenceStart = 0;
-
-      for (let w = 0; w < numWindows; w++) {
-        if (energies[w] < silenceThresh) {
-          if (!inSilence) {
-            inSilence = true;
-            silenceStart = w * windowSec;
-          }
-        } else {
-          if (inSilence) {
-            const silenceDur = (w * windowSec) - silenceStart;
-            if (silenceDur >= 0.2 && silenceStart > 0.3 && (w * windowSec) < duration - 0.3) {
-              silencePauses.push(silenceStart + silenceDur / 2);
+      if (maxRms > 0.001) {
+        // Detect speech onset (skipping intro silence / chimes)
+        const speechThresh = maxRms * 0.06;
+        let speechStartIdx = 0;
+        for (let w = 0; w < numWindows; w++) {
+          if (energies[w] >= speechThresh) {
+            // Require at least 2 consecutive windows of energy
+            if (w + 1 < numWindows && energies[w + 1] >= speechThresh * 0.7) {
+              speechStartIdx = Math.max(0, w - 2);
+              break;
             }
-            inSilence = false;
           }
         }
-      }
+        const speechStart = Math.round(speechStartIdx * windowSec * 10) / 10;
 
-      if (silencePauses.length >= sentences.length - 1) {
-        const weights = sentences.map(s => Math.max(3, s.trim().split(/\s+/).length));
+        // Detect speech offset (skipping trailing silence / chimes)
+        let speechEndIdx = numWindows - 1;
+        for (let w = numWindows - 1; w >= 0; w--) {
+          if (energies[w] >= speechThresh) {
+            speechEndIdx = Math.min(numWindows - 1, w + 3);
+            break;
+          }
+        }
+        const speechEnd = Math.round(speechEndIdx * windowSec * 10) / 10;
+        const speechDuration = Math.max(1.0, speechEnd - speechStart);
+
+        // Smooth energy curve with moving average (~250ms window) to suppress plosive stops
+        const smoothRadius = 3;
+        const smoothed = new Float32Array(numWindows);
+        for (let i = 0; i < numWindows; i++) {
+          let sum = 0, count = 0;
+          for (let r = -smoothRadius; r <= smoothRadius; r++) {
+            const idx = i + r;
+            if (idx >= 0 && idx < numWindows) {
+              sum += energies[idx];
+              count++;
+            }
+          }
+          smoothed[i] = sum / count;
+        }
+
+        // Calculate expected sentence transition timestamps based on word counts
+        const weights = sentences.map(s => {
+          const words = (s || '').trim().split(/\s+/).filter(Boolean);
+          // Sentence ending with question mark or exclamation usually has slightly longer cadence
+          const punctBonus = /[?!]/.test(s) ? 1.5 : 1.0;
+          return Math.max(3, words.length * punctBonus);
+        });
         const totalWeight = weights.reduce((a, b) => a + b, 0);
+
         let curWeight = 0;
-        const splitPoints = [];
+        let lastBoundary = speechStart;
+        const boundaries = [];
 
         for (let i = 0; i < sentences.length - 1; i++) {
           curWeight += weights[i];
-          const expectedTime = duration * (curWeight / totalWeight);
-          let closest = silencePauses[0];
-          let minDist = Math.abs(closest - expectedTime);
-          for (const p of silencePauses) {
-            const d = Math.abs(p - expectedTime);
-            if (d < minDist) {
-              minDist = d;
-              closest = p;
+          const expectedTime = speechStart + speechDuration * (curWeight / totalWeight);
+          const expectedIdx = Math.floor(expectedTime / windowSec);
+          
+          // Search around expected transition for the lowest energy dip (valley / pause)
+          const searchSec = Math.min(4.0, Math.max(1.2, (speechDuration * (weights[i] / totalWeight)) * 0.5));
+          const searchRadius = Math.floor(searchSec / windowSec);
+          const minAllowedIdx = Math.floor((lastBoundary + 0.4) / windowSec);
+          const maxAllowedIdx = Math.floor((speechEnd - 0.4) / windowSec);
+
+          const startIdx = Math.max(minAllowedIdx, expectedIdx - searchRadius);
+          const endIdx = Math.min(maxAllowedIdx, expectedIdx + searchRadius);
+
+          let minVal = Infinity;
+          let bestIdx = expectedIdx;
+
+          for (let k = startIdx; k <= endIdx; k++) {
+            // Distance penalty to favor dips closer to expected rhythm
+            const distFromExp = Math.abs(k - expectedIdx) / searchRadius;
+            const score = smoothed[k] * (1.0 + 0.35 * distFromExp);
+            if (score < minVal) {
+              minVal = score;
+              bestIdx = k;
             }
           }
-          splitPoints.push(Math.round(closest * 10) / 10);
+
+          const boundaryTime = Math.round(bestIdx * windowSec * 10) / 10;
+          const safeBoundary = Math.max(lastBoundary + 0.4, Math.min(speechEnd - 0.3, boundaryTime));
+          boundaries.push({ start: lastBoundary, end: safeBoundary });
+          lastBoundary = safeBoundary;
         }
 
-        const result = [];
-        let lastT = 0;
-        for (let i = 0; i < sentences.length; i++) {
-          const endT = i === sentences.length - 1 ? Math.round(duration * 10) / 10 : splitPoints[i];
-          result.push({ start: lastT, end: Math.max(lastT + 0.3, endT) });
-          lastT = endT;
-        }
-        return result;
+        boundaries.push({ start: lastBoundary, end: speechEnd });
+        return boundaries;
       }
     } catch (e) {
-      console.warn('Audio silence detection fallback:', e);
+      console.warn('Audio silence & valley detection fallback:', e);
     }
   }
 
@@ -1427,12 +1628,56 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
   return proportionalSentenceBoundaries(sentences, duration);
 }
 
+function detectSpeechOnsetOffset(audioBuffer, totalDuration) {
+  try {
+    const rawData = audioBuffer.getChannelData(0);
+    const windowSec = 0.05;
+    const windowSize = Math.floor(audioBuffer.sampleRate * windowSec);
+    const numWindows = Math.floor(rawData.length / windowSize);
+
+    let maxRms = 0;
+    const energies = new Float32Array(numWindows);
+    for (let w = 0; w < numWindows; w++) {
+      let sumSq = 0;
+      const offset = w * windowSize;
+      for (let k = 0; k < windowSize; k += 8) {
+        const v = rawData[offset + k];
+        sumSq += v * v;
+      }
+      const rms = Math.sqrt(sumSq / (windowSize / 8));
+      energies[w] = rms;
+      if (rms > maxRms) maxRms = rms;
+    }
+
+    const thresh = maxRms * 0.06;
+    let startSec = 0;
+    for (let w = 0; w < numWindows; w++) {
+      if (energies[w] >= thresh) {
+        startSec = Math.max(0, Math.round((w * windowSec - 0.1) * 10) / 10);
+        break;
+      }
+    }
+
+    let endSec = totalDuration;
+    for (let w = numWindows - 1; w >= 0; w--) {
+      if (energies[w] >= thresh) {
+        endSec = Math.min(totalDuration, Math.round(((w + 1) * windowSec + 0.2) * 10) / 10);
+        break;
+      }
+    }
+
+    return { speechStart: startSec, speechEnd: endSec };
+  } catch (e) {
+    return { speechStart: 0, speechEnd: Math.round(totalDuration * 10) / 10 };
+  }
+}
+
 function proportionalSentenceBoundaries(sentences, totalDuration) {
   if (!sentences || !sentences.length) return [];
   if (sentences.length === 1) {
     return [{ start: 0, end: Math.round(totalDuration * 10) / 10 }];
   }
-  const weights = sentences.map(s => Math.max(3, s.trim().split(/\s+/).length));
+  const weights = sentences.map(s => Math.max(3, (s || '').trim().split(/\s+/).filter(Boolean).length));
   const totalWeight = weights.reduce((a, b) => a + b, 0);
   let cur = 0;
   return sentences.map((s, idx) => {
@@ -1444,6 +1689,7 @@ function proportionalSentenceBoundaries(sentences, totalDuration) {
     return { start, end };
   });
 }
+
 
   // =========================================================================
   // Module: src/audio/tts-synthesizer.js
@@ -1567,6 +1813,7 @@ function speakText(text, lang = 'en-US', rate = 0.95) {
     console.warn('TTS playback error:', e);
   }
 }
+
 
   // =========================================================================
   // Module: src/audio/waveform-renderer.js
@@ -1875,6 +2122,7 @@ class WaveformRenderer {
   }
 }
 
+
   // =========================================================================
   // Module: src/audio/looper-engine.js
   // =========================================================================
@@ -1987,6 +2235,7 @@ class LooperEngine {
   }
 }
 
+
   // =========================================================================
   // Module: src/ui/toast-manager.js
   // =========================================================================
@@ -2026,6 +2275,7 @@ class ToastManager {
 }
 
 const toast = new ToastManager();
+
 
   // =========================================================================
   // Module: src/ui/settings-modal.js
@@ -2117,6 +2367,7 @@ class SettingsModal {
   }
 }
 
+
   // =========================================================================
   // Module: src/ui/router.js
   // =========================================================================
@@ -2196,6 +2447,7 @@ class AppRouter {
     return this.currentPage;
   }
 }
+
 
   // =========================================================================
   // Module: src/ui/shortcut-manager.js
@@ -2387,6 +2639,7 @@ class ShortcutManager {
   }
 }
 
+
   // =========================================================================
   // Module: src/views/input-view.js
   // =========================================================================
@@ -2437,6 +2690,7 @@ class InputView {
     this.parsedResultsSection = document.getElementById('parsedResultsSection');
     this.parsedSentenceList = document.getElementById('parsedSentenceList');
     this.resultsCountBadge = document.getElementById('resultsCountBadge');
+    this.btnAutoSyncAudio = document.getElementById('btnAutoSyncAudio');
     this.btnPrintHandout = document.getElementById('btnPrintHandout');
     this.btnStartPractice = document.getElementById('btnStartPractice');
     this.btnHeaderStartPractice = document.getElementById('btnHeaderStartPractice');
@@ -2554,6 +2808,11 @@ class InputView {
     // Translate Trigger
     if (this.btnTranslate) {
       this.btnTranslate.addEventListener('click', () => this.handleTranslate());
+    }
+
+    // Auto Audio-Script Sync Trigger
+    if (this.btnAutoSyncAudio) {
+      this.btnAutoSyncAudio.addEventListener('click', () => this.autoSyncAudioScript());
     }
 
     // Handout Modal Triggers
@@ -2810,31 +3069,295 @@ class InputView {
         }
       }
 
-      // Sentence splitting
-      let rawSentences = splitIntoSentences(text);
-      if (rawSentences.length === 0) rawSentences.push(text);
+      // Sentence splitting - strictly exclude Korean sentences from practice drill
+      let rawSentences = splitIntoSentences(text, { filterKorean: true });
+      if (rawSentences.length === 0) rawSentences.push(cleanPracticeSentence(text) || text);
 
-      const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      let boundaries = null;
+      // If authentic MP3 uploaded and Gemini key available, attempt AI audio-script alignment
+      if (appState.uploadedAudioFile && !appState.isSynthesizedAudio && aiService.hasKey() && aiService.provider === 'gemini') {
+        try {
+          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
+          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
+          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
+          if (alignments && alignments.length === rawSentences.length) {
+            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
+          }
+        } catch (alignErr) {
+          console.warn('AI audio alignment fallback:', alignErr);
+        }
+      }
 
-      const sentenceList = rawSentences.map((stnText, idx) => ({
-        index: idx,
-        text: stnText,
-        audioStart: boundaries[idx]?.start ?? null,
-        audioEnd: boundaries[idx]?.end ?? null,
-        result: this.ruleEngine.process(stnText)
-      }));
+      if (!boundaries) {
+        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      }
+
+      // Parallel fetch natural Korean translation for all sentences
+      const naturalTranslations = await Promise.all(
+        rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
+      );
+
+      const sentenceList = rawSentences.map((stnText, idx) => {
+        const res = this.ruleEngine.process(stnText);
+        if (naturalTranslations[idx]) {
+          res.natural = naturalTranslations[idx];
+        }
+        return {
+          index: idx,
+          text: stnText,
+          audioStart: boundaries[idx]?.start ?? null,
+          audioEnd: boundaries[idx]?.end ?? null,
+          result: res
+        };
+      });
 
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
 
       // Render Results Panel on Page 1
       this.renderParsedResults();
-      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 청크 분석 완료! 아래에서 검토 및 수정할 수 있습니다.`);
+      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 청크 분석 완료! 아래에서 검토 및 수정할 수 있습니다.`);
     } catch (err) {
       console.error('Translation error:', err);
       toast.show(`❌ 오류: ${err.message}`);
     } finally {
       this.setLoading(false);
+    }
+  }
+
+  /**
+   * One-click Audio and Script Auto Sync
+   */
+  async autoSyncAudioScript() {
+    if (!appState.uploadedAudioFile || !appState.sentenceList || appState.sentenceList.length === 0) {
+      toast.show('⚠️ 먼저 MP3 음성 파일과 스크립트를 입력해주세요.');
+      return;
+    }
+
+    toast.show('⚡ 음성과 스크립트 자동 Sync 계산 중...');
+    try {
+      const rawSentences = appState.sentenceList.map(s => s.text);
+      let boundaries = null;
+
+      if (aiService.hasKey() && aiService.provider === 'gemini' && !appState.isSynthesizedAudio) {
+        try {
+          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
+          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
+          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
+          if (alignments && alignments.length === rawSentences.length) {
+            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
+          }
+        } catch (aiErr) {
+          console.warn('AI audio alignment fallback:', aiErr);
+        }
+      }
+
+      if (!boundaries) {
+        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      }
+
+      if (boundaries && boundaries.length === appState.sentenceList.length) {
+        appState.sentenceList.forEach((stn, i) => {
+          stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
+          stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
+          stn.cachedPeaks = null;
+        });
+        this.renderParsedResults();
+        toast.show('✨ 음성-스크립트 자동 Sync 완료! 문장별 재생 구간이 최적화되었습니다.');
+      }
+    } catch (err) {
+      console.error('Auto sync error:', err);
+      toast.show(`❌ 자동 Sync 오류: ${err.message}`);
+    }
+  }
+
+  /**
+   * Merge sentence with previous sentence
+   */
+  mergeWithPreviousSentence(idx) {
+    if (idx <= 0 || !appState.sentenceList || idx >= appState.sentenceList.length) return;
+    const prev = appState.sentenceList[idx - 1];
+    const cur = appState.sentenceList[idx];
+
+    const mergedText = `${prev.text} ${cur.text}`.trim();
+    const mergedStart = prev.audioStart !== null ? prev.audioStart : cur.audioStart;
+    const mergedEnd = cur.audioEnd !== null ? cur.audioEnd : prev.audioEnd;
+    const mergedChunks = [...(prev.result?.chunks || []), ...(cur.result?.chunks || [])];
+    const mergedNatural = `${prev.result?.natural || ''} ${cur.result?.natural || ''}`.trim();
+
+    prev.text = mergedText;
+    prev.audioStart = mergedStart;
+    prev.audioEnd = mergedEnd;
+    prev.result = {
+      ...(prev.result || {}),
+      chunks: mergedChunks,
+      natural: mergedNatural,
+      chunk_text: mergedChunks.map(c => c.ko).join(' || '),
+      direct: mergedChunks.map(c => c.ko).join(' / ')
+    };
+    prev.cachedPeaks = null;
+
+    appState.sentenceList.splice(idx, 1);
+    appState.sentenceList.forEach((s, i) => { s.index = i; });
+    appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+
+    this.renderParsedResults();
+    toast.show(`🔗 문장 S${idx}와 S${idx + 1}이 하나로 결합되었습니다.`);
+
+    aiService.translateNatural(mergedText).then(natural => {
+      if (natural) {
+        prev.result.natural = natural;
+        const naturalInput = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .sentence-natural-input`);
+        if (naturalInput) naturalInput.value = natural;
+      }
+    }).catch(() => {});
+  }
+
+  /**
+   * Split sentence into two sentences at given word index
+   */
+  splitSentence(idx, splitWordIndex) {
+    if (!appState.sentenceList || idx < 0 || idx >= appState.sentenceList.length) return;
+    const cur = appState.sentenceList[idx];
+    const words = (cur.text || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length <= 1 || splitWordIndex < 0 || splitWordIndex >= words.length - 1) {
+      toast.show('⚠️ 분리할 위치를 올바르게 선택하세요.');
+      return;
+    }
+
+    const wordsPart1 = words.slice(0, splitWordIndex + 1);
+    const wordsPart2 = words.slice(splitWordIndex + 1);
+
+    let text1 = wordsPart1.join(' ').trim();
+    let text2 = wordsPart2.join(' ').trim();
+
+    if (!/[.!?]$/.test(text1) && /[.!?]$/.test(cur.text)) {
+      text1 += '.';
+    }
+
+    const totalDuration = (cur.audioStart !== null && cur.audioEnd !== null)
+      ? Math.max(0.6, cur.audioEnd - cur.audioStart)
+      : null;
+    let part1Start = cur.audioStart;
+    let part1End = null;
+    let part2Start = null;
+    let part2End = cur.audioEnd;
+
+    if (totalDuration !== null) {
+      const fraction1 = wordsPart1.length / words.length;
+      const splitTime = Math.round((cur.audioStart + totalDuration * fraction1) * 10) / 10;
+      part1End = splitTime;
+      part2Start = splitTime;
+    }
+
+    const res1 = this.ruleEngine.process(text1);
+    const res2 = this.ruleEngine.process(text2);
+
+    const newStn1 = {
+      index: idx,
+      text: text1,
+      audioStart: part1Start,
+      audioEnd: part1End,
+      result: res1
+    };
+
+    const newStn2 = {
+      index: idx + 1,
+      text: text2,
+      audioStart: part2Start,
+      audioEnd: part2End,
+      result: res2
+    };
+
+    appState.sentenceList.splice(idx, 1, newStn1, newStn2);
+    appState.sentenceList.forEach((s, i) => { s.index = i; });
+    appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+
+    this.renderParsedResults();
+    toast.show(`✂️ 문장이 S${idx + 1}과 S${idx + 2}로 분리되었습니다.`);
+
+    Promise.all([
+      aiService.translateNatural(text1),
+      aiService.translateNatural(text2)
+    ]).then(([nat1, nat2]) => {
+      if (nat1) {
+        newStn1.result.natural = nat1;
+        const inp1 = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"] .sentence-natural-input`);
+        if (inp1) inp1.value = nat1;
+      }
+      if (nat2) {
+        newStn2.result.natural = nat2;
+        const inp2 = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx + 1}"] .sentence-natural-input`);
+        if (inp2) inp2.value = nat2;
+      }
+    }).catch(() => {});
+  }
+
+  /**
+   * Toggle inline interactive sentence split bar
+   */
+  toggleSplitBar(itemCard, stn, idx) {
+    const splitBar = itemCard.querySelector('.sentence-split-bar');
+    if (!splitBar) return;
+
+    if (!splitBar.classList.contains('hidden')) {
+      splitBar.classList.add('hidden');
+      return;
+    }
+
+    const words = (stn.text || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length <= 1) {
+      toast.show('⚠️ 1개 단어로 된 문장은 더 이상 분리할 수 없습니다.');
+      return;
+    }
+
+    const container = splitBar.querySelector('.split-words-container');
+    container.innerHTML = '';
+
+    words.forEach((w, wIdx) => {
+      if (wIdx < words.length - 1) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'split-word-chip';
+        chip.innerHTML = `<span class="split-chip-word">${this.escapeHtml(w)}</span><span class="split-chip-cue">✂️ 여기서 분리</span>`;
+        chip.title = `'${w}' 뒤에서 문장 분리`;
+        chip.addEventListener('click', () => {
+          this.splitSentence(idx, wIdx);
+        });
+        container.appendChild(chip);
+      } else {
+        const lastWord = document.createElement('span');
+        lastWord.className = 'split-last-word';
+        lastWord.textContent = w;
+        container.appendChild(lastWord);
+      }
+    });
+
+    const btnCancel = splitBar.querySelector('.btn-cancel-split');
+    if (btnCancel) {
+      btnCancel.onclick = () => splitBar.classList.add('hidden');
+    }
+
+    splitBar.classList.remove('hidden');
+  }
+
+  /**
+   * Re-fetch natural translation for single sentence
+   */
+  async retranslateSentence(stn, naturalInput) {
+    toast.show('🤖 우리말 자연스러운 해석 가져오는 중...');
+    try {
+      const natural = await aiService.translateNatural(stn.text);
+      if (natural) {
+        if (!stn.result) stn.result = {};
+        stn.result.natural = natural;
+        if (naturalInput) naturalInput.value = natural;
+        toast.show('✨ 자연스러운 해석이 업데이트되었습니다!');
+      } else {
+        toast.show('⚠️ 번역 결과를 가져오지 못했습니다.');
+      }
+    } catch (e) {
+      toast.show(`❌ 재해석 실패: ${e.message}`);
     }
   }
 
@@ -2871,38 +3394,68 @@ class InputView {
         <div class="sentence-item-header">
           <div class="stn-header-meta">
             <span class="stn-badge-pill">문장 ${idx + 1} (S${idx + 1})</span>
-            ${hasAudioTime ? `<span class="stn-audio-time">⏱ ${timeStr}</span>` : ''}
+            ${hasAudioTime ? `<span class="stn-audio-time" title="클릭하여 오디오 구간 수정">⏱ ${timeStr}</span>` : ''}
           </div>
-          <button class="stn-speak-btn" type="button" title="문장 음성 듣기">
-            <span>🔊 문장 듣기</span>
-          </button>
+          <div class="stn-header-btn-group">
+            <button class="stn-speak-btn" type="button" title="문장 음성 듣기">
+              <span>🔊 문장 듣기</span>
+            </button>
+            ${idx > 0 ? `
+            <button class="stn-merge-btn" type="button" title="이전 문장(S${idx})과 합치기">
+              <span>🔗 이전 문장과 결합</span>
+            </button>
+            ` : ''}
+            <button class="stn-split-btn" type="button" title="이 문장을 두 개로 분리하기">
+              <span>✂️ 문장 분리</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline Sentence Split Picker Bar -->
+        <div class="sentence-split-bar hidden">
+          <div class="split-bar-header">
+            <span>✂️ <strong>문장 분리:</strong> 분리할 기준 단어를 클릭하세요 (선택 단어 뒤에서 새로운 문장으로 분리):</span>
+            <button type="button" class="btn-cancel-split icon-btn" title="취소">✕</button>
+          </div>
+          <div class="split-words-container"></div>
         </div>
 
         <!-- Interactive Clickable Word-Divider Track -->
         <div class="word-divider-track"></div>
 
-        <!-- Editable Fields Grid -->
+        <!-- Strict 2x2 Editable Fields Grid -->
         <div class="sentence-edit-grid">
-          <div class="sentence-edit-field full-width-field">
-            <label class="edit-field-label">
-              <span>📝 영어 문장 원문 (Script):</span>
-              <span style="font-weight: 400; opacity: 0.7;">오탈자나 단어를 직접 수정하면 청크 분석 및 음성이 즉시 동기화됩니다</span>
-            </label>
-            <input type="text" class="sentence-script-input" value="${this.escapeHtml(stn.text || '')}">
-          </div>
+          <!-- Row 1, Col 1: 영어 문장 원문 -->
           <div class="sentence-edit-field">
             <label class="edit-field-label">
-              <span>✂️ 청크 구분(||) 텍스트 편집:</span>
-              <span style="font-weight: 400; opacity: 0.7;">단어 사이에 '||'를 직접 입력하거나 위 구분자를 클릭하세요</span>
+              <span>📝 영어 문장 원문 (Script):</span>
             </label>
-            <input type="text" class="chunk-text-input" value="${this.escapeHtml(this.getChunkString(stn.result.chunks))}">
+            <input type="text" class="sentence-script-input" value="${this.escapeHtml(stn.text || '')}" placeholder="영어 문장 원문">
           </div>
+
+          <!-- Row 1, Col 2: 우리말 해석 -->
           <div class="sentence-edit-field">
             <label class="edit-field-label">
               <span>✍️ 우리말 자연스러운 해석:</span>
-              <span style="font-weight: 400; opacity: 0.7;">학생 학습지 및 카드 뒷면에 반영됩니다</span>
+              <button type="button" class="btn-retranslate" title="자연스러운 해석 다시 가져오기">🔄 재해석</button>
             </label>
-            <input type="text" class="sentence-natural-input" value="${this.escapeHtml(stn.result.natural || '')}">
+            <input type="text" class="sentence-natural-input" value="${this.escapeHtml(stn.result?.natural || '')}" placeholder="자연스러운 우리말 해석">
+          </div>
+
+          <!-- Row 2, Col 1: 청크 구분 영어 문장 -->
+          <div class="sentence-edit-field">
+            <label class="edit-field-label">
+              <span>✂️ 청크 구분(||) 영어 문장:</span>
+            </label>
+            <input type="text" class="chunk-text-input" value="${this.escapeHtml(this.getChunkString(stn.result?.chunks))}" placeholder="단어 사이에 || 입력">
+          </div>
+
+          <!-- Row 2, Col 2: 직독직해 (순차 해석) -->
+          <div class="sentence-edit-field">
+            <label class="edit-field-label">
+              <span>🧩 직독직해 (순차 해석):</span>
+            </label>
+            <input type="text" class="chunk-direct-input" value="${this.escapeHtml(this.getDirectChunkString(stn.result?.chunks))}" placeholder="청크별 순차 해석 (|| 로 구분)">
           </div>
         </div>
       `;
@@ -2915,43 +3468,103 @@ class InputView {
         });
       }
 
-      // 2. Render Interactive Word-Divider Track
-      const track = itemCard.querySelector('.word-divider-track');
-      const scriptInput = itemCard.querySelector('.sentence-script-input');
-      const chunkInput = itemCard.querySelector('.chunk-text-input');
-      const naturalInput = itemCard.querySelector('.sentence-natural-input');
-
-      if (track) {
-        this.renderWordDividerTrack(track, stn, chunkInput);
+      // 2. Hook up Merge button (if idx > 0)
+      const mergeBtn = itemCard.querySelector('.stn-merge-btn');
+      if (mergeBtn) {
+        mergeBtn.addEventListener('click', () => {
+          this.mergeWithPreviousSentence(idx);
+        });
       }
 
-      // 3. Hook up Script Input
+      // 3. Hook up Split button
+      const splitBtn = itemCard.querySelector('.stn-split-btn');
+      if (splitBtn) {
+        splitBtn.addEventListener('click', () => {
+          this.toggleSplitBar(itemCard, stn, idx);
+        });
+      }
+
+      // 4. Hook up Audio Time adjustment on click
+      const timeBadge = itemCard.querySelector('.stn-audio-time');
+      if (timeBadge && hasAudioTime) {
+        timeBadge.addEventListener('click', () => {
+          const currentStart = stn.audioStart !== null ? stn.audioStart : 0;
+          const currentEnd = stn.audioEnd !== null ? stn.audioEnd : 0;
+          const inputStr = prompt(`문장 S${idx + 1} 오디오 구간 (초 단위) 수정:\n예: 3.5 ~ 8.2`, `${currentStart} ~ ${currentEnd}`);
+          if (inputStr) {
+            const parts = inputStr.split('~').map(s => parseFloat(s.trim()));
+            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] > parts[0]) {
+              stn.audioStart = Math.round(parts[0] * 10) / 10;
+              stn.audioEnd = Math.round(parts[1] * 10) / 10;
+              stn.cachedPeaks = null;
+              timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+              toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
+            } else {
+              toast.show('⚠️ 올바른 시간 형식(예: 3.5 ~ 8.2)을 입력하세요.');
+            }
+          }
+        });
+      }
+
+      // 5. Render Interactive Word-Divider Track & Inputs
+      const track = itemCard.querySelector('.word-divider-track');
+      const scriptInput = itemCard.querySelector('.sentence-script-input');
+      const naturalInput = itemCard.querySelector('.sentence-natural-input');
+      const chunkInput = itemCard.querySelector('.chunk-text-input');
+      const directInput = itemCard.querySelector('.chunk-direct-input');
+      const retransBtn = itemCard.querySelector('.btn-retranslate');
+
+      if (track) {
+        this.renderWordDividerTrack(track, stn, chunkInput, directInput);
+      }
+
+      // 6. Hook up Retranslate Button
+      if (retransBtn) {
+        retransBtn.addEventListener('click', () => {
+          this.retranslateSentence(stn, naturalInput);
+        });
+      }
+
+      // 7. Hook up Script Input
       if (scriptInput) {
         scriptInput.addEventListener('change', () => {
-          this.updateSentenceScript(stn, scriptInput.value, chunkInput, track);
+          this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
         });
         scriptInput.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            this.updateSentenceScript(stn, scriptInput.value, chunkInput, track);
+            this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
           }
         });
       }
 
-      // 4. Hook up Chunk Text Input
+      // 8. Hook up Chunk Text Input (English ||)
       if (chunkInput) {
         chunkInput.addEventListener('change', () => {
-          this.updateChunksFromTextInput(stn, chunkInput.value, track);
+          this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
         });
         chunkInput.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            this.updateChunksFromTextInput(stn, chunkInput.value, track);
+            this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
           }
         });
       }
 
-      // 5. Hook up Natural Korean Input
+      // 9. Hook up Direct Chunk Input (Korean ||)
+      if (directInput) {
+        directInput.addEventListener('change', () => {
+          this.updateChunksFromDirectInput(stn, directInput.value);
+        });
+        directInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            this.updateChunksFromDirectInput(stn, directInput.value);
+          }
+        });
+      }
+
+      // 10. Hook up Natural Korean Input
       if (naturalInput) {
         naturalInput.addEventListener('input', () => {
           if (!stn.result) stn.result = {};
@@ -2968,7 +3581,7 @@ class InputView {
     }, 100);
   }
 
-  renderWordDividerTrack(track, stn, chunkInput) {
+  renderWordDividerTrack(track, stn, chunkInput, directInput) {
     if (!track) return;
     track.innerHTML = '';
 
@@ -2978,10 +3591,10 @@ class InputView {
     // Determine current boundary word indices
     const boundaryWordIndices = new Set();
     let runningWordCount = 0;
-    (stn.result.chunks || []).forEach((c, cIdx) => {
+    (stn.result?.chunks || []).forEach((c, cIdx) => {
       const cWords = (c.en || '').trim().split(/\s+/).filter(Boolean);
       runningWordCount += cWords.length;
-      if (cIdx < (stn.result.chunks || []).length - 1 && runningWordCount > 0 && runningWordCount < words.length) {
+      if (cIdx < (stn.result?.chunks || []).length - 1 && runningWordCount > 0 && runningWordCount < words.length) {
         boundaryWordIndices.add(runningWordCount - 1);
       }
     });
@@ -3011,7 +3624,10 @@ class InputView {
           if (chunkInput) {
             chunkInput.value = this.getChunkString(stn.result.chunks);
           }
-          this.renderWordDividerTrack(track, stn, chunkInput);
+          if (directInput) {
+            directInput.value = this.getDirectChunkString(stn.result.chunks);
+          }
+          this.renderWordDividerTrack(track, stn, chunkInput, directInput);
           toast.show('✂️ 청크 구분이 업데이트되었습니다.');
         });
 
@@ -3037,10 +3653,11 @@ class InputView {
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+    stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
   }
 
-  updateChunksFromTextInput(stn, chunkedText, track) {
+  updateChunksFromTextInput(stn, chunkedText, directInput, track) {
     const parts = (chunkedText || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!parts.length) return;
 
@@ -3054,15 +3671,35 @@ class InputView {
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+    stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
 
+    if (directInput) {
+      directInput.value = this.getDirectChunkString(newChunks);
+    }
     if (track) {
-      this.renderWordDividerTrack(track, stn, null);
+      this.renderWordDividerTrack(track, stn, null, directInput);
     }
     toast.show('✂️ 청크 구분이 저장되었습니다.');
   }
 
-  updateSentenceScript(stn, newText, chunkInput, track) {
+  updateChunksFromDirectInput(stn, directStr) {
+    const parts = (directStr || '').split('||').map(p => p.trim()).filter(Boolean);
+    if (!stn.result) stn.result = {};
+    if (!stn.result.chunks) stn.result.chunks = [];
+
+    stn.result.chunks.forEach((chunk, i) => {
+      if (i < parts.length) {
+        chunk.ko = parts[i];
+      }
+    });
+
+    stn.result.chunk_text = stn.result.chunks.map(c => c.ko).join(' || ');
+    stn.result.direct = stn.result.chunks.map(c => c.ko).join(' / ');
+    toast.show('🧩 직독직해 해석이 저장되었습니다.');
+  }
+
+  async updateSentenceScript(stn, newText, chunkInput, directInput, naturalInput, track) {
     const cleanText = (newText || '').trim();
     if (!cleanText || cleanText === stn.text) return;
     stn.text = cleanText;
@@ -3071,20 +3708,32 @@ class InputView {
     const newResult = this.ruleEngine.process(cleanText);
     if (!stn.result) stn.result = {};
     stn.result.chunks = newResult.chunks;
+    stn.result.chunk_text = newResult.chunk_text;
     stn.result.direct = newResult.direct;
-    if (!stn.result.natural) stn.result.natural = newResult.natural;
     stn.cachedPeaks = null;
 
     if (chunkInput) {
       chunkInput.value = this.getChunkString(stn.result.chunks);
     }
+    if (directInput) {
+      directInput.value = this.getDirectChunkString(stn.result.chunks);
+    }
     if (track) {
-      this.renderWordDividerTrack(track, stn, chunkInput);
+      this.renderWordDividerTrack(track, stn, chunkInput, directInput);
     }
 
     // Sync global script text
     appState.scriptText = (appState.sentenceList || []).map(s => s.text).join(' ');
     toast.show(`📝 문장 S${stn.index + 1} 원문이 수정되었습니다.`);
+
+    // Auto-translate natural in background
+    try {
+      const natural = await aiService.translateNatural(cleanText);
+      if (natural) {
+        stn.result.natural = natural;
+        if (naturalInput) naturalInput.value = natural;
+      }
+    } catch (e) {}
   }
 
   escapeHtml(str) {
@@ -3100,6 +3749,11 @@ class InputView {
   getChunkString(chunks) {
     if (!chunks || !chunks.length) return '';
     return chunks.map(c => (c.en || '').trim()).filter(Boolean).join(' || ');
+  }
+
+  getDirectChunkString(chunks) {
+    if (!chunks || !chunks.length) return '';
+    return chunks.map(c => (c.ko || '').trim()).filter(Boolean).join(' || ');
   }
 
   playOrSpeakSentence(stn, speakBtn) {
@@ -3508,6 +4162,7 @@ class InputView {
 
   onDeactivated() {}
 }
+
 
   // =========================================================================
   // Module: src/views/practice-view.js
@@ -4766,6 +5421,7 @@ class PracticeView {
   }
 }
 
+
   // =========================================================================
   // Module: src/views/memorize-view.js
   // =========================================================================
@@ -5516,6 +6172,7 @@ class MemorizeView {
     }
   }
 }
+
 
   // =========================================================================
   // Module: src/main.js
