@@ -12,7 +12,7 @@
  */
 
 import { appState } from '../core/app-state.js';
-import { splitIntoSentences } from '../core/text-splitter.js';
+import { splitIntoSentences, distributeChunksSequentially } from '../core/text-splitter.js';
 import { aiService } from '../services/ai-service.js';
 import { RuleChunkEngine } from '../core/rule-chunk-engine.js';
 import { decodeAudioFile, getAudioContext } from '../audio/audio-context.js';
@@ -334,13 +334,40 @@ export class InputView {
         const rawSentences = splitIntoSentences(scriptText);
         const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
 
-        const sentenceList = rawSentences.map((stnText, idx) => ({
-          index: idx,
-          text: stnText,
-          audioStart: boundaries[idx]?.start ?? null,
-          audioEnd: boundaries[idx]?.end ?? null,
-          result: idx === 0 ? aiResult : this.ruleEngine.process(stnText)
-        }));
+        // Partition AI chunks sequentially across each sentence so S1 never contains S2/S3 chunks
+        const distributedChunks = distributeChunksSequentially(rawSentences, aiResult.chunks || []);
+
+        const sentenceList = rawSentences.map((stnText, idx) => {
+          let result;
+          const directStn = aiResult.sentences && aiResult.sentences[idx];
+          if (directStn && directStn.chunks && directStn.chunks.length > 0) {
+            result = {
+              natural: directStn.natural || this.ruleEngine.process(stnText).natural || '',
+              chunk_text: directStn.chunks.map(c => c.ko).join(' || '),
+              direct: directStn.chunks.map(c => c.ko).join(' / '),
+              chunks: directStn.chunks
+            };
+          } else {
+            const stnChunks = distributedChunks[idx] || [];
+            if (stnChunks.length > 0) {
+              result = {
+                natural: (idx === 0 && rawSentences.length === 1 ? aiResult.natural : this.ruleEngine.process(stnText).natural) || '',
+                chunk_text: stnChunks.map(c => c.ko).join(' || '),
+                direct: stnChunks.map(c => c.ko).join(' / '),
+                chunks: stnChunks
+              };
+            } else {
+              result = this.ruleEngine.process(stnText);
+            }
+          }
+          return {
+            index: idx,
+            text: stnText,
+            audioStart: boundaries[idx]?.start ?? null,
+            audioEnd: boundaries[idx]?.end ?? null,
+            result
+          };
+        });
 
         appState.scriptText = scriptText;
         appState.setSentenceList(sentenceList);

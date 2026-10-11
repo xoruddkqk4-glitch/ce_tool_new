@@ -19,7 +19,7 @@ import { WaveformRenderer } from '../audio/waveform-renderer.js';
 import { LooperEngine, formatPreciseTime, formatTime } from '../audio/looper-engine.js';
 import { speakText } from '../audio/tts-synthesizer.js';
 import { toast } from '../ui/toast-manager.js';
-import { splitIntoSentences } from '../core/text-splitter.js';
+import { splitIntoSentences, distributeChunksSequentially } from '../core/text-splitter.js';
 
 export class PracticeView {
   constructor(router) {
@@ -356,6 +356,35 @@ export class PracticeView {
       }
     }
 
+    // Sanity check: Ensure this sentence does not contain foreign chunks belonging to other sentences
+    if (appState.sentenceList.length > 1 && targetStn.result?.chunks?.length > 1) {
+      const otherSentences = appState.sentenceList.filter((_, sIdx) => sIdx !== idx).map(s => s.text);
+      const hasForeignChunks = targetStn.result.chunks.some(chunk => {
+        const cEn = (chunk.en || '').trim().toLowerCase();
+        if (!cEn) return false;
+        const inTarget = targetStn.text.toLowerCase().includes(cEn);
+        const inOthers = otherSentences.some(stn => stn.toLowerCase().includes(cEn));
+        return !inTarget && inOthers;
+      });
+
+      if (hasForeignChunks) {
+        const allForeignAndLocalChunks = [...targetStn.result.chunks];
+        const rawSentences = appState.sentenceList.map(s => s.text);
+        const partitioned = distributeChunksSequentially(rawSentences, allForeignAndLocalChunks);
+
+        partitioned.forEach((pChunks, pIdx) => {
+          if (pChunks.length > 0 && appState.sentenceList[pIdx]) {
+            appState.sentenceList[pIdx].result = {
+              ...(appState.sentenceList[pIdx].result || {}),
+              chunks: pChunks,
+              chunk_text: pChunks.map(c => c.ko).join(' || '),
+              direct: pChunks.map(c => c.ko).join(' / ')
+            };
+          }
+        });
+      }
+    }
+
     // Extract peaks if not yet cached
     if (!targetStn.cachedPeaks) {
       targetStn.cachedPeaks = WaveformRenderer.extractSentencePeaks(appState.audioBuffer, targetStn);
@@ -422,7 +451,12 @@ export class PracticeView {
       // Word container for FELS mode
       const felsWrap = document.createElement('div');
       felsWrap.className = 'chunk-tokens-wrap chunk-tokens-fels';
-      if (!appState.isFelsMode) felsWrap.style.display = 'none';
+      if (!appState.isFelsMode) {
+        felsWrap.classList.add('hidden');
+        felsWrap.style.display = 'none';
+      } else {
+        felsWrap.style.display = 'inline-flex';
+      }
 
       const words = (chunk.en || '').trim().split(/\s+/).filter(Boolean);
       words.forEach((word) => {
@@ -439,8 +473,8 @@ export class PracticeView {
           input.setAttribute('data-original', word);
           input.setAttribute('data-category', felsInfo.label);
           input.placeholder = '[  ]';
-          input.style.width = `${Math.min(94, Math.max(54, felsInfo.clean.length * 12 + 18))}px`;
-          input.style.maxWidth = '100px';
+          input.style.width = `${Math.min(84, Math.max(46, felsInfo.clean.length * 10 + 16))}px`;
+          input.style.maxWidth = '90px';
           input.spellcheck = false;
           input.autocomplete = 'off';
 
@@ -486,7 +520,12 @@ export class PracticeView {
       // Original English Text Container
       const origWrap = document.createElement('div');
       origWrap.className = 'chunk-tokens-original';
-      if (appState.isFelsMode) origWrap.style.display = 'none';
+      if (appState.isFelsMode) {
+        origWrap.classList.add('hidden');
+        origWrap.style.display = 'none';
+      } else {
+        origWrap.style.display = 'inline-flex';
+      }
 
       words.forEach((word) => {
         const origSpan = document.createElement('span');
@@ -568,26 +607,32 @@ export class PracticeView {
       let wKo = 0;
 
       if (felsWrap) {
+        const wasHidden = felsWrap.classList.contains('hidden');
+        felsWrap.classList.remove('hidden');
         const prevDisp = felsWrap.style.display;
         felsWrap.style.display = 'inline-flex';
         wFels = felsWrap.scrollWidth || 0;
         felsWrap.style.display = prevDisp;
+        if (wasHidden) felsWrap.classList.add('hidden');
       }
 
       if (origWrap) {
+        const wasHidden = origWrap.classList.contains('hidden');
+        origWrap.classList.remove('hidden');
         const prevDisp = origWrap.style.display;
         origWrap.style.display = 'inline-flex';
         wOrig = origWrap.scrollWidth || 0;
         origWrap.style.display = prevDisp;
+        if (wasHidden) origWrap.classList.add('hidden');
       }
 
       if (koWrap) {
         wKo = koWrap.scrollWidth || 0;
       }
 
-      // Dynamic width per card based on content length (no uniform width)
+      // Dynamic width per card based on content length with minimal padding
       const contentWidth = Math.max(wFels, wOrig, wKo);
-      const finalCardWidth = Math.max(84, contentWidth + 32);
+      const finalCardWidth = Math.max(36, contentWidth + 14);
 
       card.style.flex = '0 0 auto';
       card.style.width = `${finalCardWidth}px`;
@@ -775,11 +820,15 @@ export class PracticeView {
 
       if (felsWrap && origWrap) {
         if (appState.isFelsMode) {
+          felsWrap.classList.remove('hidden');
           felsWrap.style.display = 'inline-flex';
+          origWrap.classList.add('hidden');
           origWrap.style.display = 'none';
         } else {
+          felsWrap.classList.add('hidden');
           felsWrap.style.display = 'none';
-          origWrap.style.display = 'flex';
+          origWrap.classList.remove('hidden');
+          origWrap.style.display = 'inline-flex';
         }
       }
 
@@ -955,11 +1004,8 @@ export class PracticeView {
           timeStr = ` (${formatTime(stn.audioStart)})`;
         }
 
-        chip.innerHTML = `
-          <span class="chip-num">S${idx + 1}</span>
-          <span class="chip-preview">${stn.text.slice(0, 18)}${stn.text.length > 18 ? '...' : ''}</span>
-          <span class="chip-time">${timeStr}</span>
-        `;
+        chip.innerHTML = `<span class="chip-num">S${idx + 1}</span>`;
+        chip.title = `${stn.text}${timeStr ? ' ' + timeStr : ''}`;
 
         chip.addEventListener('click', () => {
           appState.setActiveSentenceIndex(idx);

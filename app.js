@@ -38,8 +38,13 @@ const CONSTANTS = {
   GEMINI_CANDIDATE_MODELS: [
     'gemini-2.5-flash',
     'gemini-2.0-flash',
+    'gemini-2.0-flash-exp',
     'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-002',
+    'gemini-1.5-flash-001',
     'gemini-1.5-flash',
+    'gemini-2.5-pro',
+    'gemini-1.5-pro-latest',
     'gemini-1.5-pro'
   ]
 };
@@ -361,15 +366,71 @@ const PRESETS = {
 function splitIntoSentences(text) {
   if (!text) return [];
   const abbreviations = ['mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'vs', 'etc', 'eg', 'ie', 'u.s', 'e.g', 'i.e'];
-  let processed = text.replace(/(\d+)\.(\d+)/g, '$1__DECIMAL_DOT__$2');
+  let processed = text.replace(/\.{2,}/g, '__ELLIPSIS__');
+  processed = processed.replace(/(\d+)\.(\d+)/g, '$1__DECIMAL_DOT__$2');
   abbreviations.forEach(abbr => {
     const re = new RegExp('\\b' + abbr.replace('.', '\\.') + '\\.', 'gi');
     processed = processed.replace(re, match => match.slice(0, -1) + '__ABBR_DOT__');
   });
   const parts = processed.split(/(?<=[.?!])\s+|\n+/);
   return parts
-    .map(p => p.replace(/__DECIMAL_DOT__/g, '.').replace(/__ABBR_DOT__/g, '.').trim())
+    .map(p => p.replace(/__ELLIPSIS__/g, '...').replace(/__DECIMAL_DOT__/g, '.').replace(/__ABBR_DOT__/g, '.').trim())
     .filter(Boolean);
+}
+
+/**
+ * Resiliently partitions flat chunks across split sentences,
+ * ensuring S1 never contains chunks from S2 or S3.
+ */
+function distributeChunksSequentially(rawSentences, chunks) {
+  if (!rawSentences || !rawSentences.length) return [];
+  if (!chunks || !chunks.length) return rawSentences.map(() => []);
+
+  const clean = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let currentStnIdx = 0;
+  const result = rawSentences.map(() => []);
+
+  for (const chunk of chunks) {
+    const chunkEnClean = clean(chunk.en);
+    if (!chunkEnClean) continue;
+
+    let foundIdx = -1;
+
+    // First try: Verbatim check in sentences starting from currentStnIdx
+    for (let i = currentStnIdx; i < rawSentences.length; i++) {
+      const stnClean = clean(rawSentences[i]);
+      if (stnClean.includes(chunkEnClean)) {
+        foundIdx = i;
+        break;
+      }
+    }
+
+    // Second try: Keyword / word-level match if punctuation differs
+    if (foundIdx === -1) {
+      const chunkWords = chunkEnClean.split(' ').map(w => w.replace(/[^a-z0-9]/g, '')).filter(w => w.length > 1);
+      for (let i = currentStnIdx; i < rawSentences.length; i++) {
+        const stnWords = clean(rawSentences[i]).split(' ').map(w => w.replace(/[^a-z0-9]/g, '')).filter(Boolean);
+        const matchCount = chunkWords.filter(w => stnWords.includes(w)).length;
+        if (matchCount > 0 && matchCount >= Math.min(2, chunkWords.length)) {
+          foundIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (foundIdx !== -1) {
+      currentStnIdx = foundIdx;
+      result[currentStnIdx].push(chunk);
+    } else {
+      if (currentStnIdx < rawSentences.length) {
+        result[currentStnIdx].push(chunk);
+      } else {
+        result[rawSentences.length - 1].push(chunk);
+      }
+    }
+  }
+
+  return result;
 }
 
   // =========================================================================
@@ -992,17 +1053,7 @@ class AIService {
       return this.activeGeminiModel;
     }
 
-    const priorityOrder = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-exp',
-      'gemini-1.5-flash-latest',
-      'gemini-1.5-flash-002',
-      'gemini-1.5-flash-001',
-      'gemini-2.5-pro',
-      'gemini-1.5-pro-latest',
-      'gemini-1.5-pro'
-    ];
+    const priorityOrder = CONSTANTS.GEMINI_CANDIDATE_MODELS;
 
     try {
       const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}`;
@@ -1133,13 +1184,22 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
 2. Translate into natural Korean (SOV order) in "natural".
 3. Provide chunk-based sequential interpretation with " || " in "chunk_text".
 4. Provide chunk breakdown array in "chunks": [{ "en": "...", "ko": "..." }]
+5. If there are multiple sentences, also provide a "sentences" array where each element contains:
+   { "text": "English sentence", "natural": "Korean natural translation", "chunks": [{ "en": "...", "ko": "..." }] }
 
 Respond ONLY with valid JSON:
 {
   "script": "transcribed English text",
   "natural": "...",
   "chunk_text": "...",
-  "chunks": [{ "en": "...", "ko": "..." }]
+  "chunks": [{ "en": "...", "ko": "..." }],
+  "sentences": [
+    {
+      "text": "...",
+      "natural": "...",
+      "chunks": [{ "en": "...", "ko": "..." }]
+    }
+  ]
 }`;
 
     if (this.provider === 'gemini') {
@@ -2201,6 +2261,11 @@ class ShortcutManager {
     // PAGE 3: Memorization Shortcuts (Number keys 1~9 and Keypad 1~9)
     // =========================================================================
     if (currentPage === 'memorize') {
+      const classroomModal = document.getElementById('classroomModal');
+      if (classroomModal && !classroomModal.classList.contains('hidden')) {
+        return;
+      }
+
       let num = null;
       if (e.code && /^Digit([1-9])$/.test(e.code)) {
         num = parseInt(e.code.replace('Digit', ''), 10);
@@ -2644,13 +2709,40 @@ class InputView {
         const rawSentences = splitIntoSentences(scriptText);
         const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
 
-        const sentenceList = rawSentences.map((stnText, idx) => ({
-          index: idx,
-          text: stnText,
-          audioStart: boundaries[idx]?.start ?? null,
-          audioEnd: boundaries[idx]?.end ?? null,
-          result: idx === 0 ? aiResult : this.ruleEngine.process(stnText)
-        }));
+        // Partition AI chunks sequentially across each sentence so S1 never contains S2/S3 chunks
+        const distributedChunks = distributeChunksSequentially(rawSentences, aiResult.chunks || []);
+
+        const sentenceList = rawSentences.map((stnText, idx) => {
+          let result;
+          const directStn = aiResult.sentences && aiResult.sentences[idx];
+          if (directStn && directStn.chunks && directStn.chunks.length > 0) {
+            result = {
+              natural: directStn.natural || this.ruleEngine.process(stnText).natural || '',
+              chunk_text: directStn.chunks.map(c => c.ko).join(' || '),
+              direct: directStn.chunks.map(c => c.ko).join(' / '),
+              chunks: directStn.chunks
+            };
+          } else {
+            const stnChunks = distributedChunks[idx] || [];
+            if (stnChunks.length > 0) {
+              result = {
+                natural: (idx === 0 && rawSentences.length === 1 ? aiResult.natural : this.ruleEngine.process(stnText).natural) || '',
+                chunk_text: stnChunks.map(c => c.ko).join(' || '),
+                direct: stnChunks.map(c => c.ko).join(' / '),
+                chunks: stnChunks
+              };
+            } else {
+              result = this.ruleEngine.process(stnText);
+            }
+          }
+          return {
+            index: idx,
+            text: stnText,
+            audioStart: boundaries[idx]?.start ?? null,
+            audioEnd: boundaries[idx]?.end ?? null,
+            result
+          };
+        });
 
         appState.scriptText = scriptText;
         appState.setSentenceList(sentenceList);
@@ -3651,6 +3743,35 @@ class PracticeView {
       }
     }
 
+    // Sanity check: Ensure this sentence does not contain foreign chunks belonging to other sentences
+    if (appState.sentenceList.length > 1 && targetStn.result?.chunks?.length > 1) {
+      const otherSentences = appState.sentenceList.filter((_, sIdx) => sIdx !== idx).map(s => s.text);
+      const hasForeignChunks = targetStn.result.chunks.some(chunk => {
+        const cEn = (chunk.en || '').trim().toLowerCase();
+        if (!cEn) return false;
+        const inTarget = targetStn.text.toLowerCase().includes(cEn);
+        const inOthers = otherSentences.some(stn => stn.toLowerCase().includes(cEn));
+        return !inTarget && inOthers;
+      });
+
+      if (hasForeignChunks) {
+        const allForeignAndLocalChunks = [...targetStn.result.chunks];
+        const rawSentences = appState.sentenceList.map(s => s.text);
+        const partitioned = distributeChunksSequentially(rawSentences, allForeignAndLocalChunks);
+
+        partitioned.forEach((pChunks, pIdx) => {
+          if (pChunks.length > 0 && appState.sentenceList[pIdx]) {
+            appState.sentenceList[pIdx].result = {
+              ...(appState.sentenceList[pIdx].result || {}),
+              chunks: pChunks,
+              chunk_text: pChunks.map(c => c.ko).join(' || '),
+              direct: pChunks.map(c => c.ko).join(' / ')
+            };
+          }
+        });
+      }
+    }
+
     // Extract peaks if not yet cached
     if (!targetStn.cachedPeaks) {
       targetStn.cachedPeaks = WaveformRenderer.extractSentencePeaks(appState.audioBuffer, targetStn);
@@ -3717,7 +3838,12 @@ class PracticeView {
       // Word container for FELS mode
       const felsWrap = document.createElement('div');
       felsWrap.className = 'chunk-tokens-wrap chunk-tokens-fels';
-      if (!appState.isFelsMode) felsWrap.style.display = 'none';
+      if (!appState.isFelsMode) {
+        felsWrap.classList.add('hidden');
+        felsWrap.style.display = 'none';
+      } else {
+        felsWrap.style.display = 'inline-flex';
+      }
 
       const words = (chunk.en || '').trim().split(/\s+/).filter(Boolean);
       words.forEach((word) => {
@@ -3734,8 +3860,8 @@ class PracticeView {
           input.setAttribute('data-original', word);
           input.setAttribute('data-category', felsInfo.label);
           input.placeholder = '[  ]';
-          input.style.width = `${Math.min(94, Math.max(54, felsInfo.clean.length * 12 + 18))}px`;
-          input.style.maxWidth = '100px';
+          input.style.width = `${Math.min(84, Math.max(46, felsInfo.clean.length * 10 + 16))}px`;
+          input.style.maxWidth = '90px';
           input.spellcheck = false;
           input.autocomplete = 'off';
 
@@ -3781,7 +3907,12 @@ class PracticeView {
       // Original English Text Container
       const origWrap = document.createElement('div');
       origWrap.className = 'chunk-tokens-original';
-      if (appState.isFelsMode) origWrap.style.display = 'none';
+      if (appState.isFelsMode) {
+        origWrap.classList.add('hidden');
+        origWrap.style.display = 'none';
+      } else {
+        origWrap.style.display = 'inline-flex';
+      }
 
       words.forEach((word) => {
         const origSpan = document.createElement('span');
@@ -3863,26 +3994,32 @@ class PracticeView {
       let wKo = 0;
 
       if (felsWrap) {
+        const wasHidden = felsWrap.classList.contains('hidden');
+        felsWrap.classList.remove('hidden');
         const prevDisp = felsWrap.style.display;
         felsWrap.style.display = 'inline-flex';
         wFels = felsWrap.scrollWidth || 0;
         felsWrap.style.display = prevDisp;
+        if (wasHidden) felsWrap.classList.add('hidden');
       }
 
       if (origWrap) {
+        const wasHidden = origWrap.classList.contains('hidden');
+        origWrap.classList.remove('hidden');
         const prevDisp = origWrap.style.display;
         origWrap.style.display = 'inline-flex';
         wOrig = origWrap.scrollWidth || 0;
         origWrap.style.display = prevDisp;
+        if (wasHidden) origWrap.classList.add('hidden');
       }
 
       if (koWrap) {
         wKo = koWrap.scrollWidth || 0;
       }
 
-      // Dynamic width per card based on content length (no uniform width)
+      // Dynamic width per card based on content length with minimal padding
       const contentWidth = Math.max(wFels, wOrig, wKo);
-      const finalCardWidth = Math.max(84, contentWidth + 32);
+      const finalCardWidth = Math.max(36, contentWidth + 14);
 
       card.style.flex = '0 0 auto';
       card.style.width = `${finalCardWidth}px`;
@@ -4070,11 +4207,15 @@ class PracticeView {
 
       if (felsWrap && origWrap) {
         if (appState.isFelsMode) {
+          felsWrap.classList.remove('hidden');
           felsWrap.style.display = 'inline-flex';
+          origWrap.classList.add('hidden');
           origWrap.style.display = 'none';
         } else {
+          felsWrap.classList.add('hidden');
           felsWrap.style.display = 'none';
-          origWrap.style.display = 'flex';
+          origWrap.classList.remove('hidden');
+          origWrap.style.display = 'inline-flex';
         }
       }
 
@@ -4250,11 +4391,8 @@ class PracticeView {
           timeStr = ` (${formatTime(stn.audioStart)})`;
         }
 
-        chip.innerHTML = `
-          <span class="chip-num">S${idx + 1}</span>
-          <span class="chip-preview">${stn.text.slice(0, 18)}${stn.text.length > 18 ? '...' : ''}</span>
-          <span class="chip-time">${timeStr}</span>
-        `;
+        chip.innerHTML = `<span class="chip-num">S${idx + 1}</span>`;
+        chip.title = `${stn.text}${timeStr ? ' ' + timeStr : ''}`;
 
         chip.addEventListener('click', () => {
           appState.setActiveSentenceIndex(idx);
@@ -4517,6 +4655,25 @@ class MemorizeView {
     this.activeRowIndex = 0;
     this.nativeAudioPlayer = document.getElementById('nativeAudioPlayer');
 
+    // Classroom Large Presentation Modal Elements
+    this.classroomModal = document.getElementById('classroomModal');
+    this.classroomStnBadge = document.getElementById('classroomStnBadge');
+    this.classroomStnCounter = document.getElementById('classroomStnCounter');
+    this.classroomFullText = document.getElementById('classroomFullText');
+    this.classroomChunksContainer = document.getElementById('classroomChunksContainer');
+    this.classroomNaturalSection = document.getElementById('classroomNaturalSection');
+    this.classroomNaturalText = document.getElementById('classroomNaturalText');
+    this.btnToggleClassroomNatural = document.getElementById('btnToggleClassroomNatural');
+    this.btnClassroomPlay = document.getElementById('btnClassroomPlay');
+    this.btnClassroomFlipAll = document.getElementById('btnClassroomFlipAll');
+    this.btnClassroomPrev = document.getElementById('btnClassroomPrev');
+    this.btnClassroomNext = document.getElementById('btnClassroomNext');
+    this.btnCloseClassroomModal = document.getElementById('btnCloseClassroomModal');
+    this.classroomIndex = 0;
+    this.isClassroomNaturalHidden = false;
+    this.areClassroomCardsFlipped = false;
+    this.boundClassroomKeyHandler = this.handleClassroomKeyDown.bind(this);
+
     this.initEvents();
   }
 
@@ -4547,6 +4704,31 @@ class MemorizeView {
     appState.on('activeSentenceChanged', ({ index }) => {
       this.setActiveRow(index);
     });
+
+    // Classroom Large Modal Events
+    if (this.btnCloseClassroomModal) {
+      this.btnCloseClassroomModal.addEventListener('click', () => this.closeClassroomModal());
+    }
+    if (this.classroomModal) {
+      this.classroomModal.addEventListener('click', (e) => {
+        if (e.target === this.classroomModal) this.closeClassroomModal();
+      });
+    }
+    if (this.btnClassroomPrev) {
+      this.btnClassroomPrev.addEventListener('click', () => this.prevClassroomSentence());
+    }
+    if (this.btnClassroomNext) {
+      this.btnClassroomNext.addEventListener('click', () => this.nextClassroomSentence());
+    }
+    if (this.btnClassroomPlay) {
+      this.btnClassroomPlay.addEventListener('click', () => this.playSingleSentence(this.classroomIndex));
+    }
+    if (this.btnClassroomFlipAll) {
+      this.btnClassroomFlipAll.addEventListener('click', () => this.flipAllClassroomCards());
+    }
+    if (this.btnToggleClassroomNatural) {
+      this.btnToggleClassroomNatural.addEventListener('click', () => this.toggleClassroomNatural());
+    }
   }
 
   setMemorizeMode(mode) {
@@ -4610,7 +4792,7 @@ class MemorizeView {
         this.setActiveRow(sIdx);
       });
 
-      // Sentence Header (S1, S2, jump to practice)
+      // Sentence Header (S1, S2, jump to practice, expand classroom modal)
       const sHeader = document.createElement('div');
       sHeader.className = 'memorize-sentence-header';
       sHeader.innerHTML = `
@@ -4618,7 +4800,8 @@ class MemorizeView {
           <span>S${sIdx + 1}</span>
           <span class="jump-icon">↗</span>
         </button>
-        <span class="memorize-stn-preview">${stn.text}</span>
+        <span class="memorize-stn-preview" title="클릭하여 교실 대형 화면으로 보기">${stn.text}</span>
+        <button class="memorize-stn-expand-btn" title="교실 대형 화면으로 크게 보기 (모달)">🔍 크게 보기</button>
         <button class="memorize-stn-play" title="이 문장 듣기">▶</button>
       `;
 
@@ -4630,6 +4813,28 @@ class MemorizeView {
           this.router.navigateTo('practice');
         });
       }
+
+      // Expand to classroom modal
+      const expandBtn = sHeader.querySelector('.memorize-stn-expand-btn');
+      if (expandBtn) {
+        expandBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.openClassroomModal(sIdx);
+        });
+      }
+
+      const previewSpan = sHeader.querySelector('.memorize-stn-preview');
+      if (previewSpan) {
+        previewSpan.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.openClassroomModal(sIdx);
+        });
+      }
+
+      // Double-click row to open classroom modal
+      sRow.addEventListener('dblclick', () => {
+        this.openClassroomModal(sIdx);
+      });
 
       // Play this sentence
       const playBtn = sHeader.querySelector('.memorize-stn-play');
@@ -4653,11 +4858,11 @@ class MemorizeView {
         const keyNum = cIdx + 1;
         const keyBadge = keyNum <= 9 ? `<span class="memorize-key-badge" title="숫자키 [${keyNum}] 뒤집기">${keyNum}</span>` : '';
 
-        // Dynamic width per card based on content length
+        // Dynamic width per card based on content length with minimal padding
         const enLen = (chunk.en || '').trim().length;
         const koLen = (chunk.ko || '').trim().length;
         const estContentWidth = Math.max(enLen * 10, koLen * 15);
-        const cardWidth = Math.max(76, Math.round(estContentWidth + 36));
+        const cardWidth = Math.max(36, Math.round(estContentWidth + 14));
         cCard.style.width = `${cardWidth}px`;
         cCard.style.flex = '0 0 auto';
 
@@ -4895,6 +5100,206 @@ class MemorizeView {
     }
   }
 
+  // --- Classroom Large Presentation Modal Methods ---
+
+  openClassroomModal(sIdx) {
+    const list = appState.sentenceList;
+    if (!list || sIdx < 0 || sIdx >= list.length) return;
+
+    this.classroomIndex = sIdx;
+    this.isClassroomNaturalHidden = false;
+    this.areClassroomCardsFlipped = false;
+
+    this.renderClassroomModal();
+    if (this.classroomModal) {
+      this.classroomModal.classList.remove('hidden');
+    }
+    window.addEventListener('keydown', this.boundClassroomKeyHandler);
+    toast.show(`🖥️ 문장 S${sIdx + 1} 교실 대형 화면 열림`);
+  }
+
+  closeClassroomModal() {
+    if (this.classroomModal) {
+      this.classroomModal.classList.add('hidden');
+    }
+    window.removeEventListener('keydown', this.boundClassroomKeyHandler);
+  }
+
+  isClassroomModalOpen() {
+    return this.classroomModal && !this.classroomModal.classList.contains('hidden');
+  }
+
+  prevClassroomSentence() {
+    if (this.classroomIndex > 0) {
+      this.classroomIndex--;
+      this.areClassroomCardsFlipped = false;
+      this.renderClassroomModal();
+    }
+  }
+
+  nextClassroomSentence() {
+    const list = appState.sentenceList;
+    if (list && this.classroomIndex < list.length - 1) {
+      this.classroomIndex++;
+      this.areClassroomCardsFlipped = false;
+      this.renderClassroomModal();
+    }
+  }
+
+  flipAllClassroomCards() {
+    this.areClassroomCardsFlipped = !this.areClassroomCardsFlipped;
+    if (!this.classroomChunksContainer) return;
+    const cards = this.classroomChunksContainer.querySelectorAll('.classroom-chunk-card');
+    cards.forEach(card => {
+      card.classList.toggle('flipped', this.areClassroomCardsFlipped);
+    });
+    toast.show(this.areClassroomCardsFlipped ? '🔄 모든 청크 뒷면(해석)으로 뒤집기' : '🔄 모든 청크 앞면(영어)으로 뒤집기');
+  }
+
+  toggleClassroomNatural() {
+    this.isClassroomNaturalHidden = !this.isClassroomNaturalHidden;
+    if (this.classroomNaturalSection) {
+      this.classroomNaturalSection.classList.toggle('masked', this.isClassroomNaturalHidden);
+    }
+    toast.show(this.isClassroomNaturalHidden ? '우리말 해석 가림' : '우리말 해석 표시');
+  }
+
+  flipClassroomCardByIndex(cIdx) {
+    if (!this.classroomChunksContainer) return;
+    const card = this.classroomChunksContainer.querySelector(`.classroom-chunk-card[data-c-idx="${cIdx}"]`);
+    if (card) {
+      card.classList.toggle('flipped');
+      toast.show(`청크 #${cIdx + 1} 뒤집기`);
+    }
+  }
+
+  handleClassroomKeyDown(e) {
+    if (!this.isClassroomModalOpen()) return;
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.closeClassroomModal();
+      return;
+    }
+
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.prevClassroomSentence();
+      return;
+    }
+
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.nextClassroomSentence();
+      return;
+    }
+
+    if (e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.playSingleSentence(this.classroomIndex);
+      return;
+    }
+
+    if (e.key === 'f' || e.key === 'F') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.flipAllClassroomCards();
+      return;
+    }
+
+    if (e.key === 't' || e.key === 'T') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.toggleClassroomNatural();
+      return;
+    }
+
+    // Number keys 1~9
+    let num = null;
+    if (e.code && /^Digit([1-9])$/.test(e.code)) {
+      num = parseInt(e.code.replace('Digit', ''), 10);
+    } else if (e.code && /^Numpad([1-9])$/.test(e.code)) {
+      num = parseInt(e.code.replace('Numpad', ''), 10);
+    } else if (e.key >= '1' && e.key <= '9') {
+      num = parseInt(e.key, 10);
+    }
+
+    if (num !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.flipClassroomCardByIndex(num - 1);
+    }
+  }
+
+  renderClassroomModal() {
+    const list = appState.sentenceList;
+    if (!list || this.classroomIndex < 0 || this.classroomIndex >= list.length) return;
+    const stn = list[this.classroomIndex];
+
+    if (this.classroomStnBadge) {
+      this.classroomStnBadge.textContent = `S${this.classroomIndex + 1}`;
+    }
+    if (this.classroomStnCounter) {
+      this.classroomStnCounter.textContent = `${this.classroomIndex + 1} / ${list.length} 문장`;
+    }
+    if (this.btnClassroomPrev) {
+      this.btnClassroomPrev.disabled = (this.classroomIndex <= 0);
+    }
+    if (this.btnClassroomNext) {
+      this.btnClassroomNext.disabled = (this.classroomIndex >= list.length - 1);
+    }
+
+    if (this.classroomFullText) {
+      this.classroomFullText.textContent = stn.text || '';
+    }
+
+    if (this.classroomNaturalText) {
+      this.classroomNaturalText.textContent = stn.result?.natural || '';
+    }
+    if (this.classroomNaturalSection) {
+      this.classroomNaturalSection.classList.toggle('masked', this.isClassroomNaturalHidden);
+    }
+
+    if (this.classroomChunksContainer) {
+      this.classroomChunksContainer.innerHTML = '';
+      const chunks = stn.result?.chunks || [{ en: stn.text, ko: stn.result?.natural || '' }];
+
+      chunks.forEach((chunk, cIdx) => {
+        const card = document.createElement('div');
+        card.className = 'classroom-chunk-card';
+        card.setAttribute('data-c-idx', cIdx);
+        if (this.areClassroomCardsFlipped) {
+          card.classList.add('flipped');
+        }
+
+        const keyNum = cIdx + 1;
+        const keyBadge = keyNum <= 9 ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
+
+        card.innerHTML = `
+          <div class="classroom-card-inner">
+            ${keyBadge}
+            <div class="classroom-face classroom-face-en">
+              <span class="classroom-chunk-text">${chunk.en || ''}</span>
+            </div>
+            <div class="classroom-face classroom-face-ko">
+              <span class="classroom-chunk-text">${chunk.ko || ''}</span>
+            </div>
+          </div>
+        `;
+
+        card.addEventListener('click', () => {
+          card.classList.toggle('flipped');
+        });
+
+        this.classroomChunksContainer.appendChild(card);
+      });
+    }
+  }
+
   onActivated() {
     this.activeRowIndex = appState.activeSentenceIndex || 0;
     this.renderFullScriptCanvas();
@@ -4904,6 +5309,9 @@ class MemorizeView {
   onDeactivated() {
     if (this.isPlayingAll) {
       this.stopPlayAllScript();
+    }
+    if (this.isClassroomModalOpen()) {
+      this.closeClassroomModal();
     }
   }
 }

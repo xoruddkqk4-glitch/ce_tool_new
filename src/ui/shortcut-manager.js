@@ -58,6 +58,11 @@ export class ShortcutManager {
     // PAGE 3: Memorization Shortcuts (Number keys 1~9 and Keypad 1~9)
     // =========================================================================
     if (currentPage === 'memorize') {
+      const classroomModal = document.getElementById('classroomModal');
+      if (classroomModal && !classroomModal.classList.contains('hidden')) {
+        return;
+      }
+
       let num = null;
       if (e.code && /^Digit([1-9])$/.test(e.code)) {
         num = parseInt(e.code.replace('Digit', ''), 10);

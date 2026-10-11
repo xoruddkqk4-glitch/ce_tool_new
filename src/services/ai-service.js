@@ -34,17 +34,7 @@ export class AIService {
       return this.activeGeminiModel;
     }
 
-    const priorityOrder = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-exp',
-      'gemini-1.5-flash-latest',
-      'gemini-1.5-flash-002',
-      'gemini-1.5-flash-001',
-      'gemini-2.5-pro',
-      'gemini-1.5-pro-latest',
-      'gemini-1.5-pro'
-    ];
+    const priorityOrder = CONSTANTS.GEMINI_CANDIDATE_MODELS;
 
     try {
       const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}`;
@@ -175,13 +165,22 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
 2. Translate into natural Korean (SOV order) in "natural".
 3. Provide chunk-based sequential interpretation with " || " in "chunk_text".
 4. Provide chunk breakdown array in "chunks": [{ "en": "...", "ko": "..." }]
+5. If there are multiple sentences, also provide a "sentences" array where each element contains:
+   { "text": "English sentence", "natural": "Korean natural translation", "chunks": [{ "en": "...", "ko": "..." }] }
 
 Respond ONLY with valid JSON:
 {
   "script": "transcribed English text",
   "natural": "...",
   "chunk_text": "...",
-  "chunks": [{ "en": "...", "ko": "..." }]
+  "chunks": [{ "en": "...", "ko": "..." }],
+  "sentences": [
+    {
+      "text": "...",
+      "natural": "...",
+      "chunks": [{ "en": "...", "ko": "..." }]
+    }
+  ]
 }`;
 
     if (this.provider === 'gemini') {

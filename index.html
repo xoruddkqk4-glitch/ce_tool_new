@@ -48,35 +48,6 @@
       </div>
     </header>
 
-    <!-- ④ [상단 고정 도킹] 문장 자동 분류 네비게이터 (#sentenceNavigator) -->
-    <nav id="sentenceNavigator" class="sentence-navigator-bar hidden">
-      <div class="nav-controls-left">
-        <button id="btnPrevSentence" class="stn-nav-btn" title="이전 문장 (← 키)" type="button">
-          <span>◀ 이전 문장</span>
-          <kbd>←</kbd>
-        </button>
-        <span class="stn-count-indicator">
-          <span id="currentSentenceNum" class="current">1</span> / <span id="totalSentenceNum">1</span>
-        </span>
-        <button id="btnNextSentence" class="stn-nav-btn" title="다음 문장 (→ 키)" type="button">
-          <kbd>→</kbd>
-          <span>다음 문장 ▶</span>
-        </button>
-      </div>
-
-      <!-- Horizontal Sentence Chips Track -->
-      <div id="sentenceChipsTrack" class="sentence-chips-track">
-        <!-- Dynamically populated sentence chips -->
-      </div>
-
-      <div class="nav-settings-right">
-        <label class="auto-advance-label" title="반복 완료 시 다음 문장으로 자동 이동">
-          <input type="checkbox" id="chkAutoAdvance">
-          <span>자동 다음 문장</span>
-        </label>
-      </div>
-    </nav>
-
     <!-- Main Views Container -->
     <main class="main-content">
       
@@ -203,6 +174,35 @@
       <!-- ================================================================= -->
       <div id="view-practice" class="view-container hidden">
         
+        <!-- ④ [상단 고정 도킹] 문장 자동 분류 네비게이터 (#sentenceNavigator) -->
+        <nav id="sentenceNavigator" class="sentence-navigator-bar">
+          <div class="nav-controls-left">
+            <button id="btnPrevSentence" class="stn-nav-btn" title="이전 문장 (← 키)" type="button">
+              <span>◀ 이전 문장</span>
+              <kbd>←</kbd>
+            </button>
+            <span class="stn-count-indicator">
+              <span id="currentSentenceNum" class="current">1</span> / <span id="totalSentenceNum">1</span>
+            </span>
+            <button id="btnNextSentence" class="stn-nav-btn" title="다음 문장 (→ 키)" type="button">
+              <kbd>→</kbd>
+              <span>다음 문장 ▶</span>
+            </button>
+          </div>
+
+          <!-- Horizontal Sentence Chips Track -->
+          <div id="sentenceChipsTrack" class="sentence-chips-track">
+            <!-- Dynamically populated sentence chips -->
+          </div>
+
+          <div class="nav-settings-right">
+            <label class="auto-advance-label" title="반복 완료 시 다음 문장으로 자동 이동">
+              <input type="checkbox" id="chkAutoAdvance">
+              <span>자동 다음 문장</span>
+            </label>
+          </div>
+        </nav>
+
         <!-- ① [상단: 2 비율] 약형드랩 기반 청크 학습 카드 (#rowChunks) -->
         <section id="rowChunks" class="glass-card output-row practice-card-panel" tabindex="0">
           <div class="row-header">
@@ -431,6 +431,61 @@
         </div>
         <div class="modal-footer">
           <button id="btnSaveSettings" class="primary-btn" type="button">저장하기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Classroom Large Presentation Modal for Page 3 (교실 수업용 대형 문장 모달) -->
+    <div id="classroomModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="classroomModalTitle">
+      <div class="modal-card classroom-modal-card">
+        <div class="modal-header classroom-modal-header">
+          <div class="classroom-header-left">
+            <span id="classroomStnBadge" class="classroom-stn-badge">S1</span>
+            <div class="classroom-title-wrap">
+              <h3 id="classroomModalTitle" class="classroom-modal-title">교실 수업용 대형 화면</h3>
+              <span id="classroomStnCounter" class="classroom-stn-counter">1 / 1 문장</span>
+            </div>
+          </div>
+          <div class="classroom-header-actions">
+            <button id="btnClassroomPlay" class="action-pill-btn btn-primary-pill" type="button" title="문장 음성 재생/일시정지 (Space)">
+              <span class="classroom-play-icon">▶</span>
+              <span class="classroom-play-label">음성 듣기</span>
+            </button>
+            <button id="btnClassroomFlipAll" class="action-pill-btn" type="button" title="모든 청크 뒤집기 (F)">
+              <span>🔄 전체 뒤집기</span>
+            </button>
+            <button id="btnClassroomPrev" class="icon-btn" type="button" title="이전 문장 (←)">◀</button>
+            <button id="btnClassroomNext" class="icon-btn" type="button" title="다음 문장 (→)">▶</button>
+            <button id="btnCloseClassroomModal" class="icon-btn" type="button" title="닫기 (ESC)">✕</button>
+          </div>
+        </div>
+
+        <div class="modal-body classroom-modal-body">
+          <!-- Full English Original Sentence -->
+          <div class="classroom-sentence-full">
+            <span class="classroom-full-tag">원문</span>
+            <p id="classroomFullText" class="classroom-full-text"></p>
+          </div>
+
+          <!-- Classroom Huge Chunk Cards Grid -->
+          <div id="classroomChunksContainer" class="classroom-chunks-container">
+            <!-- Dynamically populated with large interactive chunk cards -->
+          </div>
+
+          <!-- Natural Korean Translation (Collapsible / Toggleable) -->
+          <div id="classroomNaturalSection" class="classroom-natural-section">
+            <div class="classroom-natural-header">
+              <span class="natural-tag">우리말 해석</span>
+              <button id="btnToggleClassroomNatural" class="classroom-sub-btn" type="button">해석 가리기/보기 (T)</button>
+            </div>
+            <p id="classroomNaturalText" class="classroom-natural-text"></p>
+          </div>
+        </div>
+
+        <div class="modal-footer classroom-modal-footer">
+          <div class="classroom-tips">
+            <span>💡 <strong>단축키:</strong> 숫자 [1]~[9] 청크 뒤집기 | [←] [→] 문장 이동 | [Space] 듣기 | [F] 전체 뒤집기 | [T] 해석 토글 | [ESC] 닫기</span>
+          </div>
         </div>
       </div>
     </div>
