@@ -99,6 +99,24 @@ export class ShortcutManager {
       }
     }
 
+    // Number keys 1~9: flip practice chunk cards (Page 2)
+    let practiceNum = null;
+    if (e.code && /^Digit([1-9])$/.test(e.code)) {
+      practiceNum = parseInt(e.code.replace('Digit', ''), 10);
+    } else if (e.code && /^Numpad([1-9])$/.test(e.code)) {
+      practiceNum = parseInt(e.code.replace('Numpad', ''), 10);
+    } else if (e.key >= '1' && e.key <= '9') {
+      practiceNum = parseInt(e.key, 10);
+    }
+
+    if (practiceNum !== null) {
+      e.preventDefault();
+      if (this.handlers.onFlipPracticeCard) {
+        this.handlers.onFlipPracticeCard(practiceNum);
+      }
+      return;
+    }
+
     const key = e.key;
 
     // 1. Space: togglePlayPause

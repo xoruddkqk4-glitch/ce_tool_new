@@ -693,7 +693,7 @@ input, textarea {
   gap: 6px;
   width: 100%;
   min-height: 62px;
-  padding: 4px 0;
+  padding: 4px 0 14px 0;
   box-sizing: border-box;
 }
 
@@ -701,8 +701,8 @@ input, textarea {
 .chunk-card-3d {
   perspective: 1000px;
   position: relative;
-  height: 58px;
-  min-height: 58px;
+  height: 62px;
+  min-height: 62px;
   flex: 0 0 auto !important;
   width: max-content;
   min-width: 36px;
@@ -729,13 +729,35 @@ input, textarea {
   transform: rotateY(180deg);
 }
 
+/* Number Shortcut Badge (1 to 9) on Page 2 Practice Cards */
+.practice-key-badge {
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  z-index: 10;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.35);
+  border: 1px solid rgba(99, 102, 241, 0.6);
+  color: #c7d2fe;
+  font-size: 0.65rem;
+  font-weight: 800;
+  font-family: monospace;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
 .card-face {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   border-radius: var(--radius-md);
-  padding: 6px 8px;
+  padding: 4px 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -744,7 +766,7 @@ input, textarea {
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: visible;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -858,9 +880,10 @@ input, textarea {
 }
 
 .fels-input-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
   white-space: nowrap !important;
   flex-shrink: 0;
 }
@@ -909,19 +932,34 @@ input, textarea {
 
 .fels-answer-reveal {
   position: absolute;
-  top: -22px;
+  top: calc(100% + 2px);
   left: 50%;
   transform: translateX(-50%);
   background: #10b981;
-  color: #0f172a;
-  font-size: 0.72rem;
+  color: #ffffff;
+  border: 1px solid #34d399;
+  font-size: 0.74rem;
   font-weight: 800;
   padding: 1px 6px;
   border-radius: 4px;
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 8px rgba(16, 185, 129, 0.5);
+  z-index: 30;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  animation: felsFadeInDown 0.22s ease-out;
+}
+
+@keyframes felsFadeInDown {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .fels-punct {
@@ -1067,6 +1105,20 @@ input, textarea {
 
 [data-theme="light"] .chunk-card-3d .face-flip-hint {
   color: #e2e8f0;
+}
+
+[data-theme="light"] .chunk-card-3d .practice-key-badge {
+  color: #ffffff !important;
+  background: rgba(99, 102, 241, 0.6) !important;
+  border-color: rgba(99, 102, 241, 0.9) !important;
+}
+
+[data-theme="light"] .fels-answer-reveal {
+  background: #059669 !important;
+  color: #ffffff !important;
+  border-color: #047857 !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 0 8px rgba(16, 185, 129, 0.4) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4) !important;
 }
 
 /* --- File: styles/components/sentence-navigator.css --- */
@@ -1945,12 +1997,21 @@ input, textarea {
    A4 Printable Student Handout Modal & Styles
    ========================================================================= */
 
+#handoutModal.modal-overlay {
+  align-items: flex-start !important;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+
 .handout-modal-card {
   max-width: 960px;
   width: 95vw;
-  max-height: 94vh;
+  height: 92vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
+  margin: 0 auto;
 }
 
 .handout-modal-header {
@@ -2010,26 +2071,56 @@ input, textarea {
 }
 
 .handout-modal-body {
-  overflow-y: auto;
-  background: #3f444e;
-  padding: 24px;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto !important;
+  background: #2b303a;
+  padding: 28px 16px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
 }
 
-/* The A4 Printable Sheet (Portrait 210mm x 297mm) */
+/* The A4 Printable Sheet Container (Holds Front and Back Pages) */
 .a4-printable-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 32px;
+  width: 100%;
+}
+
+/* Individual A4 Page Sheet (Front / Back) - Vertically Top-Aligned */
+.a4-page-sheet {
   width: 210mm;
   min-height: 297mm;
   background: #ffffff;
   color: #111827;
-  padding: 12mm 14mm;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  font-family: 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+  padding: 14mm 16mm;
+  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.45);
+  font-family: 'Pretendard', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   box-sizing: border-box;
+  position: relative;
+}
+
+/* Page Indicator Badge on screen */
+.handout-sheet-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.25);
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  border-radius: 9999px;
+  padding: 4px 14px;
+  margin-bottom: 12px;
 }
 
 /* Handout Internal Styles */
@@ -2053,7 +2144,7 @@ input, textarea {
 .handout-subtitle {
   font-size: 8.5pt;
   color: #475569;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .handout-score-table {
@@ -2102,6 +2193,10 @@ input, textarea {
   background: #ffffff;
 }
 
+.handout-stn-main-row {
+  margin-bottom: 4px;
+}
+
 .handout-stn-num {
   display: inline-block;
   font-weight: 800;
@@ -2147,12 +2242,79 @@ input, textarea {
   border-bottom: 2px solid #2563eb;
 }
 
-.handout-stn-translation {
-  margin-top: 4px;
+/* Back Side Speaking Item */
+.handout-speaking-item {
+  background: #f8fafc;
+  border-left: 4px solid #0284c7;
+}
+
+.handout-speaking-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.handout-direct-ko {
+  font-size: 10.5pt;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.5;
+  flex: 1;
+}
+
+.handout-chunk-box {
+  display: inline-block;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 700;
+  margin: 1px 2px;
+}
+
+.handout-teacher-en-ref {
   font-size: 8.5pt;
   color: #475569;
-  line-height: 1.35;
-  padding-left: 2px;
+  background: #f1f5f9;
+  border: 1px dashed #cbd5e1;
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.handout-speaking-check-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 4px;
+  font-size: 8pt;
+  color: #64748b;
+}
+
+.speaking-check-label {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.check-box-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.handout-line-filler {
+  flex: 1;
+  border-bottom: 1px dashed #94a3b8;
+  height: 12px;
+  display: inline-block;
 }
 
 .handout-dictation-line {
@@ -2169,7 +2331,7 @@ input, textarea {
 .handout-page-footer {
   border-top: 1.5px solid #111827;
   padding-top: 6px;
-  margin-top: 10px;
+  margin-top: auto;
 }
 
 .handout-rules-bar {
@@ -2191,35 +2353,98 @@ input, textarea {
   color: #64748b;
 }
 
-/* Print Specific Rules for A4 Portrait */
+/* Print Specific Rules for A4 Portrait Double-Sided Handout */
 @media print {
   @page {
     size: A4 portrait;
     margin: 8mm 10mm;
   }
 
-  body * {
-    visibility: hidden;
-  }
-
-  #printableSheet, #printableSheet * {
-    visibility: visible;
-  }
-
-  #printableSheet {
-    position: absolute;
-    left: 0;
-    top: 0;
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
     width: 100% !important;
-    height: 100% !important;
-    min-height: auto !important;
+    height: auto !important;
+  }
+
+  /* Hide entire application background and UI */
+  .app-header,
+  .page-nav-tabs,
+  #appMain,
+  .app-footer,
+  .toast-container,
+  .no-print,
+  #settingsModal,
+  #classroomModal,
+  .handout-sheet-label {
+    display: none !important;
+  }
+
+  /* Show handout modal transparently as regular document flow */
+  #handoutModal.modal-overlay {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    z-index: auto !important;
+  }
+
+  .handout-modal-card {
+    border: none !important;
+    background: transparent !important;
     box-shadow: none !important;
     padding: 0 !important;
     margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 0 !important;
   }
 
-  .no-print, .modal-overlay, .app-header, .page-nav-tabs {
-    display: none !important;
+  .handout-modal-body {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    display: block !important;
+  }
+
+  .a4-printable-sheet {
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    gap: 0 !important;
+  }
+
+  .a4-page-sheet {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin: 0 auto !important;
+    padding: 4mm 6mm !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 275mm !important;
+    box-sizing: border-box !important;
+  }
+
+  .a4-page-sheet.a4-page-front,
+  .a4-page-front {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .a4-page-sheet.a4-page-back,
+  .a4-page-back {
+    page-break-after: auto !important;
+    break-after: auto !important;
   }
 }
 
@@ -2735,7 +2960,7 @@ input, textarea {
   min-height: 110px;
   flex: 0 0 auto !important;
   width: max-content;
-  min-width: 80px;
+  min-width: 90px;
   cursor: pointer;
   user-select: none;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2752,6 +2977,18 @@ input, textarea {
   transform-style: preserve-3d;
   transition: transform 0.45s cubic-bezier(0.34, 1.4, 0.64, 1);
   border-radius: 16px;
+}
+
+.classroom-card-sizer {
+  visibility: hidden;
+  height: 0;
+  overflow: hidden;
+  white-space: nowrap !important;
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  padding: 12px 28px;
+  box-sizing: border-box;
 }
 
 .classroom-chunk-card.flipped .classroom-card-inner {
@@ -2784,7 +3021,7 @@ input, textarea {
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   border-radius: 16px;
-  padding: 12px 22px;
+  padding: 12px 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

@@ -2302,6 +2302,24 @@ class ShortcutManager {
       }
     }
 
+    // Number keys 1~9: flip practice chunk cards (Page 2)
+    let practiceNum = null;
+    if (e.code && /^Digit([1-9])$/.test(e.code)) {
+      practiceNum = parseInt(e.code.replace('Digit', ''), 10);
+    } else if (e.code && /^Numpad([1-9])$/.test(e.code)) {
+      practiceNum = parseInt(e.code.replace('Numpad', ''), 10);
+    } else if (e.key >= '1' && e.key <= '9') {
+      practiceNum = parseInt(e.key, 10);
+    }
+
+    if (practiceNum !== null) {
+      e.preventDefault();
+      if (this.handlers.onFlipPracticeCard) {
+        this.handlers.onFlipPracticeCard(practiceNum);
+      }
+      return;
+    }
+
     const key = e.key;
 
     // 1. Space: togglePlayPause
@@ -2575,7 +2593,10 @@ class InputView {
       });
     }
     if (this.btnDoPrint) {
-      this.btnDoPrint.addEventListener('click', () => window.print());
+      this.btnDoPrint.addEventListener('click', () => {
+        toast.show('🖨️ 인쇄 대화상자가 열립니다. [대상: PDF로 저장]을 선택하시면 A4 양면 PDF로 저장됩니다.');
+        setTimeout(() => window.print(), 150);
+      });
     }
     if (this.btnDownloadHtml) {
       this.btnDownloadHtml.addEventListener('click', () => this.downloadHandoutHtml());
@@ -3139,6 +3160,13 @@ class InputView {
     this.renderHandoutSheet();
     if (this.handoutModal) {
       this.handoutModal.classList.remove('hidden');
+      const modalBody = this.handoutModal.querySelector('.handout-modal-body');
+      if (modalBody) {
+        modalBody.scrollTop = 0;
+      }
+      setTimeout(() => {
+        if (modalBody) modalBody.scrollTop = 0;
+      }, 50);
     }
   }
 
@@ -3162,103 +3190,186 @@ class InputView {
 
     const isTeacher = this.handoutMode === 'teacher';
 
-    let sentencesHtml = '';
+    // 1. FRONT PAGE (앞면: 오직 소리 청취 약형드랩만 - 청크 분리 표시 '||' 일체 없음!)
+    let frontSentencesHtml = '';
     sentences.forEach((stn, idx) => {
-      const chunks = stn.result?.chunks || [{ en: stn.text, ko: '' }];
-
-      let chunkSegments = [];
-      chunks.forEach(chunk => {
-        const words = (chunk.en || '').trim().split(/\s+/).filter(Boolean);
-        const wordParts = words.map(w => {
-          const fels = getFelsInfo(w);
-          if (fels) {
-            if (isTeacher) {
-              return `<span class="handout-fels-blank answer-mode">[ ${w} ]</span>`;
-            } else {
-              return `<span class="handout-fels-blank">[&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]</span>`;
-            }
+      // Natural continuous English sentence with FELS blanks, NO chunk divider (' || ')
+      const words = (stn.text || '').trim().split(/\s+/).filter(Boolean);
+      const wordParts = words.map(w => {
+        const fels = getFelsInfo(w);
+        if (fels) {
+          if (isTeacher) {
+            return `<span class="handout-fels-blank answer-mode">[ ${w} ]</span>`;
           } else {
-            return `<span>${w}</span>`;
+            return `<span class="handout-fels-blank">[&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]</span>`;
           }
-        }).join(' ');
-
-        chunkSegments.push(wordParts);
+        } else {
+          return `<span>${w}</span>`;
+        }
       });
 
-      const chunkedSentenceHtml = chunkSegments.join('<span class="handout-chunk-divider"> || </span>');
-      const directKo = chunks.map(c => c.ko).filter(Boolean).join('  ||  ') || stn.result?.natural || '';
+      const naturalSentenceHtml = wordParts.join(' ');
 
-      sentencesHtml += `
+      frontSentencesHtml += `
         <div class="handout-stn-item">
-          <div style="margin-bottom: 3px;">
+          <div class="handout-stn-main-row">
             <span class="handout-stn-num">[${String(idx + 1).padStart(2, '0')}]</span>
-            <div class="handout-stn-text">${chunkedSentenceHtml}</div>
-          </div>
-          <div class="handout-stn-translation">
-            <strong>▶ 직독직해:</strong> ${directKo}
+            <div class="handout-stn-text">${naturalSentenceHtml}</div>
           </div>
           <div class="handout-dictation-line">
-            <span>✍️ 받아쓰기/쉐도잉:</span>
-            <span style="flex: 1; border-bottom: 1px dashed #94a3b8; height: 12px; display: inline-block;"></span>
+            <span>✍️ 받아쓰기 / 메모:</span>
+            <span class="handout-line-filler"></span>
+          </div>
+        </div>
+      `;
+    });
+
+    // 2. BACK PAGE (뒷면: 직독직해 우리말 해석만 - 학생들이 보며 영어 문장 말하기 연습)
+    let backSentencesHtml = '';
+    sentences.forEach((stn, idx) => {
+      const chunks = stn.result?.chunks || [{ en: stn.text, ko: stn.result?.natural || '' }];
+
+      const chunkedKoSegments = chunks.map(c => {
+        const koText = (c.ko || '').trim() || (c.en || '').trim();
+        return `<span class="handout-chunk-box">[ ${koText} ]</span>`;
+      });
+      const chunkedKoHtml = chunkedKoSegments.join('<span class="handout-chunk-divider"> || </span>');
+
+      backSentencesHtml += `
+        <div class="handout-stn-item handout-speaking-item">
+          <div class="handout-speaking-row">
+            <span class="handout-stn-num">[${String(idx + 1).padStart(2, '0')}]</span>
+            <div class="handout-direct-ko">${chunkedKoHtml}</div>
+          </div>
+          ${isTeacher ? `<div class="handout-teacher-en-ref"><strong>[영문 정답]:</strong> ${stn.text}</div>` : ''}
+          <div class="handout-speaking-check-row">
+            <span class="speaking-check-label">🗣️ 말하기 훈련 체크:</span>
+            <span class="check-box-pill">☐ 1차: 청크별 낭독</span>
+            <span class="check-box-pill">☐ 2차: 직독직해 스피킹</span>
+            <span class="check-box-pill">☐ 3차: 유창성 통과</span>
           </div>
         </div>
       `;
     });
 
     this.printableSheet.innerHTML = `
-      <div>
-        <!-- Page Header -->
-        <div class="handout-page-header">
-          <div class="handout-title-area">
-            <h2>CE Tool 문장 단위 약형드랩(FELS) 청크 학습지</h2>
-            <div class="handout-subtitle">
-              ${isTeacher ? '★ [교사용 정답지] 기능어 정답 및 청크 직독직해 가이드' : '★ [학생용 훈련지] 원어민 음성 청취 빈칸 채우기 및 청킹 직독직해'}
+      <!-- ========================================================================= -->
+      <!-- [A4 1페이지 - 앞면: 약형드랩 듣기 훈련지 (우리말 해석 없음 / 소리만 듣고 빈칸 채우기)] -->
+      <!-- ========================================================================= -->
+      <div class="a4-page-sheet a4-page-front">
+        <div class="handout-sheet-label no-print">📄 [A4 1페이지 - 앞면: 약형드랩 듣기 훈련지] (우리말 해석 없음 / 소리 듣고 빈칸 채우기)</div>
+        <div>
+          <!-- Front Header -->
+          <div class="handout-page-header">
+            <div class="handout-title-area">
+              <h2>CE Tool 문장 단위 약형드랩(FELS) 청크 학습지 [앞면]</h2>
+              <div class="handout-subtitle">
+                ${isTeacher ? '★ [교사용 정답지] 기능어 정답 확인용' : '★ [학생용 듣기 훈련지] 원어민 음성 청취 빈칸 채우기 (소리 집중 훈련)'}
+              </div>
             </div>
+            <table class="handout-score-table">
+              <tr>
+                <th>학 번</th>
+                <th>이 름</th>
+                <th>날 짜</th>
+                <th>점 수</th>
+              </tr>
+              <tr>
+                <td style="width: 55px; height: 22px;"></td>
+                <td style="width: 65px;"></td>
+                <td style="width: 75px; font-size: 8pt;">2026. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
+                <td style="width: 60px; font-weight: 700;">&nbsp;&nbsp;&nbsp;&nbsp; / 100</td>
+              </tr>
+            </table>
           </div>
-          <table class="handout-score-table">
-            <tr>
-              <th>학 번</th>
-              <th>이 름</th>
-              <th>날 짜</th>
-              <th>점 수</th>
-            </tr>
-            <tr>
-              <td style="width: 55px; height: 22px;"></td>
-              <td style="width: 65px;"></td>
-              <td style="width: 75px; font-size: 8pt;">2026. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
-              <td style="width: 60px; font-weight: 700;">&nbsp;&nbsp;&nbsp;&nbsp; / 100</td>
-            </tr>
-          </table>
+
+          <!-- Front Instructions -->
+          <div class="handout-instructions-box">
+            <strong>※ [앞면 학습 지침]</strong> 
+            ① 원어민 음성을 집중 청취하고 <strong>[ &nbsp;&nbsp;&nbsp;&nbsp; ]</strong> 빈칸에 들리는 약형 기능어(전치사, 관사, 대명사, 조동사, be동사 등)를 소리만 듣고 바르게 적으세요. 
+            ② 우리말 해석이나 청크 끊기 표시 없이 자연스러운 영어 문장의 소리에만 집중하는 훈련입니다.
+          </div>
+
+          <!-- Front Sentences -->
+          <div class="handout-sentences-container">
+            ${frontSentencesHtml}
+          </div>
         </div>
 
-        <!-- Instructions Box -->
-        <div class="handout-instructions-box">
-          <strong>※ [학습 지침]</strong> 
-          ① 원어민 음성을 집중 청취하고 <strong>[ &nbsp;&nbsp;&nbsp;&nbsp; ]</strong> 빈칸에 들리는 약형 기능어(전치사, 관사, 대명사, 조동사 등)를 바르게 적으세요. 
-          ② <strong>'||'</strong> 기호로 끊긴 청크(의미 덩어리) 단위로 끊어 읽으며 우리말 직독직해와 의미를 대조하세요.
-        </div>
-
-        <!-- Sentences Container -->
-        <div class="handout-sentences-container">
-          ${sentencesHtml}
+        <!-- Front Footer -->
+        <div class="handout-page-footer">
+          <div class="handout-rules-bar">
+            <strong>[FELS 약형 7대 영역]</strong>
+            <span>①관사(a, an, the)</span>
+            <span>②전치사(to, of, in, at, for, on, with)</span>
+            <span>③대명사(it, you, him, her, them, that)</span>
+            <span>④조동사(can, will, would, should)</span>
+            <span>⑤접속사(and, but, that)</span>
+            <span>⑥be동사(is, are, was, were)</span>
+            <span>⑦축약형/부정(n't, 's, 've)</span>
+          </div>
+          <div class="handout-footer-meta">
+            <span>CE Tool • Function-Embedded Listening Skills (FELS) System</span>
+            <span>A4 양면 유인물 • 앞면 (Page 1 of 2)</span>
+          </div>
         </div>
       </div>
 
-      <!-- Page Footer -->
-      <div class="handout-page-footer">
-        <div class="handout-rules-bar">
-          <strong>[FELS 약형 7대 영역]</strong>
-          <span>①관사(a, an, the)</span>
-          <span>②전치사(to, of, in, at, for, on, with)</span>
-          <span>③대명사(it, you, him, her, them, that)</span>
-          <span>④조동사(can, will, would, should)</span>
-          <span>⑤접속사(and, but, that)</span>
-          <span>⑥be동사(is, are, was, were)</span>
-          <span>⑦축약형/부정(n't, 's, 've)</span>
+      <!-- ========================================================================= -->
+      <!-- [A4 2페이지 - 뒷면: 직독직해 말하기 훈련지 (우리말 해석 보며 영어 문장 말하기)] -->
+      <!-- ========================================================================= -->
+      <div class="a4-page-sheet a4-page-back">
+        <div class="handout-sheet-label no-print">📄 [A4 2페이지 - 뒷면: 직독직해 말하기 훈련지] (우리말 해석 보며 영어 문장 말하기 연습)</div>
+        <div>
+          <!-- Back Header -->
+          <div class="handout-page-header">
+            <div class="handout-title-area">
+              <h2>CE Tool 문장 단위 직독직해 말하기 훈련지 [뒷면]</h2>
+              <div class="handout-subtitle">
+                ${isTeacher ? '★ [교사용 가이드] 직독직해 청크 및 영작 모범 답안' : '★ [학생용 스피킹 훈련지] 직독직해 우리말 청크를 보면서 영어 문장 구두 발화하기'}
+              </div>
+            </div>
+            <table class="handout-score-table">
+              <tr>
+                <th>학 번</th>
+                <th>이 름</th>
+                <th>날 짜</th>
+                <th>말하기 평가</th>
+              </tr>
+              <tr>
+                <td style="width: 55px; height: 22px;"></td>
+                <td style="width: 65px;"></td>
+                <td style="width: 75px; font-size: 8pt;">2026. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
+                <td style="width: 60px; font-weight: 700; font-size: 8pt;">[ &nbsp; 통과 &nbsp; ]</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Back Instructions -->
+          <div class="handout-instructions-box">
+            <strong>※ [뒷면 학습 지침]</strong> 
+            ① 청크 단위('||')로 제시된 직독직해 우리말 어순을 보며, 지체 없이 영어 문장을 큰 소리로 말해보세요(직독직해 영작 및 스피킹 훈련). 
+            ② 학생들은 직독직해를 보면서 영어 문장을 구두로 유창하게 말하는 연습을 합니다.
+          </div>
+
+          <!-- Back Sentences -->
+          <div class="handout-sentences-container">
+            ${backSentencesHtml}
+          </div>
         </div>
-        <div class="handout-footer-meta">
-          <span>CE Tool • Function-Embedded Listening Skills (FELS) System</span>
-          <span>A4 Portrait Standard • Page 1 of 1</span>
+
+        <!-- Back Footer -->
+        <div class="handout-page-footer">
+          <div class="handout-rules-bar">
+            <strong>[직독직해 스피킹 3원칙]</strong>
+            <span>① 우리말 어순 그대로 끊어 읽기</span>
+            <span>② 청크를 보는 즉시 0.5초 내 영어 발화</span>
+            <span>③ 막힘없이 연결하여 전체 영어 문장 완성</span>
+          </div>
+          <div class="handout-footer-meta">
+            <span>CE Tool • Chunk Direct Translation & Speaking System</span>
+            <span>A4 양면 유인물 • 뒷면 (Page 2 of 2)</span>
+          </div>
         </div>
       </div>
     `;
@@ -3275,32 +3386,49 @@ class InputView {
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>CE Tool - 문장 단위 약형드랩 유인물</title>
+  <title>CE Tool - A4 양면 약형드랩 & 직독직해 유인물</title>
   <style>
-    @page { size: A4 portrait; margin: 10mm 12mm; }
+    @page { size: A4 portrait; margin: 8mm 10mm; }
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Pretendard", sans-serif; margin: 0; padding: 20px; background: #fff; color: #111827; }
-    .a4-printable-sheet { width: 100%; max-width: 210mm; min-height: 297mm; margin: 0 auto; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Pretendard", sans-serif; margin: 0; padding: 24px; background: #2b303a; color: #111827; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; }
+    .a4-printable-sheet { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 32px; width: 100%; max-width: 210mm; margin: 0 auto; }
+    .a4-page-sheet { width: 100%; min-height: 297mm; background: #ffffff; color: #111827; padding: 14mm 16mm; box-shadow: 0 10px 35px rgba(0,0,0,0.45); display: flex; flex-direction: column; justify-content: flex-start; position: relative; box-sizing: border-box; }
+    .handout-sheet-label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 800; color: #4338ca; background: #e0e7ff; border: 1px solid #c7d2fe; border-radius: 9999px; padding: 4px 14px; margin-bottom: 12px; }
     .handout-page-header { border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-end; }
     .handout-title-area h2 { font-size: 15pt; font-weight: 800; color: #0f172a; margin: 0 0 2px 0; }
-    .handout-subtitle { font-size: 8.5pt; color: #475569; font-weight: 500; }
+    .handout-subtitle { font-size: 8.5pt; color: #475569; font-weight: 600; }
     .handout-score-table { border-collapse: collapse; font-size: 8.5pt; }
     .handout-score-table th, .handout-score-table td { border: 1px solid #64748b; padding: 3px 8px; text-align: center; }
     .handout-score-table th { background: #f1f5f9; font-weight: 700; }
     .handout-instructions-box { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 6px 10px; font-size: 8.5pt; line-height: 1.35; color: #334155; margin-bottom: 12px; }
     .handout-sentences-container { display: flex; flex-direction: column; gap: 10px; flex: 1; }
     .handout-stn-item { border: 1px solid #e2e8f0; border-radius: 5px; padding: 8px 10px; background: #ffffff; }
+    .handout-stn-main-row { margin-bottom: 4px; }
     .handout-stn-num { display: inline-block; font-weight: 800; font-size: 9pt; background: #0f172a; color: #ffffff; padding: 1px 6px; border-radius: 3px; margin-right: 6px; }
     .handout-stn-text { font-size: 10.5pt; font-weight: 600; color: #0f172a; line-height: 1.5; display: inline; }
     .handout-chunk-divider { display: inline-block; color: #0284c7; font-weight: 800; font-family: monospace; margin: 0 4px; }
     .handout-fels-blank { display: inline-block; min-width: 48px; border-bottom: 1.5px solid #0f172a; text-align: center; font-weight: 700; padding: 0 4px; margin: 0 2px; }
     .handout-fels-blank.answer-mode { color: #2563eb; background: #eff6ff; border-bottom: 2px solid #2563eb; }
-    .handout-stn-translation { margin-top: 4px; font-size: 8.5pt; color: #475569; line-height: 1.35; padding-left: 2px; }
     .handout-dictation-line { margin-top: 6px; border-top: 1px dashed #cbd5e1; padding-top: 3px; font-size: 8pt; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
-    .handout-page-footer { border-top: 1.5px solid #111827; padding-top: 6px; margin-top: 10px; }
+    .handout-line-filler { flex: 1; border-bottom: 1px dashed #94a3b8; height: 12px; display: inline-block; }
+    .handout-speaking-item { background: #f8fafc; border-left: 4px solid #0284c7; }
+    .handout-speaking-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+    .handout-direct-ko { font-size: 10.5pt; font-weight: 700; color: #0f172a; line-height: 1.5; flex: 1; }
+    .handout-chunk-box { display: inline-block; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 1px 6px; border-radius: 3px; font-weight: 700; margin: 1px 2px; }
+    .handout-teacher-en-ref { font-size: 8.5pt; color: #475569; background: #f1f5f9; border: 1px dashed #cbd5e1; padding: 3px 8px; border-radius: 4px; margin-bottom: 6px; }
+    .handout-speaking-check-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px dashed #cbd5e1; padding-top: 4px; font-size: 8pt; color: #64748b; }
+    .speaking-check-label { font-weight: 700; color: #0f172a; }
+    .check-box-pill { display: inline-flex; align-items: center; gap: 4px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; padding: 1px 6px; }
+    .handout-page-footer { border-top: 1.5px solid #111827; padding-top: 6px; margin-top: auto; }
     .handout-rules-bar { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 7.8pt; color: #475569; background: #f8fafc; padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; }
     .handout-footer-meta { display: flex; justify-content: space-between; font-size: 7.5pt; color: #64748b; }
-    @media print { body { padding: 0; } .a4-printable-sheet { box-shadow: none; } }
+    @media print {
+      body { padding: 0 !important; background: #ffffff !important; }
+      .a4-printable-sheet { max-width: 100% !important; gap: 0 !important; }
+      .a4-page-sheet { box-shadow: none !important; min-height: 275mm !important; padding: 4mm 6mm !important; page-break-after: always !important; break-after: page !important; }
+      .a4-page-sheet.a4-page-back { page-break-after: auto !important; break-after: auto !important; }
+      .no-print, .handout-sheet-label { display: none !important; }
+    }
   </style>
 </head>
 <body>
@@ -3314,12 +3442,12 @@ class InputView {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `CE_Tool_약형드랩_유인물_${Date.now()}.html`;
+    a.download = `CE_Tool_약형드랩_양면유인물_${Date.now()}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.show('📥 A4 유인물 HTML 파일이 다운로드되었습니다.');
+    toast.show('📥 A4 양면 유인물 HTML 파일이 다운로드되었습니다.');
   }
 
   formatSec(seconds) {
@@ -3869,14 +3997,14 @@ class PracticeView {
           const punctStr = trailingPunct ? trailingPunct[0] : '';
 
           inputWrap.appendChild(input);
+          felsWrap.appendChild(inputWrap);
+
           if (punctStr) {
             const punctSpan = document.createElement('span');
             punctSpan.className = 'fels-punct';
             punctSpan.textContent = punctStr;
-            inputWrap.appendChild(punctSpan);
+            felsWrap.appendChild(punctSpan);
           }
-
-          felsWrap.appendChild(inputWrap);
 
           this.felsBlanks.push({
             inputEl: input,
@@ -3933,6 +4061,15 @@ class PracticeView {
       koWrap.textContent = chunk.ko || '';
 
       backFace.appendChild(koWrap);
+
+      const keyNum = idx + 1;
+      if (keyNum <= 9) {
+        const keyBadge = document.createElement('span');
+        keyBadge.className = 'practice-key-badge';
+        keyBadge.textContent = `${keyNum}`;
+        keyBadge.title = `숫자키 [${keyNum}] 뒤집기`;
+        inner.appendChild(keyBadge);
+      }
 
       inner.appendChild(frontFace);
       inner.appendChild(backFace);
@@ -4017,9 +4154,9 @@ class PracticeView {
         wKo = koWrap.scrollWidth || 0;
       }
 
-      // Dynamic width per card based on content length with minimal padding
+      // Dynamic width per card based on content length with clean breathing room
       const contentWidth = Math.max(wFels, wOrig, wKo);
-      const finalCardWidth = Math.max(36, contentWidth + 14);
+      const finalCardWidth = Math.max(48, Math.ceil(contentWidth + 24));
 
       card.style.flex = '0 0 auto';
       card.style.width = `${finalCardWidth}px`;
@@ -4272,10 +4409,11 @@ class PracticeView {
         item.inputEl.classList.add('is-wrong');
 
         if (parent) {
+          const displayAnswer = item.original ? item.original.replace(/[.,!?;:]+$/, '') : item.answer;
           const revealBadge = document.createElement('span');
           revealBadge.className = 'fels-answer-reveal';
-          revealBadge.textContent = item.answer;
-          revealBadge.title = `기능어: ${item.answer}`;
+          revealBadge.textContent = displayAnswer;
+          revealBadge.title = `정답: ${displayAnswer} (${item.category || '약형'})`;
           parent.appendChild(revealBadge);
         }
       }
@@ -4324,6 +4462,18 @@ class PracticeView {
     });
     this.updateFlipAllButtonUI();
     toast.show(appState.areAllCardsFlipped ? '🔄 모든 카드를 해석(뒷면)으로 뒤집었습니다.' : '🔄 모든 카드를 영어(앞면)로 뒤집었습니다.');
+  }
+
+  flipCardByIndex(num) {
+    if (!this.chunksContainer) return;
+    const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
+    if (!cards || !cards.length) return;
+    const cardIndex = num - 1;
+    if (cardIndex >= 0 && cardIndex < cards.length) {
+      const card = cards[cardIndex];
+      card.classList.toggle('flipped');
+      toast.show(`청크 #${num} 뒤집기`);
+    }
   }
 
   updateFlipAllButtonUI() {
@@ -4861,8 +5011,8 @@ class MemorizeView {
         // Dynamic width per card based on content length with minimal padding
         const enLen = (chunk.en || '').trim().length;
         const koLen = (chunk.ko || '').trim().length;
-        const estContentWidth = Math.max(enLen * 10, koLen * 15);
-        const cardWidth = Math.max(36, Math.round(estContentWidth + 14));
+        const estContentWidth = Math.max(enLen * 11, koLen * 16);
+        const cardWidth = Math.max(48, Math.round(estContentWidth + 24));
         cCard.style.width = `${cardWidth}px`;
         cCard.style.flex = '0 0 auto';
 
@@ -4895,6 +5045,27 @@ class MemorizeView {
 
     if (this.canvasContainer) {
       this.canvasContainer.setAttribute('data-mode', appState.memorizeMode || 'all');
+
+      // Precise measurement to prevent any text clipping on proportional fonts
+      requestAnimationFrame(() => {
+        if (!this.canvasContainer) return;
+        const cards = this.canvasContainer.querySelectorAll('.memorize-chunk-card');
+        cards.forEach(c => {
+          const enEl = c.querySelector('.chunk-en-text');
+          const koEl = c.querySelector('.chunk-ko-text');
+          const wEn = enEl ? enEl.scrollWidth : 0;
+          const wKo = koEl ? koEl.scrollWidth : 0;
+          const maxW = Math.max(wEn, wKo);
+          if (maxW > 0) {
+            const targetW = Math.max(48, maxW + 24);
+            const currentW = parseFloat(c.style.width || '0');
+            if (targetW > currentW) {
+              c.style.width = `${targetW}px`;
+              c.style.minWidth = `${targetW}px`;
+            }
+          }
+        });
+      });
     }
   }
 
@@ -5278,15 +5449,27 @@ class MemorizeView {
 
         const keyNum = cIdx + 1;
         const keyBadge = keyNum <= 9 ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
+        const enText = (chunk.en || '').trim();
+        const koText = (chunk.ko || '').trim();
+        const longestText = enText.length >= koText.length ? enText : koText;
+
+        // Dynamic initial estimation based on 1.75rem bold font
+        const estEn = enText.length * 20;
+        const estKo = koText.length * 28;
+        const estW = Math.max(estEn, estKo) + 64;
+        const initialWidth = Math.max(90, Math.ceil(estW));
+        card.style.width = `${initialWidth}px`;
+        card.style.flex = '0 0 auto';
 
         card.innerHTML = `
           <div class="classroom-card-inner">
+            <div class="classroom-card-sizer" aria-hidden="true">${longestText}</div>
             ${keyBadge}
             <div class="classroom-face classroom-face-en">
-              <span class="classroom-chunk-text">${chunk.en || ''}</span>
+              <span class="classroom-chunk-text">${enText}</span>
             </div>
             <div class="classroom-face classroom-face-ko">
-              <span class="classroom-chunk-text">${chunk.ko || ''}</span>
+              <span class="classroom-chunk-text">${koText}</span>
             </div>
           </div>
         `;
@@ -5296,6 +5479,24 @@ class MemorizeView {
         });
 
         this.classroomChunksContainer.appendChild(card);
+      });
+
+      // Precise DOM measurement after render to guarantee ZERO overflow/clipping
+      requestAnimationFrame(() => {
+        if (!this.classroomChunksContainer) return;
+        const cards = this.classroomChunksContainer.querySelectorAll('.classroom-chunk-card');
+        cards.forEach(c => {
+          const enEl = c.querySelector('.classroom-face-en .classroom-chunk-text');
+          const koEl = c.querySelector('.classroom-face-ko .classroom-chunk-text');
+          const wEn = enEl ? enEl.scrollWidth : 0;
+          const wKo = koEl ? koEl.scrollWidth : 0;
+          const maxTextW = Math.max(wEn, wKo);
+          if (maxTextW > 0) {
+            const targetW = Math.max(90, maxTextW + 64);
+            c.style.width = `${targetW}px`;
+            c.style.minWidth = `${targetW}px`;
+          }
+        });
       });
     }
   }
@@ -5378,6 +5579,7 @@ class CEToolApp {
       onNextSentence: () => this.practiceView.nextSentence(),
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
+      onFlipPracticeCard: (num) => this.practiceView.flipCardByIndex(num),
       onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
       onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),
       getCurrentPage: () => this.router.getCurrentPage(),

@@ -78,7 +78,7 @@
   gap: 6px;
   width: 100%;
   min-height: 62px;
-  padding: 4px 0;
+  padding: 4px 0 14px 0;
   box-sizing: border-box;
 }
 
@@ -86,8 +86,8 @@
 .chunk-card-3d {
   perspective: 1000px;
   position: relative;
-  height: 58px;
-  min-height: 58px;
+  height: 62px;
+  min-height: 62px;
   flex: 0 0 auto !important;
   width: max-content;
   min-width: 36px;
@@ -114,13 +114,35 @@
   transform: rotateY(180deg);
 }
 
+/* Number Shortcut Badge (1 to 9) on Page 2 Practice Cards */
+.practice-key-badge {
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  z-index: 10;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.35);
+  border: 1px solid rgba(99, 102, 241, 0.6);
+  color: #c7d2fe;
+  font-size: 0.65rem;
+  font-weight: 800;
+  font-family: monospace;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
 .card-face {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   border-radius: var(--radius-md);
-  padding: 6px 8px;
+  padding: 4px 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -129,7 +151,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: visible;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -243,9 +265,10 @@
 }
 
 .fels-input-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
   white-space: nowrap !important;
   flex-shrink: 0;
 }
@@ -294,19 +317,34 @@
 
 .fels-answer-reveal {
   position: absolute;
-  top: -22px;
+  top: calc(100% + 2px);
   left: 50%;
   transform: translateX(-50%);
   background: #10b981;
-  color: #0f172a;
-  font-size: 0.72rem;
+  color: #ffffff;
+  border: 1px solid #34d399;
+  font-size: 0.74rem;
   font-weight: 800;
   padding: 1px 6px;
   border-radius: 4px;
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 8px rgba(16, 185, 129, 0.5);
+  z-index: 30;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  animation: felsFadeInDown 0.22s ease-out;
+}
+
+@keyframes felsFadeInDown {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .fels-punct {
@@ -453,4 +491,19 @@
 [data-theme="light"] .chunk-card-3d .face-flip-hint {
   color: #e2e8f0;
 }
+
+[data-theme="light"] .chunk-card-3d .practice-key-badge {
+  color: #ffffff !important;
+  background: rgba(99, 102, 241, 0.6) !important;
+  border-color: rgba(99, 102, 241, 0.9) !important;
+}
+
+[data-theme="light"] .fels-answer-reveal {
+  background: #059669 !important;
+  color: #ffffff !important;
+  border-color: #047857 !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 0 8px rgba(16, 185, 129, 0.4) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+}
+
 

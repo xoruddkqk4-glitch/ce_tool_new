@@ -56,6 +56,7 @@ class CEToolApp {
       onNextSentence: () => this.practiceView.nextSentence(),
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
+      onFlipPracticeCard: (num) => this.practiceView.flipCardByIndex(num),
       onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
       onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),
       getCurrentPage: () => this.router.getCurrentPage(),

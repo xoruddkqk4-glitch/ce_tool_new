@@ -482,14 +482,14 @@ export class PracticeView {
           const punctStr = trailingPunct ? trailingPunct[0] : '';
 
           inputWrap.appendChild(input);
+          felsWrap.appendChild(inputWrap);
+
           if (punctStr) {
             const punctSpan = document.createElement('span');
             punctSpan.className = 'fels-punct';
             punctSpan.textContent = punctStr;
-            inputWrap.appendChild(punctSpan);
+            felsWrap.appendChild(punctSpan);
           }
-
-          felsWrap.appendChild(inputWrap);
 
           this.felsBlanks.push({
             inputEl: input,
@@ -546,6 +546,15 @@ export class PracticeView {
       koWrap.textContent = chunk.ko || '';
 
       backFace.appendChild(koWrap);
+
+      const keyNum = idx + 1;
+      if (keyNum <= 9) {
+        const keyBadge = document.createElement('span');
+        keyBadge.className = 'practice-key-badge';
+        keyBadge.textContent = `${keyNum}`;
+        keyBadge.title = `숫자키 [${keyNum}] 뒤집기`;
+        inner.appendChild(keyBadge);
+      }
 
       inner.appendChild(frontFace);
       inner.appendChild(backFace);
@@ -630,9 +639,9 @@ export class PracticeView {
         wKo = koWrap.scrollWidth || 0;
       }
 
-      // Dynamic width per card based on content length with minimal padding
+      // Dynamic width per card based on content length with clean breathing room
       const contentWidth = Math.max(wFels, wOrig, wKo);
-      const finalCardWidth = Math.max(36, contentWidth + 14);
+      const finalCardWidth = Math.max(48, Math.ceil(contentWidth + 24));
 
       card.style.flex = '0 0 auto';
       card.style.width = `${finalCardWidth}px`;
@@ -885,10 +894,11 @@ export class PracticeView {
         item.inputEl.classList.add('is-wrong');
 
         if (parent) {
+          const displayAnswer = item.original ? item.original.replace(/[.,!?;:]+$/, '') : item.answer;
           const revealBadge = document.createElement('span');
           revealBadge.className = 'fels-answer-reveal';
-          revealBadge.textContent = item.answer;
-          revealBadge.title = `기능어: ${item.answer}`;
+          revealBadge.textContent = displayAnswer;
+          revealBadge.title = `정답: ${displayAnswer} (${item.category || '약형'})`;
           parent.appendChild(revealBadge);
         }
       }
@@ -937,6 +947,18 @@ export class PracticeView {
     });
     this.updateFlipAllButtonUI();
     toast.show(appState.areAllCardsFlipped ? '🔄 모든 카드를 해석(뒷면)으로 뒤집었습니다.' : '🔄 모든 카드를 영어(앞면)로 뒤집었습니다.');
+  }
+
+  flipCardByIndex(num) {
+    if (!this.chunksContainer) return;
+    const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
+    if (!cards || !cards.length) return;
+    const cardIndex = num - 1;
+    if (cardIndex >= 0 && cardIndex < cards.length) {
+      const card = cards[cardIndex];
+      card.classList.toggle('flipped');
+      toast.show(`청크 #${num} 뒤집기`);
+    }
   }
 
   updateFlipAllButtonUI() {

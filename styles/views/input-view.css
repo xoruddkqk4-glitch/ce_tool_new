@@ -545,12 +545,21 @@
    A4 Printable Student Handout Modal & Styles
    ========================================================================= */
 
+#handoutModal.modal-overlay {
+  align-items: flex-start !important;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+
 .handout-modal-card {
   max-width: 960px;
   width: 95vw;
-  max-height: 94vh;
+  height: 92vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
+  margin: 0 auto;
 }
 
 .handout-modal-header {
@@ -610,26 +619,56 @@
 }
 
 .handout-modal-body {
-  overflow-y: auto;
-  background: #3f444e;
-  padding: 24px;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto !important;
+  background: #2b303a;
+  padding: 28px 16px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
 }
 
-/* The A4 Printable Sheet (Portrait 210mm x 297mm) */
+/* The A4 Printable Sheet Container (Holds Front and Back Pages) */
 .a4-printable-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 32px;
+  width: 100%;
+}
+
+/* Individual A4 Page Sheet (Front / Back) - Vertically Top-Aligned */
+.a4-page-sheet {
   width: 210mm;
   min-height: 297mm;
   background: #ffffff;
   color: #111827;
-  padding: 12mm 14mm;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  font-family: 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+  padding: 14mm 16mm;
+  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.45);
+  font-family: 'Pretendard', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   box-sizing: border-box;
+  position: relative;
+}
+
+/* Page Indicator Badge on screen */
+.handout-sheet-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.25);
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  border-radius: 9999px;
+  padding: 4px 14px;
+  margin-bottom: 12px;
 }
 
 /* Handout Internal Styles */
@@ -653,7 +692,7 @@
 .handout-subtitle {
   font-size: 8.5pt;
   color: #475569;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .handout-score-table {
@@ -702,6 +741,10 @@
   background: #ffffff;
 }
 
+.handout-stn-main-row {
+  margin-bottom: 4px;
+}
+
 .handout-stn-num {
   display: inline-block;
   font-weight: 800;
@@ -747,12 +790,79 @@
   border-bottom: 2px solid #2563eb;
 }
 
-.handout-stn-translation {
-  margin-top: 4px;
+/* Back Side Speaking Item */
+.handout-speaking-item {
+  background: #f8fafc;
+  border-left: 4px solid #0284c7;
+}
+
+.handout-speaking-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.handout-direct-ko {
+  font-size: 10.5pt;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.5;
+  flex: 1;
+}
+
+.handout-chunk-box {
+  display: inline-block;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 700;
+  margin: 1px 2px;
+}
+
+.handout-teacher-en-ref {
   font-size: 8.5pt;
   color: #475569;
-  line-height: 1.35;
-  padding-left: 2px;
+  background: #f1f5f9;
+  border: 1px dashed #cbd5e1;
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.handout-speaking-check-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 4px;
+  font-size: 8pt;
+  color: #64748b;
+}
+
+.speaking-check-label {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.check-box-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.handout-line-filler {
+  flex: 1;
+  border-bottom: 1px dashed #94a3b8;
+  height: 12px;
+  display: inline-block;
 }
 
 .handout-dictation-line {
@@ -769,7 +879,7 @@
 .handout-page-footer {
   border-top: 1.5px solid #111827;
   padding-top: 6px;
-  margin-top: 10px;
+  margin-top: auto;
 }
 
 .handout-rules-bar {
@@ -791,34 +901,97 @@
   color: #64748b;
 }
 
-/* Print Specific Rules for A4 Portrait */
+/* Print Specific Rules for A4 Portrait Double-Sided Handout */
 @media print {
   @page {
     size: A4 portrait;
     margin: 8mm 10mm;
   }
 
-  body * {
-    visibility: hidden;
-  }
-
-  #printableSheet, #printableSheet * {
-    visibility: visible;
-  }
-
-  #printableSheet {
-    position: absolute;
-    left: 0;
-    top: 0;
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
     width: 100% !important;
-    height: 100% !important;
-    min-height: auto !important;
+    height: auto !important;
+  }
+
+  /* Hide entire application background and UI */
+  .app-header,
+  .page-nav-tabs,
+  #appMain,
+  .app-footer,
+  .toast-container,
+  .no-print,
+  #settingsModal,
+  #classroomModal,
+  .handout-sheet-label {
+    display: none !important;
+  }
+
+  /* Show handout modal transparently as regular document flow */
+  #handoutModal.modal-overlay {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    z-index: auto !important;
+  }
+
+  .handout-modal-card {
+    border: none !important;
+    background: transparent !important;
     box-shadow: none !important;
     padding: 0 !important;
     margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 0 !important;
   }
 
-  .no-print, .modal-overlay, .app-header, .page-nav-tabs {
-    display: none !important;
+  .handout-modal-body {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    display: block !important;
+  }
+
+  .a4-printable-sheet {
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    gap: 0 !important;
+  }
+
+  .a4-page-sheet {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin: 0 auto !important;
+    padding: 4mm 6mm !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 275mm !important;
+    box-sizing: border-box !important;
+  }
+
+  .a4-page-sheet.a4-page-front,
+  .a4-page-front {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .a4-page-sheet.a4-page-back,
+  .a4-page-back {
+    page-break-after: auto !important;
+    break-after: auto !important;
   }
 }

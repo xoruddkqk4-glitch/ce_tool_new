@@ -239,8 +239,8 @@ export class MemorizeView {
         // Dynamic width per card based on content length with minimal padding
         const enLen = (chunk.en || '').trim().length;
         const koLen = (chunk.ko || '').trim().length;
-        const estContentWidth = Math.max(enLen * 10, koLen * 15);
-        const cardWidth = Math.max(36, Math.round(estContentWidth + 14));
+        const estContentWidth = Math.max(enLen * 11, koLen * 16);
+        const cardWidth = Math.max(48, Math.round(estContentWidth + 24));
         cCard.style.width = `${cardWidth}px`;
         cCard.style.flex = '0 0 auto';
 
@@ -273,6 +273,27 @@ export class MemorizeView {
 
     if (this.canvasContainer) {
       this.canvasContainer.setAttribute('data-mode', appState.memorizeMode || 'all');
+
+      // Precise measurement to prevent any text clipping on proportional fonts
+      requestAnimationFrame(() => {
+        if (!this.canvasContainer) return;
+        const cards = this.canvasContainer.querySelectorAll('.memorize-chunk-card');
+        cards.forEach(c => {
+          const enEl = c.querySelector('.chunk-en-text');
+          const koEl = c.querySelector('.chunk-ko-text');
+          const wEn = enEl ? enEl.scrollWidth : 0;
+          const wKo = koEl ? koEl.scrollWidth : 0;
+          const maxW = Math.max(wEn, wKo);
+          if (maxW > 0) {
+            const targetW = Math.max(48, maxW + 24);
+            const currentW = parseFloat(c.style.width || '0');
+            if (targetW > currentW) {
+              c.style.width = `${targetW}px`;
+              c.style.minWidth = `${targetW}px`;
+            }
+          }
+        });
+      });
     }
   }
 
@@ -656,15 +677,27 @@ export class MemorizeView {
 
         const keyNum = cIdx + 1;
         const keyBadge = keyNum <= 9 ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
+        const enText = (chunk.en || '').trim();
+        const koText = (chunk.ko || '').trim();
+        const longestText = enText.length >= koText.length ? enText : koText;
+
+        // Dynamic initial estimation based on 1.75rem bold font
+        const estEn = enText.length * 20;
+        const estKo = koText.length * 28;
+        const estW = Math.max(estEn, estKo) + 64;
+        const initialWidth = Math.max(90, Math.ceil(estW));
+        card.style.width = `${initialWidth}px`;
+        card.style.flex = '0 0 auto';
 
         card.innerHTML = `
           <div class="classroom-card-inner">
+            <div class="classroom-card-sizer" aria-hidden="true">${longestText}</div>
             ${keyBadge}
             <div class="classroom-face classroom-face-en">
-              <span class="classroom-chunk-text">${chunk.en || ''}</span>
+              <span class="classroom-chunk-text">${enText}</span>
             </div>
             <div class="classroom-face classroom-face-ko">
-              <span class="classroom-chunk-text">${chunk.ko || ''}</span>
+              <span class="classroom-chunk-text">${koText}</span>
             </div>
           </div>
         `;
@@ -674,6 +707,24 @@ export class MemorizeView {
         });
 
         this.classroomChunksContainer.appendChild(card);
+      });
+
+      // Precise DOM measurement after render to guarantee ZERO overflow/clipping
+      requestAnimationFrame(() => {
+        if (!this.classroomChunksContainer) return;
+        const cards = this.classroomChunksContainer.querySelectorAll('.classroom-chunk-card');
+        cards.forEach(c => {
+          const enEl = c.querySelector('.classroom-face-en .classroom-chunk-text');
+          const koEl = c.querySelector('.classroom-face-ko .classroom-chunk-text');
+          const wEn = enEl ? enEl.scrollWidth : 0;
+          const wKo = koEl ? koEl.scrollWidth : 0;
+          const maxTextW = Math.max(wEn, wKo);
+          if (maxTextW > 0) {
+            const targetW = Math.max(90, maxTextW + 64);
+            c.style.width = `${targetW}px`;
+            c.style.minWidth = `${targetW}px`;
+          }
+        });
       });
     }
   }

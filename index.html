@@ -241,9 +241,7 @@
             <span class="placeholder-text">영어 스크립트를 입력하고 실행하면 청크 학습 카드가 생성됩니다.</span>
           </div>
 
-          <div class="practice-card-tip">
-            <span>💡 <strong>팁:</strong> 카드를 클릭하여 해석(뒷면)을 확인하거나, 빈칸에 약형 기능어를 입력 후 [✓ 정답 확인]을 누르세요. (<kbd>Space</kbd> 재생/정지, <kbd>S</kbd> 원문보기, <kbd>T</kbd> 해석보기)</span>
-          </div>
+
         </section>
 
         <!-- ② [중단: 1 비율] 문장 단위 음성 파형 패널 (#audioPlayerSection) -->
@@ -461,30 +459,15 @@
         </div>
 
         <div class="modal-body classroom-modal-body">
-          <!-- Full English Original Sentence -->
-          <div class="classroom-sentence-full">
-            <span class="classroom-full-tag">원문</span>
-            <p id="classroomFullText" class="classroom-full-text"></p>
-          </div>
-
           <!-- Classroom Huge Chunk Cards Grid -->
           <div id="classroomChunksContainer" class="classroom-chunks-container">
             <!-- Dynamically populated with large interactive chunk cards -->
-          </div>
-
-          <!-- Natural Korean Translation (Collapsible / Toggleable) -->
-          <div id="classroomNaturalSection" class="classroom-natural-section">
-            <div class="classroom-natural-header">
-              <span class="natural-tag">우리말 해석</span>
-              <button id="btnToggleClassroomNatural" class="classroom-sub-btn" type="button">해석 가리기/보기 (T)</button>
-            </div>
-            <p id="classroomNaturalText" class="classroom-natural-text"></p>
           </div>
         </div>
 
         <div class="modal-footer classroom-modal-footer">
           <div class="classroom-tips">
-            <span>💡 <strong>단축키:</strong> 숫자 [1]~[9] 청크 뒤집기 | [←] [→] 문장 이동 | [Space] 듣기 | [F] 전체 뒤집기 | [T] 해석 토글 | [ESC] 닫기</span>
+            <span>💡 <strong>단축키:</strong> 숫자 [1]~[9] 청크 뒤집기 | [←] [→] 문장 이동 | [Space] 듣기 | [F] 전체 뒤집기 | [ESC] 닫기</span>
           </div>
         </div>
       </div>
@@ -495,15 +478,15 @@
       <div class="modal-card handout-modal-card">
         <div class="modal-header handout-modal-header no-print">
           <div class="handout-modal-title">
-            <h3>📄 학생용 A4 1장 문장 단위 약형드랩 유인물</h3>
-            <span class="handout-tag">A4 Portrait 최적화</span>
+            <h3>📄 A4 양면 문장 단위 약형드랩 & 직독직해 유인물</h3>
+            <span class="handout-tag">A4 양면 (앞: 약형듣기 / 뒤: 말하기)</span>
           </div>
           <div class="handout-header-controls">
             <div class="handout-type-toggle">
-              <button type="button" id="btnHandoutTypeStudent" class="handout-toggle-btn active">학생용 시험지</button>
-              <button type="button" id="btnHandoutTypeTeacher" class="handout-toggle-btn">교사용 정답지</button>
+              <button type="button" id="btnHandoutTypeStudent" class="handout-toggle-btn active">학생용 (앞:빈칸/뒤:해석)</button>
+              <button type="button" id="btnHandoutTypeTeacher" class="handout-toggle-btn">교사용 (앞:정답/뒤:정답)</button>
             </div>
-            <button id="btnDoPrint" class="action-pill-btn btn-primary-pill" type="button">🖨️ 인쇄 / PDF 저장</button>
+            <button id="btnDoPrint" class="action-pill-btn btn-primary-pill" type="button">🖨️ 인쇄 / PDF 저장 (A4 양면)</button>
             <button id="btnDownloadHtml" class="action-pill-btn" type="button">💾 HTML 다운로드</button>
             <button id="btnCloseHandout" class="icon-btn" type="button">✕</button>
           </div>
