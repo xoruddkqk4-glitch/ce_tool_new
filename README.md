@@ -279,7 +279,7 @@ node scratch/test_page1_editor_and_handout.js
   - `test_user_requirements_v8.js`: 상단 정렬, 슬래시 제거, 스크롤 동작 100% 통과.
   - `test_classroom_modal.js`: 교실 프레젠테이션 모달 기능 100% 통과.
 
-## [2026-10-11 20:55] 업데이트 이력 (Commit ID: a520602)
+## [2026-10-11 20:55] 업데이트 이력 (Commit ID: 02d1c52)
 - **수정 내용**:
   1. **음성-스크립트 자동 Sync(동기화) 기능 구현 (`⚡ 음성-스크립트 자동 Sync`)**:
      - MP3 오디오와 영문 스크립트를 동시 업로드했을 때 발생하는 싱크 불일치 문제를 해결하기 위해 음향 신호 처리 및 AI 기반 자동 동기화 엔진 통합.
