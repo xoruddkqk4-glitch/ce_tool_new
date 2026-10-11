@@ -23,11 +23,6 @@ export class ShortcutManager {
   }
 
   handleKeyDown(e) {
-    // 1. Check if shortcuts should be active (e.g. only on practice view)
-    if (this.handlers.isShortcutActive && !this.handlers.isShortcutActive()) {
-      return;
-    }
-
     const target = e.target;
     const isTyping = target && (
       target.tagName === 'INPUT' ||
@@ -53,6 +48,50 @@ export class ShortcutManager {
     // Ignore if Ctrl/Cmd is pressed (allow browser shortcuts like Ctrl+R, Ctrl+C)
     if (e.ctrlKey || e.metaKey) {
       return;
+    }
+
+    const currentPage = this.handlers.getCurrentPage
+      ? this.handlers.getCurrentPage()
+      : (this.handlers.isShortcutActive && this.handlers.isShortcutActive() ? 'practice' : null);
+
+    // =========================================================================
+    // PAGE 3: Memorization Shortcuts (Number keys 1~9 and Keypad 1~9)
+    // =========================================================================
+    if (currentPage === 'memorize') {
+      let num = null;
+      if (e.code && /^Digit([1-9])$/.test(e.code)) {
+        num = parseInt(e.code.replace('Digit', ''), 10);
+      } else if (e.code && /^Numpad([1-9])$/.test(e.code)) {
+        num = parseInt(e.code.replace('Numpad', ''), 10);
+      } else if (e.key >= '1' && e.key <= '9') {
+        num = parseInt(e.key, 10);
+      }
+
+      if (num !== null) {
+        e.preventDefault();
+        if (this.handlers.onFlipMemorizeCard) {
+          this.handlers.onFlipMemorizeCard(num);
+        }
+        return;
+      }
+
+      if (e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        if (this.handlers.onPlayAllMemorize) {
+          this.handlers.onPlayAllMemorize();
+        }
+        return;
+      }
+      return;
+    }
+
+    // =========================================================================
+    // PAGE 2: Practice View Shortcuts (Space, [, ], \, R, Arrows, S, T)
+    // =========================================================================
+    if (currentPage !== 'practice') {
+      if (this.handlers.isShortcutActive && !this.handlers.isShortcutActive()) {
+        return;
+      }
     }
 
     const key = e.key;

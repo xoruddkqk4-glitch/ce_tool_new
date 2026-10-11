@@ -196,9 +196,28 @@ export class PracticeView {
       this.btnFlipAllCards.addEventListener('click', () => this.toggleFlipAllCards());
     }
 
-    // Row Natural Visibility
+    // Row Natural Visibility (Click mask to reveal, click text to hide)
     if (this.maskCoverNatural) {
       this.maskCoverNatural.addEventListener('click', () => this.setRowNaturalVisibility(true));
+    }
+
+    if (this.txtNatural) {
+      this.txtNatural.addEventListener('click', () => {
+        if (appState.naturalVisible) {
+          this.setRowNaturalVisibility(false);
+        }
+      });
+      this.txtNatural.title = '클릭하여 해석 가리기 (T)';
+    }
+
+    const rowContentNatural = this.rowNatural ? this.rowNatural.querySelector('.row-content') : null;
+    if (rowContentNatural) {
+      rowContentNatural.addEventListener('click', (e) => {
+        if (e.target.closest('#maskCoverNatural')) return;
+        if (appState.naturalVisible) {
+          this.setRowNaturalVisibility(false);
+        }
+      });
     }
 
     const toggleRowNaturalBtn = document.querySelector('[data-target="rowNatural"]');
@@ -540,9 +559,39 @@ export class PracticeView {
     this.stabilizedWidths = [];
 
     cards.forEach((card) => {
-      card.style.flex = '1 1 0px';
-      card.style.minWidth = '0';
-      card.style.width = '';
+      const felsWrap = card.querySelector('.chunk-tokens-fels');
+      const origWrap = card.querySelector('.chunk-tokens-original');
+      const koWrap = card.querySelector('.ko-chunk-content');
+
+      let wFels = 0;
+      let wOrig = 0;
+      let wKo = 0;
+
+      if (felsWrap) {
+        const prevDisp = felsWrap.style.display;
+        felsWrap.style.display = 'inline-flex';
+        wFels = felsWrap.scrollWidth || 0;
+        felsWrap.style.display = prevDisp;
+      }
+
+      if (origWrap) {
+        const prevDisp = origWrap.style.display;
+        origWrap.style.display = 'inline-flex';
+        wOrig = origWrap.scrollWidth || 0;
+        origWrap.style.display = prevDisp;
+      }
+
+      if (koWrap) {
+        wKo = koWrap.scrollWidth || 0;
+      }
+
+      // Dynamic width per card based on content length (no uniform width)
+      const contentWidth = Math.max(wFels, wOrig, wKo);
+      const finalCardWidth = Math.max(84, contentWidth + 32);
+
+      card.style.flex = '0 0 auto';
+      card.style.width = `${finalCardWidth}px`;
+      card.style.minWidth = `${finalCardWidth}px`;
     });
   }
 

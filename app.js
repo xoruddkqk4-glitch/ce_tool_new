@@ -2166,11 +2166,6 @@ class ShortcutManager {
   }
 
   handleKeyDown(e) {
-    // 1. Check if shortcuts should be active (e.g. only on practice view)
-    if (this.handlers.isShortcutActive && !this.handlers.isShortcutActive()) {
-      return;
-    }
-
     const target = e.target;
     const isTyping = target && (
       target.tagName === 'INPUT' ||
@@ -2196,6 +2191,50 @@ class ShortcutManager {
     // Ignore if Ctrl/Cmd is pressed (allow browser shortcuts like Ctrl+R, Ctrl+C)
     if (e.ctrlKey || e.metaKey) {
       return;
+    }
+
+    const currentPage = this.handlers.getCurrentPage
+      ? this.handlers.getCurrentPage()
+      : (this.handlers.isShortcutActive && this.handlers.isShortcutActive() ? 'practice' : null);
+
+    // =========================================================================
+    // PAGE 3: Memorization Shortcuts (Number keys 1~9 and Keypad 1~9)
+    // =========================================================================
+    if (currentPage === 'memorize') {
+      let num = null;
+      if (e.code && /^Digit([1-9])$/.test(e.code)) {
+        num = parseInt(e.code.replace('Digit', ''), 10);
+      } else if (e.code && /^Numpad([1-9])$/.test(e.code)) {
+        num = parseInt(e.code.replace('Numpad', ''), 10);
+      } else if (e.key >= '1' && e.key <= '9') {
+        num = parseInt(e.key, 10);
+      }
+
+      if (num !== null) {
+        e.preventDefault();
+        if (this.handlers.onFlipMemorizeCard) {
+          this.handlers.onFlipMemorizeCard(num);
+        }
+        return;
+      }
+
+      if (e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        if (this.handlers.onPlayAllMemorize) {
+          this.handlers.onPlayAllMemorize();
+        }
+        return;
+      }
+      return;
+    }
+
+    // =========================================================================
+    // PAGE 2: Practice View Shortcuts (Space, [, ], \, R, Arrows, S, T)
+    // =========================================================================
+    if (currentPage !== 'practice') {
+      if (this.handlers.isShortcutActive && !this.handlers.isShortcutActive()) {
+        return;
+      }
     }
 
     const key = e.key;
@@ -3452,9 +3491,28 @@ class PracticeView {
       this.btnFlipAllCards.addEventListener('click', () => this.toggleFlipAllCards());
     }
 
-    // Row Natural Visibility
+    // Row Natural Visibility (Click mask to reveal, click text to hide)
     if (this.maskCoverNatural) {
       this.maskCoverNatural.addEventListener('click', () => this.setRowNaturalVisibility(true));
+    }
+
+    if (this.txtNatural) {
+      this.txtNatural.addEventListener('click', () => {
+        if (appState.naturalVisible) {
+          this.setRowNaturalVisibility(false);
+        }
+      });
+      this.txtNatural.title = '클릭하여 해석 가리기 (T)';
+    }
+
+    const rowContentNatural = this.rowNatural ? this.rowNatural.querySelector('.row-content') : null;
+    if (rowContentNatural) {
+      rowContentNatural.addEventListener('click', (e) => {
+        if (e.target.closest('#maskCoverNatural')) return;
+        if (appState.naturalVisible) {
+          this.setRowNaturalVisibility(false);
+        }
+      });
     }
 
     const toggleRowNaturalBtn = document.querySelector('[data-target="rowNatural"]');
@@ -3796,9 +3854,39 @@ class PracticeView {
     this.stabilizedWidths = [];
 
     cards.forEach((card) => {
-      card.style.flex = '1 1 0px';
-      card.style.minWidth = '0';
-      card.style.width = '';
+      const felsWrap = card.querySelector('.chunk-tokens-fels');
+      const origWrap = card.querySelector('.chunk-tokens-original');
+      const koWrap = card.querySelector('.ko-chunk-content');
+
+      let wFels = 0;
+      let wOrig = 0;
+      let wKo = 0;
+
+      if (felsWrap) {
+        const prevDisp = felsWrap.style.display;
+        felsWrap.style.display = 'inline-flex';
+        wFels = felsWrap.scrollWidth || 0;
+        felsWrap.style.display = prevDisp;
+      }
+
+      if (origWrap) {
+        const prevDisp = origWrap.style.display;
+        origWrap.style.display = 'inline-flex';
+        wOrig = origWrap.scrollWidth || 0;
+        origWrap.style.display = prevDisp;
+      }
+
+      if (koWrap) {
+        wKo = koWrap.scrollWidth || 0;
+      }
+
+      // Dynamic width per card based on content length (no uniform width)
+      const contentWidth = Math.max(wFels, wOrig, wKo);
+      const finalCardWidth = Math.max(84, contentWidth + 32);
+
+      card.style.flex = '0 0 auto';
+      card.style.width = `${finalCardWidth}px`;
+      card.style.minWidth = `${finalCardWidth}px`;
     });
   }
 
@@ -4426,6 +4514,7 @@ class MemorizeView {
 
     this.isPlayingAll = false;
     this.playCurrentSentenceIndex = 0;
+    this.activeRowIndex = 0;
     this.nativeAudioPlayer = document.getElementById('nativeAudioPlayer');
 
     this.initEvents();
@@ -4453,6 +4542,10 @@ class MemorizeView {
     // Listen to sentence updates
     appState.on('sentencesLoaded', () => {
       this.renderFullScriptCanvas();
+    });
+
+    appState.on('activeSentenceChanged', ({ index }) => {
+      this.setActiveRow(index);
     });
   }
 
@@ -4508,6 +4601,14 @@ class MemorizeView {
       const sRow = document.createElement('div');
       sRow.className = 'memorize-sentence-row';
       sRow.setAttribute('data-stn-idx', sIdx);
+      if (sIdx === this.activeRowIndex) {
+        sRow.classList.add('active-row');
+      }
+
+      sRow.addEventListener('click', (e) => {
+        if (e.target.closest('.memorize-stn-badge') || e.target.closest('.memorize-stn-play')) return;
+        this.setActiveRow(sIdx);
+      });
 
       // Sentence Header (S1, S2, jump to practice)
       const sHeader = document.createElement('div');
@@ -4548,8 +4649,21 @@ class MemorizeView {
         cCard.className = 'memorize-chunk-card';
         cCard.setAttribute('data-c-idx', cIdx);
 
+        // Shortcut Key Badge (1 to 9)
+        const keyNum = cIdx + 1;
+        const keyBadge = keyNum <= 9 ? `<span class="memorize-key-badge" title="숫자키 [${keyNum}] 뒤집기">${keyNum}</span>` : '';
+
+        // Dynamic width per card based on content length
+        const enLen = (chunk.en || '').trim().length;
+        const koLen = (chunk.ko || '').trim().length;
+        const estContentWidth = Math.max(enLen * 10, koLen * 15);
+        const cardWidth = Math.max(76, Math.round(estContentWidth + 36));
+        cCard.style.width = `${cardWidth}px`;
+        cCard.style.flex = '0 0 auto';
+
         cCard.innerHTML = `
           <div class="memorize-card-inner">
+            ${keyBadge}
             <div class="memorize-face memorize-face-en">
               <span class="chunk-en-text">${chunk.en}</span>
             </div>
@@ -4560,7 +4674,9 @@ class MemorizeView {
         `;
 
         // Click to toggle individual flip / unmask
-        cCard.addEventListener('click', () => {
+        cCard.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.setActiveRow(sIdx);
           cCard.classList.toggle('flipped');
         });
 
@@ -4750,8 +4866,39 @@ class MemorizeView {
     });
   }
 
+  setActiveRow(idx) {
+    this.activeRowIndex = idx;
+    if (!this.canvasContainer) return;
+    this.canvasContainer.querySelectorAll('.memorize-sentence-row').forEach((r) => {
+      const rowIdx = parseInt(r.getAttribute('data-stn-idx'), 10);
+      r.classList.toggle('active-row', rowIdx === idx);
+    });
+  }
+
+  flipCardByIndex(num) {
+    if (!this.canvasContainer || num < 1 || num > 9) return;
+    const cardIdx = num - 1;
+
+    // Target the active sentence row, playing row, or first row
+    let targetRow = this.canvasContainer.querySelector(`.memorize-sentence-row[data-stn-idx="${this.activeRowIndex}"]`);
+    if (!targetRow) {
+      targetRow = this.canvasContainer.querySelector('.memorize-sentence-row.playing-active')
+        || this.canvasContainer.querySelector('.memorize-sentence-row.active-row')
+        || this.canvasContainer.querySelector('.memorize-sentence-row');
+    }
+
+    if (!targetRow) return;
+
+    const cards = targetRow.querySelectorAll('.memorize-chunk-card');
+    if (cards && cards[cardIdx]) {
+      cards[cardIdx].classList.toggle('flipped');
+    }
+  }
+
   onActivated() {
+    this.activeRowIndex = appState.activeSentenceIndex || 0;
     this.renderFullScriptCanvas();
+    this.setActiveRow(this.activeRowIndex);
   }
 
   onDeactivated() {
@@ -4812,7 +4959,7 @@ class CEToolApp {
     // 4. Initialize Settings Modal
     this.settingsModal = new SettingsModal();
 
-    // 5. Initialize 9 Global Shortcuts
+    // 5. Initialize Global Shortcuts (Page 2 & Page 3)
     this.shortcutManager = new ShortcutManager({
       onPlayPause: () => this.practiceView.togglePlayPause(),
       onSetStart: () => this.practiceView.setRegionStartFromCurrentTime(),
@@ -4823,7 +4970,10 @@ class CEToolApp {
       onNextSentence: () => this.practiceView.nextSentence(),
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
-      isShortcutActive: () => this.router.getCurrentPage() === 'practice'
+      onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
+      onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),
+      getCurrentPage: () => this.router.getCurrentPage(),
+      isShortcutActive: () => ['practice', 'memorize'].includes(this.router.getCurrentPage())
     });
 
     // 6. Navigate to initial page from URL hash or default to 'input'

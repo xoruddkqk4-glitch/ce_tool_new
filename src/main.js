@@ -45,7 +45,7 @@ class CEToolApp {
     // 4. Initialize Settings Modal
     this.settingsModal = new SettingsModal();
 
-    // 5. Initialize 9 Global Shortcuts
+    // 5. Initialize Global Shortcuts (Page 2 & Page 3)
     this.shortcutManager = new ShortcutManager({
       onPlayPause: () => this.practiceView.togglePlayPause(),
       onSetStart: () => this.practiceView.setRegionStartFromCurrentTime(),
@@ -56,7 +56,10 @@ class CEToolApp {
       onNextSentence: () => this.practiceView.nextSentence(),
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
-      isShortcutActive: () => this.router.getCurrentPage() === 'practice'
+      onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
+      onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),
+      getCurrentPage: () => this.router.getCurrentPage(),
+      isShortcutActive: () => ['practice', 'memorize'].includes(this.router.getCurrentPage())
     });
 
     // 6. Navigate to initial page from URL hash or default to 'input'

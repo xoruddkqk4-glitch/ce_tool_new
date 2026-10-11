@@ -30,6 +30,7 @@ export class MemorizeView {
 
     this.isPlayingAll = false;
     this.playCurrentSentenceIndex = 0;
+    this.activeRowIndex = 0;
     this.nativeAudioPlayer = document.getElementById('nativeAudioPlayer');
 
     this.initEvents();
@@ -57,6 +58,10 @@ export class MemorizeView {
     // Listen to sentence updates
     appState.on('sentencesLoaded', () => {
       this.renderFullScriptCanvas();
+    });
+
+    appState.on('activeSentenceChanged', ({ index }) => {
+      this.setActiveRow(index);
     });
   }
 
@@ -112,6 +117,14 @@ export class MemorizeView {
       const sRow = document.createElement('div');
       sRow.className = 'memorize-sentence-row';
       sRow.setAttribute('data-stn-idx', sIdx);
+      if (sIdx === this.activeRowIndex) {
+        sRow.classList.add('active-row');
+      }
+
+      sRow.addEventListener('click', (e) => {
+        if (e.target.closest('.memorize-stn-badge') || e.target.closest('.memorize-stn-play')) return;
+        this.setActiveRow(sIdx);
+      });
 
       // Sentence Header (S1, S2, jump to practice)
       const sHeader = document.createElement('div');
@@ -152,8 +165,21 @@ export class MemorizeView {
         cCard.className = 'memorize-chunk-card';
         cCard.setAttribute('data-c-idx', cIdx);
 
+        // Shortcut Key Badge (1 to 9)
+        const keyNum = cIdx + 1;
+        const keyBadge = keyNum <= 9 ? `<span class="memorize-key-badge" title="숫자키 [${keyNum}] 뒤집기">${keyNum}</span>` : '';
+
+        // Dynamic width per card based on content length
+        const enLen = (chunk.en || '').trim().length;
+        const koLen = (chunk.ko || '').trim().length;
+        const estContentWidth = Math.max(enLen * 10, koLen * 15);
+        const cardWidth = Math.max(76, Math.round(estContentWidth + 36));
+        cCard.style.width = `${cardWidth}px`;
+        cCard.style.flex = '0 0 auto';
+
         cCard.innerHTML = `
           <div class="memorize-card-inner">
+            ${keyBadge}
             <div class="memorize-face memorize-face-en">
               <span class="chunk-en-text">${chunk.en}</span>
             </div>
@@ -164,7 +190,9 @@ export class MemorizeView {
         `;
 
         // Click to toggle individual flip / unmask
-        cCard.addEventListener('click', () => {
+        cCard.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.setActiveRow(sIdx);
           cCard.classList.toggle('flipped');
         });
 
@@ -354,8 +382,39 @@ export class MemorizeView {
     });
   }
 
+  setActiveRow(idx) {
+    this.activeRowIndex = idx;
+    if (!this.canvasContainer) return;
+    this.canvasContainer.querySelectorAll('.memorize-sentence-row').forEach((r) => {
+      const rowIdx = parseInt(r.getAttribute('data-stn-idx'), 10);
+      r.classList.toggle('active-row', rowIdx === idx);
+    });
+  }
+
+  flipCardByIndex(num) {
+    if (!this.canvasContainer || num < 1 || num > 9) return;
+    const cardIdx = num - 1;
+
+    // Target the active sentence row, playing row, or first row
+    let targetRow = this.canvasContainer.querySelector(`.memorize-sentence-row[data-stn-idx="${this.activeRowIndex}"]`);
+    if (!targetRow) {
+      targetRow = this.canvasContainer.querySelector('.memorize-sentence-row.playing-active')
+        || this.canvasContainer.querySelector('.memorize-sentence-row.active-row')
+        || this.canvasContainer.querySelector('.memorize-sentence-row');
+    }
+
+    if (!targetRow) return;
+
+    const cards = targetRow.querySelectorAll('.memorize-chunk-card');
+    if (cards && cards[cardIdx]) {
+      cards[cardIdx].classList.toggle('flipped');
+    }
+  }
+
   onActivated() {
+    this.activeRowIndex = appState.activeSentenceIndex || 0;
     this.renderFullScriptCanvas();
+    this.setActiveRow(this.activeRowIndex);
   }
 
   onDeactivated() {
