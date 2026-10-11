@@ -5,6 +5,7 @@
 
 import { StorageService } from './storage-service.js';
 import { CONSTANTS } from '../config/constants.js';
+import { DICTIONARY, VERB_MAP, PRONOUNS, ADVERBS } from '../config/fels-dict.js';
 
 export class AIService {
   constructor() {
@@ -195,23 +196,32 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
     }
 
     const cleanChunks = chunks.map(c => (typeof c === 'string' ? c : c.en || '').trim());
+    if (cleanChunks.length === 1) {
+      return [naturalText.trim()];
+    }
 
     // 1. If AI API key is configured (Gemini / OpenAI), use prompt to partition natural Korean
     if (this.hasKey()) {
       try {
-        const prompt = `You are an expert English-Korean linguist.
+        const prompt = `You are an expert English-Korean linguist specialized in sequential interpretation (직독직해).
 We have an English sentence: "${englishSentence || cleanChunks.join(' ')}"
-And its natural Korean translation: "${naturalText}"
+And its natural Korean translation (우리말 자연스러운 해석): "${naturalText}"
 
-The English sentence is divided into ${cleanChunks.length} sequential thought chunks:
+The English sentence is divided into ${cleanChunks.length} sequential chunks (청크 구분 || 영어 문장):
 ${cleanChunks.map((c, i) => `[Chunk ${i + 1}] "${c}"`).join('\n')}
 
-Task: Create the 직독직해 (chunk-by-chunk sequential Korean interpretation) based strictly on the provided natural Korean translation.
-Requirements:
-1. Every chunk MUST be 100% pure Korean. NEVER include English words or attach Korean particles to English (e.g. NEVER output "as는", "beach is famous를", etc.).
-2. The Korean words, tone and vocabulary must come directly from the natural Korean translation.
-3. Follow the sequential thought order of the English chunks (순차 해석 / 직독직해).
-4. Return ONLY valid JSON with an array of strings in "chunks", matching the count of ${cleanChunks.length}:
+Task: Create the 직독직해 (chunk-by-chunk sequential interpretation) corresponding 1-to-1 with each English chunk above, based strictly on the natural Korean translation.
+
+CRITICAL RULES:
+1. Each Korean chunk MUST convey the specific meaning of that English chunk, NOT a naive left-to-right word split.
+   - Example: English chunks: [Chunk 1] "Hello, visitors" || [Chunk 2] "to Cryston Beach."
+     Natural Korean: "안녕하세요, 크리스톤 비치를 방문하시는 방문객 여러분."
+     * Chunk 1 ("Hello, visitors") MUST be: "안녕하세요, 방문객 여러분" (or "방문객 여러분 안녕하세요")
+     * Chunk 2 ("to Cryston Beach.") MUST be: "크리스톤 비치를 방문하시는" (or "크리스톤 비치로 오신")
+     * NEVER put "크리스톤" into Chunk 1!
+2. Draw words, vocabulary, and style directly from the natural Korean translation ("우리말 자연스러운 해석").
+3. Pure Korean only. Never include English words or attach Korean particles to English.
+4. Return exactly ${cleanChunks.length} strings in the "chunks" array:
 {
   "chunks": [ "한국어 직독직해 1", "한국어 직독직해 2", ... ]
 }`;
@@ -252,6 +262,10 @@ Requirements:
 
       const allValid = translatedChunks.every(t => t && t.length > 0 && !/[a-zA-Z]{3,}/.test(t));
       if (allValid && translatedChunks.length === cleanChunks.length) {
+        const aligned = this.alignChunksWithNatural(cleanChunks, naturalText, translatedChunks);
+        if (aligned && aligned.length === cleanChunks.length && aligned.every(Boolean)) {
+          return aligned;
+        }
         return translatedChunks.map(t => t.replace(/^[,\s]+|[,\s]+$/g, ''));
       }
     } catch (fetchErr) {
@@ -265,26 +279,147 @@ Requirements:
   sliceNaturalTextIntoChunks(chunks, naturalText) {
     if (!chunks || !chunks.length) return [];
     if (chunks.length === 1) return [naturalText.trim()];
+    return this.alignChunksWithNatural(chunks, naturalText, []);
+  }
 
-    const words = naturalText.trim().split(/\s+/).filter(Boolean);
-    if (!words.length) return chunks.map(() => '');
+  alignChunksWithNatural(chunks, naturalText, translatedChunks = []) {
+    if (!chunks || !chunks.length) return [];
+    if (chunks.length === 1) return [naturalText.trim()];
 
-    const chunkWeights = chunks.map(c => Math.max(1, (c || '').split(/\s+/).filter(Boolean).length));
-    const totalWeight = chunkWeights.reduce((a, b) => a + b, 0);
+    const natWords = naturalText.trim().split(/\s+/).filter(Boolean);
+    if (!natWords.length) {
+      return translatedChunks.length === chunks.length ? translatedChunks : chunks.map(c => typeof c === 'string' ? c : c.ko || '');
+    }
 
-    const result = [];
-    let curWordIdx = 0;
-    for (let i = 0; i < chunks.length; i++) {
-      if (i === chunks.length - 1) {
-        result.push(words.slice(curWordIdx).join(' ').trim());
-      } else {
-        const count = Math.max(1, Math.round(words.length * (chunkWeights[i] / totalWeight)));
-        const sliceEnd = Math.min(words.length - (chunks.length - 1 - i), curWordIdx + count);
-        result.push(words.slice(curWordIdx, sliceEnd).join(' ').trim());
-        curWordIdx = sliceEnd;
+    const cleanStr = (s) => (typeof s === 'string' ? s : '').replace(/[.,!?;:"'~()\[\]{}–—]/g, '').trim().toLowerCase();
+
+    const matchScore = (enText, koWord, transText = '') => {
+      const cleanKo = cleanStr(koWord);
+      if (!cleanKo) return 0;
+
+      // 1. Direct match with translated text if provided
+      if (transText) {
+        const cleanTrans = cleanStr(transText);
+        const transTokens = cleanTrans.split(/\s+/);
+        if (transTokens.some(tw => tw === cleanKo)) return 15;
+        if (cleanTrans.includes(cleanKo)) return 10;
+        for (let len = Math.min(cleanKo.length, 4); len >= 2; len--) {
+          for (let i = 0; i <= cleanKo.length - len; i++) {
+            const sub = cleanKo.substring(i, i + len);
+            if (cleanTrans.includes(sub)) return 5 + len;
+          }
+        }
+      }
+
+      // 2. Transliteration / Dictionary / English tokens
+      const enTokens = cleanStr(enText).split(/\s+/).filter(Boolean);
+      for (const token of enTokens) {
+        if (DICTIONARY && DICTIONARY[token]) {
+          const koVal = cleanStr(DICTIONARY[token]);
+          if (cleanKo.includes(koVal) || koVal.includes(cleanKo)) return 12;
+        }
+        if (VERB_MAP && VERB_MAP[token]) {
+          const vKo = cleanStr(VERB_MAP[token]);
+          if (cleanKo.includes(vKo) || vKo.includes(cleanKo)) return 11;
+        }
+        if (PRONOUNS && PRONOUNS[token]) {
+          const pObj = PRONOUNS[token];
+          const pList = typeof pObj === 'string' ? [pObj] : Object.values(pObj);
+          for (const pVal of pList) {
+            const pKo = cleanStr(pVal);
+            if (pKo && (cleanKo.includes(pKo) || pKo.includes(cleanKo))) return 11;
+          }
+        }
+        if (ADVERBS && ADVERBS[token]) {
+          const aKo = cleanStr(ADVERBS[token]);
+          if (aKo && (cleanKo.includes(aKo) || aKo.includes(cleanKo))) return 11;
+        }
+        if (cleanKo.includes(token)) return 8;
+      }
+
+      return 0;
+    };
+
+    // Calculate score of each natural word against each chunk
+    const wordScores = natWords.map((word, wIdx) => {
+      const scores = chunks.map((c, cIdx) => {
+        const enText = typeof c === 'string' ? c : c.en || '';
+        const transText = translatedChunks[cIdx] || (typeof c === 'object' ? c.ko : '') || '';
+        return matchScore(enText, word, transText);
+      });
+      return { word, wIdx, scores };
+    });
+
+    const assignments = new Array(natWords.length).fill(-1);
+    wordScores.forEach((ws, idx) => {
+      let maxScore = 0;
+      let bestChunk = -1;
+      ws.scores.forEach((sc, cIdx) => {
+        if (sc > maxScore) {
+          maxScore = sc;
+          bestChunk = cIdx;
+        }
+      });
+      if (maxScore > 0) {
+        assignments[idx] = bestChunk;
+      }
+    });
+
+    // Grammar refinement: If a word is an adnominal modifier (-는/-하시는/-은/-던)
+    // and preceding word is an object/adverbial (ends with 을/를/에/로/서/과/와), group together
+    for (let i = 1; i < natWords.length; i++) {
+      const prev = natWords[i - 1];
+      const curr = natWords[i];
+      const prevHasParticle = /[을를에로과와서]$/.test(cleanStr(prev));
+      const currIsModifier = /(는|은|던|인|한|시는|하시는|하는)$/.test(cleanStr(curr));
+      if (prevHasParticle && currIsModifier && assignments[i - 1] !== -1) {
+        assignments[i] = assignments[i - 1];
       }
     }
-    return result;
+
+    // Fill unassigned words (-1)
+    for (let i = 0; i < assignments.length; i++) {
+      if (assignments[i] === -1) {
+        let prevAssigned = -1;
+        for (let p = i - 1; p >= 0; p--) {
+          if (assignments[p] !== -1) {
+            prevAssigned = assignments[p];
+            break;
+          }
+        }
+        let nextAssigned = -1;
+        for (let n = i + 1; n < assignments.length; n++) {
+          if (assignments[n] !== -1) {
+            nextAssigned = assignments[n];
+            break;
+          }
+        }
+
+        if (prevAssigned !== -1) {
+          assignments[i] = prevAssigned;
+        } else if (nextAssigned !== -1) {
+          assignments[i] = nextAssigned;
+        } else {
+          assignments[i] = 0;
+        }
+      }
+    }
+
+    const chunkWords = chunks.map(() => []);
+    assignments.forEach((cIdx, wIdx) => {
+      chunkWords[cIdx].push(natWords[wIdx]);
+    });
+
+    return chunkWords.map((words, cIdx) => {
+      if (words.length > 0) {
+        return words.join(' ').trim();
+      }
+      if (translatedChunks[cIdx]) {
+        return translatedChunks[cIdx];
+      }
+      const c = chunks[cIdx];
+      return typeof c === 'string' ? c : c.ko || c.en || '';
+    });
   }
 
   /**

@@ -1079,13 +1079,13 @@ export class InputView {
         dividerSlot.title = isBoundary ? "클릭하여 청크 합치기" : "클릭하여 청크 분리하기 (|| 추가)";
         dividerSlot.textContent = isBoundary ? '||' : '+';
 
-        dividerSlot.addEventListener('click', () => {
+        dividerSlot.addEventListener('click', async () => {
           if (boundaryWordIndices.has(idx)) {
             boundaryWordIndices.delete(idx);
           } else {
             boundaryWordIndices.add(idx);
           }
-          this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
+          await this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
           if (chunkInput) {
             chunkInput.value = this.getChunkString(stn.result.chunks);
           }
@@ -1101,7 +1101,7 @@ export class InputView {
     });
   }
 
-  rebuildChunksFromBoundaries(stn, words, boundaryWordIndices) {
+  async rebuildChunksFromBoundaries(stn, words, boundaryWordIndices) {
     const newChunks = [];
     let curWords = [];
 
@@ -1121,6 +1121,16 @@ export class InputView {
 
     if (stn.result.natural) {
       this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+      try {
+        const directKoChunks = await aiService.generateDirectChunks(newChunks, stn.result.natural, stn.text);
+        if (directKoChunks && directKoChunks.length === newChunks.length && directKoChunks.every(Boolean)) {
+          directKoChunks.forEach((ko, i) => {
+            newChunks[i].ko = ko;
+          });
+        }
+      } catch (e) {
+        console.warn('Direct chunk generation error in rebuild:', e);
+      }
     }
 
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');

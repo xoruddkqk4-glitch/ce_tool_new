@@ -126,6 +126,16 @@ export const ADVERBS = {
 };
 
 export const DICTIONARY = {
+  'hello': '안녕하세요',
+  'hi': '안녕',
+  'welcome': '환영',
+  'visitor': '방문객',
+  'visitors': '방문객',
+  'guest': '손님',
+  'guests': '손님들',
+  'beach': '비치',
+  'beaches': '해변',
+  'cryston': '크리스톤',
   'school': '학교',
   'shcool': '학교',
   'bookstore': '서점',
