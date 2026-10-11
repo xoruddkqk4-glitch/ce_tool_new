@@ -251,7 +251,7 @@ node scratch/test_page1_editor_and_handout.js
   - `test_day_mode_card_colors.js` (day 모드 청크 카드 밝은 색상 검증): 100% 통과.
   - `test_all_interactions.js` (8개 전 기능 및 9대 글로벌 단축키 테스트): 100% 통과.
 
-## [2026-10-11 17:52] 업데이트 이력 (Commit ID: <커밋 ID / Commit Hash>)
+## [2026-10-11 17:52] 업데이트 이력 (Commit ID: e8a8163)
 - **수정 내용**:
   1. **Page 2 약형드랩 청크 카드 숫자키 1~9 뒤집기 단축키 지원 & 가이드 팁 문구 제거**:
      - 2페이지 청크 카드 좌상단에 `[1]`, `[2]`, `[3]` 번호 배지(`.practice-key-badge`)를 추가하고 상단 숫자키/키패드 `1`~`9`를 누르면 해당 카드가 3D 플립되도록 단축키 매핑.
