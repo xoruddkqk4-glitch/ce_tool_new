@@ -430,21 +430,29 @@ CRITICAL RULES:
       return null;
     }
 
-    const prompt = `Listen to this English audio carefully.
+    const prompt = `You are a precision audio-script alignment engine for Korean-English listening comprehension tests (CSAT 수능 / EBS / school exam audio).
+
+CRITICAL DOMAIN BACKGROUND & RULES:
+1. The audio begins with a spoken Korean question announcement / direction (우리말 안내 방송 / 문제 설명, e.g. "1번 문제입니다. 대화를 듣고, 남자가 할 일로 가장 적절한 것을 고르시오.") followed by a chime sound ("딩동댕" 안내 종소리).
+2. ALL KOREAN SPEECH, KOREAN ANNOUNCEMENTS, AND INTRO CHIMES MUST BE COMPLETELY IGNORED AND OMITTED.
+3. The English dialogue begins strictly AFTER the Korean announcement and chime sound finish.
+4. DO NOT align any English sentence to the Korean speech. [S1] MUST NOT start at or during the Korean voice.
+5. The 'start' timestamp of [S1] MUST be the exact second when the speaker speaks the first ENGLISH word of [S1] (e.g. "Hello", "Good morning", "Excuse me").
+6. Any Korean question outro (우리말 마무리 질문) at the end of the audio must also be completely excluded.
+
 We have the following exact English sentences in order:
 ${sentences.map((s, idx) => `[S${idx + 1}] "${s}"`).join('\n')}
 
-For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this sentence in the audio.
-Ignore introductory chimes, directions, or non-English announcements at the beginning.
+For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this English sentence in the audio.
 
 CRITICAL FOR TIMESTAMPS:
-- 'start': The exact moment the speaker begins the first word of the sentence.
-- 'end': MUST NOT cut off the last word of the sentence. Include the complete release and acoustic decay of the final word plus 0.8s trailing padding (or up until right before the next sentence starts).
+- 'start': The exact moment the speaker begins the first English word of this sentence (MUST NOT include any preceding Korean speech or chimes).
+- 'end': Include the complete release of the final English word plus 0.6s trailing padding (or up until right before the next English sentence starts).
 
 Respond ONLY with valid JSON:
 {
   "alignments": [
-    { "sentence_index": 0, "start": 3.2, "end": 7.5 }
+    { "sentence_index": 0, "start": 6.8, "end": 10.2 }
   ]
 }`;
 
@@ -479,9 +487,9 @@ Respond ONLY with valid JSON:
           const start = Number(a.start) || 0;
           if (nextStart !== null && nextStart > start) {
             const safeMax = Math.max(start + 0.5, nextStart - 0.15);
-            end = Math.min(safeMax, Math.round((end + 0.9) * 10) / 10);
+            end = Math.min(safeMax, Math.round((end + 0.6) * 10) / 10);
           } else {
-            end = Math.round((end + 1.0) * 10) / 10;
+            end = Math.round((end + 0.8) * 10) / 10;
           }
           return {
             sentence_index: a.sentence_index ?? i,
@@ -506,11 +514,15 @@ Respond ONLY with valid JSON:
     }
 
     const prompt = `Listen to this English audio carefully.
-1. Transcribe the spoken English accurately into the "script" field.
-2. Translate into natural Korean (SOV order) in "natural".
-3. Provide chunk-based sequential interpretation with " || " in "chunk_text".
-4. Provide chunk breakdown array in "chunks": [{ "en": "...", "ko": "..." }]
-5. If there are multiple sentences, also provide a "sentences" array where each element contains:
+This audio is from an English listening test (such as CSAT 수능 / EBS / school exam) which often contains spoken Korean question directions/announcements at the beginning (e.g. "1번 문제입니다. 대화를 듣고...") and/or Korean outro questions at the end.
+
+CRITICAL INSTRUCTIONS:
+1. OMIT ALL KOREAN SPOKEN ANNOUNCEMENTS, DIRECTIONS, QUESTION NUMBERS, AND CHIMES.
+2. Transcribe ONLY the authentic English dialogue / passage spoken in the audio into the "script" field.
+3. Translate into natural Korean (SOV order) in "natural".
+4. Provide chunk-based sequential interpretation with " || " in "chunk_text".
+5. Provide chunk breakdown array in "chunks": [{ "en": "...", "ko": "..." }]
+6. If there are multiple sentences, also provide a "sentences" array where each element contains:
    { "text": "English sentence", "natural": "Korean natural translation", "chunks": [{ "en": "...", "ko": "..." }] }
 
 Respond ONLY with valid JSON:

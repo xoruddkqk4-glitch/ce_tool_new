@@ -1,8 +1,174 @@
 /**
  * Audio Sentence Boundary Detection Engine
  * Combines Web Audio API PCM RMS energy analysis, VAD (Voice Activity Detection),
- * speech onset/offset trimming, and adaptive energy valley alignment.
+ * Korean question intro/outro omission, and adaptive energy valley alignment.
  */
+
+/**
+ * Calculates expected English reading duration based on word count
+ */
+export function estimateEnglishSpeechDuration(sentences) {
+  if (!sentences || !sentences.length) return 0;
+  const totalEnglishWords = sentences.reduce((sum, s) => sum + (s || '').trim().split(/\s+/).filter(Boolean).length, 0);
+  return Math.max(2.0, totalEnglishWords * 0.42 + (sentences.length - 1) * 0.65);
+}
+
+/**
+ * Detects Korean question announcement duration (in seconds) to be omitted
+ */
+export function detectKoreanIntroDuration(audioBuffer, sentences, totalDuration) {
+  if (!audioBuffer) return 0;
+  try {
+    const duration = totalDuration || audioBuffer.duration || 0;
+    if (duration <= 0) return 0;
+
+    const rawData = audioBuffer.getChannelData(0);
+    const sampleRate = audioBuffer.sampleRate;
+    const windowSec = 0.05;
+    const windowSize = Math.floor(sampleRate * windowSec);
+    const numWindows = Math.floor(rawData.length / windowSize);
+
+    const energies = new Float32Array(numWindows);
+    let maxRms = 0;
+    for (let w = 0; w < numWindows; w++) {
+      let sumSq = 0;
+      const offset = w * windowSize;
+      const step = Math.max(1, Math.floor(windowSize / 128));
+      let count = 0;
+      for (let k = 0; k < windowSize; k += step) {
+        const v = rawData[offset + k];
+        sumSq += v * v;
+        count++;
+      }
+      const rms = Math.sqrt(sumSq / count);
+      energies[w] = rms;
+      if (rms > maxRms) maxRms = rms;
+    }
+
+    if (maxRms <= 0.001) return 0;
+
+    const vadThreshold = maxRms * 0.055;
+    const speechSegments = extractVadSpeechSegments(energies, windowSec, numWindows, vadThreshold);
+    const expectedEnglishSec = estimateEnglishSpeechDuration(sentences);
+    const overhead = duration - expectedEnglishSec;
+
+    if (speechSegments.length > sentences.length && overhead >= 2.0) {
+      const remDur0 = duration - speechSegments[0].startSec;
+      let bestScore = Math.abs(remDur0 - (expectedEnglishSec + 0.8));
+      let bestIdx = 0;
+
+      const maxIntroIdx = speechSegments.length - sentences.length;
+      for (let i = 1; i <= maxIntroIdx; i++) {
+        const prevSeg = speechSegments[i - 1];
+        const currSeg = speechSegments[i];
+        const gap = currSeg.startSec - prevSeg.endSec;
+        const timeFromStart = currSeg.startSec;
+
+        if (timeFromStart > 16.0) break;
+
+        const remainingDur = duration - timeFromStart;
+        if (remainingDur < expectedEnglishSec * 0.65) continue;
+
+        const s1Words = (sentences[0] || '').trim().split(/\s+/).filter(Boolean).length;
+        const s1MinDur = Math.min(1.0, s1Words * 0.25);
+        if (currSeg.duration < s1MinDur) continue;
+
+        const durDiff = Math.abs(remainingDur - (expectedEnglishSec + 0.8));
+        const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+        const score = durDiff - gapBonus;
+
+        if (score < bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+
+      if (bestIdx > 0) {
+        return Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+      }
+    } else if (sentences.length === 1 && speechSegments.length >= 2 && overhead >= 2.0) {
+      const remDur0 = duration - speechSegments[0].startSec;
+      let bestScore = Math.abs(remDur0 - (expectedEnglishSec + 0.8));
+      let bestIdx = 0;
+
+      for (let i = 1; i < speechSegments.length; i++) {
+        const prevSeg = speechSegments[i - 1];
+        const currSeg = speechSegments[i];
+        const gap = currSeg.startSec - prevSeg.endSec;
+        const timeFromStart = currSeg.startSec;
+
+        if (timeFromStart > 16.0) break;
+
+        const remainingDur = duration - timeFromStart;
+        if (remainingDur < expectedEnglishSec * 0.65) continue;
+
+        const durDiff = Math.abs(remainingDur - (expectedEnglishSec + 0.8));
+        const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+        const score = durDiff - gapBonus;
+
+        if (score < bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+
+      if (bestIdx > 0) {
+        return Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+      }
+    } else if (speechSegments.length <= 1 && overhead >= 3.0) {
+      return Math.max(0, Math.round((overhead - 0.8) * 10) / 10);
+    }
+  } catch (e) {
+    console.warn('detectKoreanIntroDuration error:', e);
+  }
+  return 0;
+}
+
+function extractVadSpeechSegments(energies, windowSec, numWindows, vadThreshold) {
+  const speechSegments = [];
+  let inSeg = false;
+  let segStartW = 0;
+
+  for (let w = 0; w < numWindows; w++) {
+    const isSpeech = energies[w] >= vadThreshold;
+    if (!inSeg && isSpeech) {
+      inSeg = true;
+      segStartW = w;
+    } else if (inSeg && !isSpeech) {
+      let silenceEnd = true;
+      const look = Math.floor(0.25 / windowSec);
+      for (let k = 1; k <= look && w + k < numWindows; k++) {
+        if (energies[w + k] >= vadThreshold) {
+          silenceEnd = false;
+          break;
+        }
+      }
+      if (silenceEnd) {
+        inSeg = false;
+        const durSec = (w - segStartW) * windowSec;
+        if (durSec >= 0.25) {
+          speechSegments.push({
+            startIdx: segStartW,
+            endIdx: w,
+            startSec: Math.round(segStartW * windowSec * 10) / 10,
+            endSec: Math.round(w * windowSec * 10) / 10,
+            duration: Math.round(durSec * 10) / 10
+          });
+        }
+      }
+    }
+  }
+  if (inSeg) {
+    speechSegments.push({
+      startIdx: segStartW,
+      endIdx: numWindows - 1,
+      startSec: Math.round(segStartW * windowSec * 10) / 10,
+      endSec: Math.round(numWindows * windowSec * 10) / 10,
+      duration: Math.round((numWindows - 1 - segStartW) * windowSec * 10) / 10
+    });
+  }
+  return speechSegments;
+}
 
 export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
   if (!sentences || !sentences.length) return [];
@@ -12,20 +178,10 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
     return sentences.map(() => ({ start: null, end: null }));
   }
 
-  if (sentences.length === 1) {
-    // If audio buffer exists, find actual speech start and end
-    if (audioBuffer) {
-      try {
-        const { speechStart, speechEnd } = detectSpeechOnsetOffset(audioBuffer, duration);
-        return [{ start: speechStart, end: speechEnd }];
-      } catch (e) {
-        console.warn('Single sentence VAD fallback:', e);
-      }
-    }
-    return [{ start: 0, end: Math.round(duration * 10) / 10 }];
-  }
+  const expectedEnglishSpeechSec = estimateEnglishSpeechDuration(sentences);
+  const overhead = duration - expectedEnglishSpeechSec;
 
-  // Step 1: Attempt PCM RMS analysis with VAD and adaptive valley boundary detection
+  // Step 1: PCM RMS analysis with VAD & Korean intro/outro omission
   if (audioBuffer) {
     try {
       const rawData = audioBuffer.getChannelData(0);
@@ -39,7 +195,7 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
       for (let w = 0; w < numWindows; w++) {
         let sumSq = 0;
         const offset = w * windowSize;
-        const step = Math.max(1, Math.floor(windowSize / 128)); // Sample representative points for high speed
+        const step = Math.max(1, Math.floor(windowSize / 128));
         let count = 0;
         for (let k = 0; k < windowSize; k += step) {
           const v = rawData[offset + k];
@@ -52,33 +208,117 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
       }
 
       if (maxRms > 0.001) {
-        // 1. Detect speech onset (skipping intro silence / chimes)
-        const onsetThresh = maxRms * 0.05;
-        let speechStartIdx = 0;
-        for (let w = 0; w < numWindows; w++) {
-          if (energies[w] >= onsetThresh) {
-            if (w + 1 < numWindows && energies[w + 1] >= onsetThresh * 0.6) {
+        const vadThreshold = maxRms * 0.055;
+        const speechSegments = extractVadSpeechSegments(energies, windowSec, numWindows, vadThreshold);
+
+        // 1. Detect English speech onset (omitting Korean question announcement)
+        let speechStart = speechSegments[0]?.startSec ?? 0;
+
+        if (speechSegments.length > sentences.length && overhead >= 2.0) {
+          const remDur0 = duration - speechSegments[0].startSec;
+          let bestScore = Math.abs(remDur0 - (expectedEnglishSpeechSec + 0.8));
+          let bestIdx = 0;
+
+          const maxIntroIdx = speechSegments.length - sentences.length;
+          for (let i = 1; i <= maxIntroIdx; i++) {
+            const prevSeg = speechSegments[i - 1];
+            const currSeg = speechSegments[i];
+            const gap = currSeg.startSec - prevSeg.endSec;
+            const timeFromStart = currSeg.startSec;
+
+            if (timeFromStart > 16.0) break;
+
+            const remainingDur = duration - timeFromStart;
+            if (remainingDur < expectedEnglishSpeechSec * 0.65) continue;
+
+            const s1Words = (sentences[0] || '').trim().split(/\s+/).filter(Boolean).length;
+            const s1MinDur = Math.min(1.0, s1Words * 0.25);
+            if (currSeg.duration < s1MinDur) continue;
+
+            const durDiff = Math.abs(remainingDur - (expectedEnglishSpeechSec + 0.8));
+            const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+            const score = durDiff - gapBonus;
+
+            if (score < bestScore) {
+              bestScore = score;
+              bestIdx = i;
+            }
+          }
+
+          if (bestIdx > 0) {
+            speechStart = Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+          }
+        } else if (sentences.length === 1 && speechSegments.length >= 2 && overhead >= 2.0) {
+          const remDur0 = duration - speechSegments[0].startSec;
+          let bestScore = Math.abs(remDur0 - (expectedEnglishSpeechSec + 0.8));
+          let bestIdx = 0;
+
+          for (let i = 1; i < speechSegments.length; i++) {
+            const prevSeg = speechSegments[i - 1];
+            const currSeg = speechSegments[i];
+            const gap = currSeg.startSec - prevSeg.endSec;
+            const timeFromStart = currSeg.startSec;
+
+            if (timeFromStart > 16.0) break;
+
+            const remainingDur = duration - timeFromStart;
+            if (remainingDur < expectedEnglishSpeechSec * 0.65) continue;
+
+            const durDiff = Math.abs(remainingDur - (expectedEnglishSpeechSec + 0.8));
+            const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+            const score = durDiff - gapBonus;
+
+            if (score < bestScore) {
+              bestScore = score;
+              bestIdx = i;
+            }
+          }
+
+          if (bestIdx > 0) {
+            speechStart = Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+          }
+        } else if (speechSegments.length <= 1 && overhead >= 3.0) {
+          speechStart = Math.max(0, Math.round((overhead - 0.8) * 10) / 10);
+        } else if (speechSegments.length === 0) {
+          const onsetThresh = maxRms * 0.05;
+          let speechStartIdx = 0;
+          for (let w = 0; w < numWindows; w++) {
+            if (energies[w] >= onsetThresh) {
               speechStartIdx = Math.max(0, w - 2);
               break;
             }
           }
+          speechStart = Math.max(0, Math.round((speechStartIdx * windowSec - 0.1) * 10) / 10);
         }
-        const speechStart = Math.max(0, Math.round((speechStartIdx * windowSec - 0.1) * 10) / 10);
 
-        // 2. Detect speech offset (skipping trailing silence / chimes)
-        // Sensitive threshold (1.5% maxRms) + 1.0s generous padding to prevent cutting off final phonemes/words
-        const offsetThresh = maxRms * 0.015;
-        let speechEndIdx = numWindows - 1;
-        for (let w = numWindows - 1; w >= 0; w--) {
-          if (energies[w] >= offsetThresh) {
-            speechEndIdx = Math.min(numWindows - 1, w + Math.floor(1.0 / windowSec));
-            break;
+        // 2. Detect English speech offset (omitting trailing Korean outro questions / chimes)
+        let speechEnd = Math.round(duration * 10) / 10;
+        const englishSegments = speechSegments.filter(s => s.startSec >= speechStart - 0.1);
+        if (englishSegments.length > 0) {
+          const lastEngSeg = englishSegments[englishSegments.length - 1];
+          if (englishSegments.length > sentences.length) {
+            const targetSeg = englishSegments[sentences.length - 1];
+            const span = targetSeg.endSec - speechStart;
+            const nextSeg = englishSegments[sentences.length];
+            if (span >= expectedEnglishSpeechSec * 0.8 || (nextSeg && nextSeg.startSec - targetSeg.endSec >= 0.5)) {
+              speechEnd = Math.min(duration, Math.round((targetSeg.endSec + 0.8) * 10) / 10);
+            } else {
+              speechEnd = Math.min(duration, Math.round((lastEngSeg.endSec + 0.8) * 10) / 10);
+            }
+          } else {
+            speechEnd = Math.min(duration, Math.round((lastEngSeg.endSec + 0.8) * 10) / 10);
           }
         }
-        let speechEnd = Math.min(duration, Math.round((speechEndIdx * windowSec) * 10) / 10);
-        if (speechEnd + 1.0 >= duration - 0.2) {
+
+        if (duration - speechEnd <= 0.6) {
           speechEnd = Math.round(duration * 10) / 10;
         }
+
+        // Single sentence case
+        if (sentences.length === 1) {
+          return [{ start: speechStart, end: speechEnd }];
+        }
+
         const speechDuration = Math.max(1.0, speechEnd - speechStart);
 
         // Smooth energy curve with moving average (~250ms window)
@@ -138,7 +378,7 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
           // Find the speech onset of the next sentence following the valley
           let nextOnsetIdx = bestIdx;
           for (let w = bestIdx; w < numWindows; w++) {
-            if (energies[w] >= onsetThresh) {
+            if (energies[w] >= vadThreshold) {
               nextOnsetIdx = Math.max(bestIdx, w);
               break;
             }
@@ -172,70 +412,26 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
     }
   }
 
-  // Step 2: Proportional fallback based on word counts
-  return proportionalSentenceBoundaries(sentences, duration);
+  // Step 2: Proportional fallback based on word counts with intro offset
+  return proportionalSentenceBoundaries(sentences, duration, expectedEnglishSpeechSec);
 }
 
-function detectSpeechOnsetOffset(audioBuffer, totalDuration) {
-  try {
-    const rawData = audioBuffer.getChannelData(0);
-    const windowSec = 0.05;
-    const windowSize = Math.floor(audioBuffer.sampleRate * windowSec);
-    const numWindows = Math.floor(rawData.length / windowSize);
-
-    let maxRms = 0;
-    const energies = new Float32Array(numWindows);
-    for (let w = 0; w < numWindows; w++) {
-      let sumSq = 0;
-      const offset = w * windowSize;
-      for (let k = 0; k < windowSize; k += 8) {
-        const v = rawData[offset + k];
-        sumSq += v * v;
-      }
-      const rms = Math.sqrt(sumSq / (windowSize / 8));
-      energies[w] = rms;
-      if (rms > maxRms) maxRms = rms;
-    }
-
-    const onsetThresh = maxRms * 0.05;
-    let startSec = 0;
-    for (let w = 0; w < numWindows; w++) {
-      if (energies[w] >= onsetThresh) {
-        startSec = Math.max(0, Math.round((w * windowSec - 0.1) * 10) / 10);
-        break;
-      }
-    }
-
-    const offsetThresh = maxRms * 0.015;
-    let endSec = totalDuration;
-    for (let w = numWindows - 1; w >= 0; w--) {
-      if (energies[w] >= offsetThresh) {
-        // Add 1.0s headroom so sentence ending is NEVER truncated
-        endSec = Math.min(totalDuration, Math.round(((w + 1) * windowSec + 1.0) * 10) / 10);
-        break;
-      }
-    }
-    if (endSec + 1.0 >= totalDuration - 0.2) {
-      endSec = Math.round(totalDuration * 10) / 10;
-    }
-
-    return { speechStart: startSec, speechEnd: endSec };
-  } catch (e) {
-    return { speechStart: 0, speechEnd: Math.round(totalDuration * 10) / 10 };
-  }
-}
-
-export function proportionalSentenceBoundaries(sentences, totalDuration) {
+export function proportionalSentenceBoundaries(sentences, totalDuration, expectedEnglishSpeechSec) {
   if (!sentences || !sentences.length) return [];
+  const expSec = expectedEnglishSpeechSec || estimateEnglishSpeechDuration(sentences);
+  const overhead = totalDuration - expSec;
+  const startOffset = overhead >= 2.5 ? Math.round((overhead - 0.5) * 10) / 10 : 0;
+  const effectiveDur = Math.max(1.0, totalDuration - startOffset);
+
   if (sentences.length === 1) {
-    return [{ start: 0, end: Math.round(totalDuration * 10) / 10 }];
+    return [{ start: startOffset, end: Math.round(totalDuration * 10) / 10 }];
   }
   const weights = sentences.map(s => Math.max(3, (s || '').trim().split(/\s+/).filter(Boolean).length));
   const totalWeight = weights.reduce((a, b) => a + b, 0);
-  let cur = 0;
+  let cur = startOffset;
   return sentences.map((s, idx) => {
     const fraction = weights[idx] / totalWeight;
-    const dur = totalDuration * fraction;
+    const dur = effectiveDur * fraction;
     const start = Math.round(cur * 10) / 10;
     const end = idx === sentences.length - 1 ? Math.round(totalDuration * 10) / 10 : Math.round((cur + dur) * 10) / 10;
     cur += dur;

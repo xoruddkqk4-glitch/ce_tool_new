@@ -16,7 +16,7 @@ import { splitIntoSentences, distributeChunksSequentially, cleanPracticeSentence
 import { aiService } from '../services/ai-service.js';
 import { RuleChunkEngine } from '../core/rule-chunk-engine.js';
 import { decodeAudioFile, getAudioContext } from '../audio/audio-context.js';
-import { detectAudioSentenceBoundaries } from '../audio/silence-detector.js';
+import { detectAudioSentenceBoundaries, detectKoreanIntroDuration } from '../audio/silence-detector.js';
 import { synthesizeSilentAudioForScript, speakText } from '../audio/tts-synthesizer.js';
 import { getFelsInfo } from '../config/fels-dict.js';
 import { toast } from '../ui/toast-manager.js';
@@ -340,7 +340,7 @@ export class InputView {
           if (this.charCount) this.charCount.textContent = `${scriptText.length}자`;
         }
 
-        const rawSentences = splitIntoSentences(scriptText);
+        const rawSentences = splitIntoSentences(scriptText, { filterKorean: true });
         const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
 
         // Partition AI chunks sequentially across each sentence so S1 never contains S2/S3 chunks
@@ -382,7 +382,7 @@ export class InputView {
         appState.setSentenceList(sentenceList);
 
         // Render Results Panel on Page 1
-        this.renderParsedResults();
+        this.renderParsedResults({ scrollToSection: true });
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 완료! 아래에서 청크와 해석을 확인하세요.`);
       } catch (err) {
         console.error(err);
@@ -444,6 +444,12 @@ export class InputView {
 
       if (!boundaries) {
         boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      } else if (appState.audioBuffer && boundaries.length > 0) {
+        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
+        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
+        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
+          boundaries[0].start = introSec;
+        }
       }
 
       // Safety extension: ensure each sentence end has generous headroom (+0.9s ~ +1.0s)
@@ -514,7 +520,7 @@ export class InputView {
       appState.setSentenceList(sentenceList);
 
       // Render Results Panel on Page 1
-      this.renderParsedResults();
+      this.renderParsedResults({ scrollToSection: true });
       toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
     } catch (err) {
       console.error('Translation error:', err);
@@ -553,6 +559,12 @@ export class InputView {
 
       if (!boundaries) {
         boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      } else if (appState.audioBuffer && boundaries.length > 0) {
+        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
+        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
+        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
+          boundaries[0].start = introSec;
+        }
       }
 
       if (boundaries && boundaries.length === appState.sentenceList.length) {
@@ -577,7 +589,8 @@ export class InputView {
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
           stn.cachedPeaks = null;
         });
-        this.renderParsedResults();
+        const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+        this.renderParsedResults({ scrollContext: { scrollYBefore: scrollY } });
         toast.show('✨ 음성-스크립트 자동 Sync 완료! 문장별 재생 구간이 최적화되었습니다.');
       }
     } catch (err) {
@@ -591,7 +604,15 @@ export class InputView {
    */
   mergeWithPreviousSentence(idx) {
     if (idx <= 0 || !appState.sentenceList || idx >= appState.sentenceList.length) return;
-    const prev = appState.sentenceList[idx - 1];
+
+    const targetIdx = idx - 1;
+    const scrollYBefore = window.scrollY || document.documentElement.scrollTop || 0;
+    const prevCardBefore = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"]`) : null;
+    const curCardBefore = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
+    const refCard = prevCardBefore || curCardBefore;
+    const cardTopBefore = refCard ? refCard.getBoundingClientRect().top : null;
+
+    const prev = appState.sentenceList[targetIdx];
     const cur = appState.sentenceList[idx];
 
     const mergedText = `${prev.text} ${cur.text}`.trim();
@@ -616,13 +637,16 @@ export class InputView {
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
 
-    this.renderParsedResults();
+    this.renderParsedResults({
+      targetIdx,
+      scrollContext: { scrollYBefore, cardTopBefore }
+    });
     toast.show(`🔗 문장 S${idx}와 S${idx + 1}이 하나로 결합되었습니다.`);
 
     aiService.translateNatural(mergedText).then(natural => {
       if (natural) {
         prev.result.natural = natural;
-        const naturalInput = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .sentence-natural-input`);
+        const naturalInput = this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"] .sentence-natural-input`);
         if (naturalInput) naturalInput.value = natural;
       }
     }).catch(() => {});
@@ -639,6 +663,10 @@ export class InputView {
       toast.show('⚠️ 분리할 위치를 올바르게 선택하세요.');
       return;
     }
+
+    const scrollYBefore = window.scrollY || document.documentElement.scrollTop || 0;
+    const targetCardBefore = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
+    const cardTopBefore = targetCardBefore ? targetCardBefore.getBoundingClientRect().top : null;
 
     const wordsPart1 = words.slice(0, splitWordIndex + 1);
     const wordsPart2 = words.slice(splitWordIndex + 1);
@@ -688,7 +716,10 @@ export class InputView {
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
 
-    this.renderParsedResults();
+    this.renderParsedResults({
+      targetIdx: idx,
+      scrollContext: { scrollYBefore, cardTopBefore }
+    });
     toast.show(`✂️ 문장이 S${idx + 1}과 S${idx + 2}로 분리되었습니다.`);
 
     Promise.all([
@@ -800,7 +831,7 @@ export class InputView {
     }
   }
 
-  renderParsedResults() {
+  renderParsedResults(options = {}) {
     if (!this.parsedResultsSection || !this.parsedSentenceList) return;
     const sentences = appState.sentenceList;
     if (!sentences || !sentences.length) {
@@ -808,9 +839,23 @@ export class InputView {
       return;
     }
 
+    const {
+      scrollToSection = false,
+      targetIdx = null,
+      scrollContext = null
+    } = options;
+
     if (this.resultsCountBadge) {
       this.resultsCountBadge.textContent = `총 ${sentences.length}개 문장`;
     }
+
+    // 1. Lock container height before innerHTML = '' to prevent document collapse and screen jump to top
+    const prevListHeight = this.parsedSentenceList.offsetHeight;
+    if (prevListHeight > 0) {
+      this.parsedSentenceList.style.minHeight = `${prevListHeight}px`;
+    }
+
+    const fallbackScrollY = scrollContext?.scrollYBefore ?? (window.scrollY || document.documentElement.scrollTop || 0);
 
     this.parsedSentenceList.innerHTML = '';
 
@@ -910,7 +955,8 @@ export class InputView {
       // 2. Hook up Merge button (if idx > 0)
       const mergeBtn = itemCard.querySelector('.stn-merge-btn');
       if (mergeBtn) {
-        mergeBtn.addEventListener('click', () => {
+        mergeBtn.addEventListener('click', (e) => {
+          e.preventDefault();
           this.mergeWithPreviousSentence(idx);
         });
       }
@@ -918,7 +964,8 @@ export class InputView {
       // 3. Hook up Split button
       const splitBtn = itemCard.querySelector('.stn-split-btn');
       if (splitBtn) {
-        splitBtn.addEventListener('click', () => {
+        splitBtn.addEventListener('click', (e) => {
+          e.preventDefault();
           this.toggleSplitBar(itemCard, stn, idx);
         });
       }
@@ -1041,9 +1088,46 @@ export class InputView {
     });
 
     this.parsedResultsSection.classList.remove('hidden');
-    setTimeout(() => {
-      this.parsedResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
+
+    requestAnimationFrame(() => {
+      // Release temporary min-height lock
+      if (this.parsedSentenceList) {
+        this.parsedSentenceList.style.minHeight = '';
+      }
+
+      // If explicit scrollToSection requested (e.g. initial generation or preset load)
+      if (scrollToSection) {
+        this.parsedResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+
+      // If specific sentence index targeted (e.g. after merge or split)
+      if (typeof targetIdx === 'number' && targetIdx >= 0) {
+        const targetCard = this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"]`);
+        if (targetCard) {
+          if (scrollContext && typeof scrollContext.cardTopBefore === 'number') {
+            // Keep card at the exact same screen pixel coordinate
+            const cardTopAfter = targetCard.getBoundingClientRect().top;
+            const delta = cardTopAfter - scrollContext.cardTopBefore;
+            if (Math.abs(delta) > 1) {
+              window.scrollBy({ top: delta, behavior: 'auto' });
+            }
+          } else {
+            targetCard.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+          }
+
+          // Visual confirmation animation
+          targetCard.classList.add('merged-highlight');
+          setTimeout(() => targetCard.classList.remove('merged-highlight'), 1200);
+          return;
+        }
+      }
+
+      // Fallback: restore exact scroll position to prevent jumping to top
+      if (fallbackScrollY > 0) {
+        window.scrollTo({ top: fallbackScrollY, behavior: 'auto' });
+      }
+    });
   }
 
   renderWordDividerTrack(track, stn, chunkInput, directInput) {
@@ -1661,7 +1745,8 @@ export class InputView {
   onActivated() {
     // Re-render results if sentence list exists
     if (appState.sentenceList.length > 0) {
-      this.renderParsedResults();
+      const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+      this.renderParsedResults({ scrollContext: { scrollYBefore: scrollY } });
     } else if (this.inputEnglish && !this.inputEnglish.value) {
       this.inputEnglish.focus();
     }

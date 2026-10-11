@@ -23,13 +23,17 @@ export function isKoreanSentence(text) {
  */
 export function cleanPracticeSentence(text) {
   if (!text) return '';
+  // Strip speaker indicators like 'M: ', 'W: ', 'Man: ', 'Woman: ', 'Boy: ', 'Girl: ', 'Speaker 1: ', 'A: ', 'B: ', '남: ', '여: '
+  let cleaned = text.replace(/^((M(an)?|W(oman)?|Boy|Girl|Speaker\s*\d+|[AB남여])\s*:\s*)/i, '').trim();
   // Strip leading question/speaker indicators like '1번. 남:', '여:', 'W:', 'M:', '[남]'
-  let cleaned = text.replace(/^[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/i, '').trim();
+  cleaned = cleaned.replace(/^[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/i, '').trim();
   // Strip inline Korean parentheticals e.g. '(해설)', '[안내]'
   cleaned = cleaned.replace(/\([가-힣\s,.:~]+\)/g, '');
   cleaned = cleaned.replace(/\[[가-힣\s,.:~]+\]/g, '');
   // Strip any stray Korean words from inside the English practice sentence
   cleaned = cleaned.replace(/[가-힣]+/g, '');
+  // Strip speaker indicators again in case they were preceded by Korean tags
+  cleaned = cleaned.replace(/^((M(an)?|W(oman)?|Boy|Girl|Speaker\s*\d+|[AB남여])\s*:\s*)/i, '').trim();
   return cleaned.replace(/\s{2,}/g, ' ').trim();
 }
 

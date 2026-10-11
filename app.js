@@ -395,13 +395,17 @@ function isKoreanSentence(text) {
  */
 function cleanPracticeSentence(text) {
   if (!text) return '';
+  // Strip speaker indicators like 'M: ', 'W: ', 'Man: ', 'Woman: ', 'Boy: ', 'Girl: ', 'Speaker 1: ', 'A: ', 'B: ', '남: ', '여: '
+  let cleaned = text.replace(/^((M(an)?|W(oman)?|Boy|Girl|Speaker\s*\d+|[AB남여])\s*:\s*)/i, '').trim();
   // Strip leading question/speaker indicators like '1번. 남:', '여:', 'W:', 'M:', '[남]'
-  let cleaned = text.replace(/^[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/i, '').trim();
+  cleaned = cleaned.replace(/^[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/i, '').trim();
   // Strip inline Korean parentheticals e.g. '(해설)', '[안내]'
   cleaned = cleaned.replace(/\([가-힣\s,.:~]+\)/g, '');
   cleaned = cleaned.replace(/\[[가-힣\s,.:~]+\]/g, '');
   // Strip any stray Korean words from inside the English practice sentence
   cleaned = cleaned.replace(/[가-힣]+/g, '');
+  // Strip speaker indicators again in case they were preceded by Korean tags
+  cleaned = cleaned.replace(/^((M(an)?|W(oman)?|Boy|Girl|Speaker\s*\d+|[AB남여])\s*:\s*)/i, '').trim();
   return cleaned.replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -1692,21 +1696,29 @@ CRITICAL RULES:
       return null;
     }
 
-    const prompt = `Listen to this English audio carefully.
+    const prompt = `You are a precision audio-script alignment engine for Korean-English listening comprehension tests (CSAT 수능 / EBS / school exam audio).
+
+CRITICAL DOMAIN BACKGROUND & RULES:
+1. The audio begins with a spoken Korean question announcement / direction (우리말 안내 방송 / 문제 설명, e.g. "1번 문제입니다. 대화를 듣고, 남자가 할 일로 가장 적절한 것을 고르시오.") followed by a chime sound ("딩동댕" 안내 종소리).
+2. ALL KOREAN SPEECH, KOREAN ANNOUNCEMENTS, AND INTRO CHIMES MUST BE COMPLETELY IGNORED AND OMITTED.
+3. The English dialogue begins strictly AFTER the Korean announcement and chime sound finish.
+4. DO NOT align any English sentence to the Korean speech. [S1] MUST NOT start at or during the Korean voice.
+5. The 'start' timestamp of [S1] MUST be the exact second when the speaker speaks the first ENGLISH word of [S1] (e.g. "Hello", "Good morning", "Excuse me").
+6. Any Korean question outro (우리말 마무리 질문) at the end of the audio must also be completely excluded.
+
 We have the following exact English sentences in order:
 ${sentences.map((s, idx) => `[S${idx + 1}] "${s}"`).join('\n')}
 
-For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this sentence in the audio.
-Ignore introductory chimes, directions, or non-English announcements at the beginning.
+For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this English sentence in the audio.
 
 CRITICAL FOR TIMESTAMPS:
-- 'start': The exact moment the speaker begins the first word of the sentence.
-- 'end': MUST NOT cut off the last word of the sentence. Include the complete release and acoustic decay of the final word plus 0.8s trailing padding (or up until right before the next sentence starts).
+- 'start': The exact moment the speaker begins the first English word of this sentence (MUST NOT include any preceding Korean speech or chimes).
+- 'end': Include the complete release of the final English word plus 0.6s trailing padding (or up until right before the next English sentence starts).
 
 Respond ONLY with valid JSON:
 {
   "alignments": [
-    { "sentence_index": 0, "start": 3.2, "end": 7.5 }
+    { "sentence_index": 0, "start": 6.8, "end": 10.2 }
   ]
 }`;
 
@@ -1741,9 +1753,9 @@ Respond ONLY with valid JSON:
           const start = Number(a.start) || 0;
           if (nextStart !== null && nextStart > start) {
             const safeMax = Math.max(start + 0.5, nextStart - 0.15);
-            end = Math.min(safeMax, Math.round((end + 0.9) * 10) / 10);
+            end = Math.min(safeMax, Math.round((end + 0.6) * 10) / 10);
           } else {
-            end = Math.round((end + 1.0) * 10) / 10;
+            end = Math.round((end + 0.8) * 10) / 10;
           }
           return {
             sentence_index: a.sentence_index ?? i,
@@ -1768,11 +1780,15 @@ Respond ONLY with valid JSON:
     }
 
     const prompt = `Listen to this English audio carefully.
-1. Transcribe the spoken English accurately into the "script" field.
-2. Translate into natural Korean (SOV order) in "natural".
-3. Provide chunk-based sequential interpretation with " || " in "chunk_text".
-4. Provide chunk breakdown array in "chunks": [{ "en": "...", "ko": "..." }]
-5. If there are multiple sentences, also provide a "sentences" array where each element contains:
+This audio is from an English listening test (such as CSAT 수능 / EBS / school exam) which often contains spoken Korean question directions/announcements at the beginning (e.g. "1번 문제입니다. 대화를 듣고...") and/or Korean outro questions at the end.
+
+CRITICAL INSTRUCTIONS:
+1. OMIT ALL KOREAN SPOKEN ANNOUNCEMENTS, DIRECTIONS, QUESTION NUMBERS, AND CHIMES.
+2. Transcribe ONLY the authentic English dialogue / passage spoken in the audio into the "script" field.
+3. Translate into natural Korean (SOV order) in "natural".
+4. Provide chunk-based sequential interpretation with " || " in "chunk_text".
+5. Provide chunk breakdown array in "chunks": [{ "en": "...", "ko": "..." }]
+6. If there are multiple sentences, also provide a "sentences" array where each element contains:
    { "text": "English sentence", "natural": "Korean natural translation", "chunks": [{ "en": "...", "ko": "..." }] }
 
 Respond ONLY with valid JSON:
@@ -1919,8 +1935,174 @@ async function decodeAudioFile(file) {
 /**
  * Audio Sentence Boundary Detection Engine
  * Combines Web Audio API PCM RMS energy analysis, VAD (Voice Activity Detection),
- * speech onset/offset trimming, and adaptive energy valley alignment.
+ * Korean question intro/outro omission, and adaptive energy valley alignment.
  */
+
+/**
+ * Calculates expected English reading duration based on word count
+ */
+function estimateEnglishSpeechDuration(sentences) {
+  if (!sentences || !sentences.length) return 0;
+  const totalEnglishWords = sentences.reduce((sum, s) => sum + (s || '').trim().split(/\s+/).filter(Boolean).length, 0);
+  return Math.max(2.0, totalEnglishWords * 0.42 + (sentences.length - 1) * 0.65);
+}
+
+/**
+ * Detects Korean question announcement duration (in seconds) to be omitted
+ */
+function detectKoreanIntroDuration(audioBuffer, sentences, totalDuration) {
+  if (!audioBuffer) return 0;
+  try {
+    const duration = totalDuration || audioBuffer.duration || 0;
+    if (duration <= 0) return 0;
+
+    const rawData = audioBuffer.getChannelData(0);
+    const sampleRate = audioBuffer.sampleRate;
+    const windowSec = 0.05;
+    const windowSize = Math.floor(sampleRate * windowSec);
+    const numWindows = Math.floor(rawData.length / windowSize);
+
+    const energies = new Float32Array(numWindows);
+    let maxRms = 0;
+    for (let w = 0; w < numWindows; w++) {
+      let sumSq = 0;
+      const offset = w * windowSize;
+      const step = Math.max(1, Math.floor(windowSize / 128));
+      let count = 0;
+      for (let k = 0; k < windowSize; k += step) {
+        const v = rawData[offset + k];
+        sumSq += v * v;
+        count++;
+      }
+      const rms = Math.sqrt(sumSq / count);
+      energies[w] = rms;
+      if (rms > maxRms) maxRms = rms;
+    }
+
+    if (maxRms <= 0.001) return 0;
+
+    const vadThreshold = maxRms * 0.055;
+    const speechSegments = extractVadSpeechSegments(energies, windowSec, numWindows, vadThreshold);
+    const expectedEnglishSec = estimateEnglishSpeechDuration(sentences);
+    const overhead = duration - expectedEnglishSec;
+
+    if (speechSegments.length > sentences.length && overhead >= 2.0) {
+      const remDur0 = duration - speechSegments[0].startSec;
+      let bestScore = Math.abs(remDur0 - (expectedEnglishSec + 0.8));
+      let bestIdx = 0;
+
+      const maxIntroIdx = speechSegments.length - sentences.length;
+      for (let i = 1; i <= maxIntroIdx; i++) {
+        const prevSeg = speechSegments[i - 1];
+        const currSeg = speechSegments[i];
+        const gap = currSeg.startSec - prevSeg.endSec;
+        const timeFromStart = currSeg.startSec;
+
+        if (timeFromStart > 16.0) break;
+
+        const remainingDur = duration - timeFromStart;
+        if (remainingDur < expectedEnglishSec * 0.65) continue;
+
+        const s1Words = (sentences[0] || '').trim().split(/\s+/).filter(Boolean).length;
+        const s1MinDur = Math.min(1.0, s1Words * 0.25);
+        if (currSeg.duration < s1MinDur) continue;
+
+        const durDiff = Math.abs(remainingDur - (expectedEnglishSec + 0.8));
+        const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+        const score = durDiff - gapBonus;
+
+        if (score < bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+
+      if (bestIdx > 0) {
+        return Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+      }
+    } else if (sentences.length === 1 && speechSegments.length >= 2 && overhead >= 2.0) {
+      const remDur0 = duration - speechSegments[0].startSec;
+      let bestScore = Math.abs(remDur0 - (expectedEnglishSec + 0.8));
+      let bestIdx = 0;
+
+      for (let i = 1; i < speechSegments.length; i++) {
+        const prevSeg = speechSegments[i - 1];
+        const currSeg = speechSegments[i];
+        const gap = currSeg.startSec - prevSeg.endSec;
+        const timeFromStart = currSeg.startSec;
+
+        if (timeFromStart > 16.0) break;
+
+        const remainingDur = duration - timeFromStart;
+        if (remainingDur < expectedEnglishSec * 0.65) continue;
+
+        const durDiff = Math.abs(remainingDur - (expectedEnglishSec + 0.8));
+        const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+        const score = durDiff - gapBonus;
+
+        if (score < bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+
+      if (bestIdx > 0) {
+        return Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+      }
+    } else if (speechSegments.length <= 1 && overhead >= 3.0) {
+      return Math.max(0, Math.round((overhead - 0.8) * 10) / 10);
+    }
+  } catch (e) {
+    console.warn('detectKoreanIntroDuration error:', e);
+  }
+  return 0;
+}
+
+function extractVadSpeechSegments(energies, windowSec, numWindows, vadThreshold) {
+  const speechSegments = [];
+  let inSeg = false;
+  let segStartW = 0;
+
+  for (let w = 0; w < numWindows; w++) {
+    const isSpeech = energies[w] >= vadThreshold;
+    if (!inSeg && isSpeech) {
+      inSeg = true;
+      segStartW = w;
+    } else if (inSeg && !isSpeech) {
+      let silenceEnd = true;
+      const look = Math.floor(0.25 / windowSec);
+      for (let k = 1; k <= look && w + k < numWindows; k++) {
+        if (energies[w + k] >= vadThreshold) {
+          silenceEnd = false;
+          break;
+        }
+      }
+      if (silenceEnd) {
+        inSeg = false;
+        const durSec = (w - segStartW) * windowSec;
+        if (durSec >= 0.25) {
+          speechSegments.push({
+            startIdx: segStartW,
+            endIdx: w,
+            startSec: Math.round(segStartW * windowSec * 10) / 10,
+            endSec: Math.round(w * windowSec * 10) / 10,
+            duration: Math.round(durSec * 10) / 10
+          });
+        }
+      }
+    }
+  }
+  if (inSeg) {
+    speechSegments.push({
+      startIdx: segStartW,
+      endIdx: numWindows - 1,
+      startSec: Math.round(segStartW * windowSec * 10) / 10,
+      endSec: Math.round(numWindows * windowSec * 10) / 10,
+      duration: Math.round((numWindows - 1 - segStartW) * windowSec * 10) / 10
+    });
+  }
+  return speechSegments;
+}
 
 function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
   if (!sentences || !sentences.length) return [];
@@ -1930,20 +2112,10 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
     return sentences.map(() => ({ start: null, end: null }));
   }
 
-  if (sentences.length === 1) {
-    // If audio buffer exists, find actual speech start and end
-    if (audioBuffer) {
-      try {
-        const { speechStart, speechEnd } = detectSpeechOnsetOffset(audioBuffer, duration);
-        return [{ start: speechStart, end: speechEnd }];
-      } catch (e) {
-        console.warn('Single sentence VAD fallback:', e);
-      }
-    }
-    return [{ start: 0, end: Math.round(duration * 10) / 10 }];
-  }
+  const expectedEnglishSpeechSec = estimateEnglishSpeechDuration(sentences);
+  const overhead = duration - expectedEnglishSpeechSec;
 
-  // Step 1: Attempt PCM RMS analysis with VAD and adaptive valley boundary detection
+  // Step 1: PCM RMS analysis with VAD & Korean intro/outro omission
   if (audioBuffer) {
     try {
       const rawData = audioBuffer.getChannelData(0);
@@ -1957,7 +2129,7 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
       for (let w = 0; w < numWindows; w++) {
         let sumSq = 0;
         const offset = w * windowSize;
-        const step = Math.max(1, Math.floor(windowSize / 128)); // Sample representative points for high speed
+        const step = Math.max(1, Math.floor(windowSize / 128));
         let count = 0;
         for (let k = 0; k < windowSize; k += step) {
           const v = rawData[offset + k];
@@ -1970,33 +2142,117 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
       }
 
       if (maxRms > 0.001) {
-        // 1. Detect speech onset (skipping intro silence / chimes)
-        const onsetThresh = maxRms * 0.05;
-        let speechStartIdx = 0;
-        for (let w = 0; w < numWindows; w++) {
-          if (energies[w] >= onsetThresh) {
-            if (w + 1 < numWindows && energies[w + 1] >= onsetThresh * 0.6) {
+        const vadThreshold = maxRms * 0.055;
+        const speechSegments = extractVadSpeechSegments(energies, windowSec, numWindows, vadThreshold);
+
+        // 1. Detect English speech onset (omitting Korean question announcement)
+        let speechStart = speechSegments[0]?.startSec ?? 0;
+
+        if (speechSegments.length > sentences.length && overhead >= 2.0) {
+          const remDur0 = duration - speechSegments[0].startSec;
+          let bestScore = Math.abs(remDur0 - (expectedEnglishSpeechSec + 0.8));
+          let bestIdx = 0;
+
+          const maxIntroIdx = speechSegments.length - sentences.length;
+          for (let i = 1; i <= maxIntroIdx; i++) {
+            const prevSeg = speechSegments[i - 1];
+            const currSeg = speechSegments[i];
+            const gap = currSeg.startSec - prevSeg.endSec;
+            const timeFromStart = currSeg.startSec;
+
+            if (timeFromStart > 16.0) break;
+
+            const remainingDur = duration - timeFromStart;
+            if (remainingDur < expectedEnglishSpeechSec * 0.65) continue;
+
+            const s1Words = (sentences[0] || '').trim().split(/\s+/).filter(Boolean).length;
+            const s1MinDur = Math.min(1.0, s1Words * 0.25);
+            if (currSeg.duration < s1MinDur) continue;
+
+            const durDiff = Math.abs(remainingDur - (expectedEnglishSpeechSec + 0.8));
+            const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+            const score = durDiff - gapBonus;
+
+            if (score < bestScore) {
+              bestScore = score;
+              bestIdx = i;
+            }
+          }
+
+          if (bestIdx > 0) {
+            speechStart = Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+          }
+        } else if (sentences.length === 1 && speechSegments.length >= 2 && overhead >= 2.0) {
+          const remDur0 = duration - speechSegments[0].startSec;
+          let bestScore = Math.abs(remDur0 - (expectedEnglishSpeechSec + 0.8));
+          let bestIdx = 0;
+
+          for (let i = 1; i < speechSegments.length; i++) {
+            const prevSeg = speechSegments[i - 1];
+            const currSeg = speechSegments[i];
+            const gap = currSeg.startSec - prevSeg.endSec;
+            const timeFromStart = currSeg.startSec;
+
+            if (timeFromStart > 16.0) break;
+
+            const remainingDur = duration - timeFromStart;
+            if (remainingDur < expectedEnglishSpeechSec * 0.65) continue;
+
+            const durDiff = Math.abs(remainingDur - (expectedEnglishSpeechSec + 0.8));
+            const gapBonus = Math.min(3.5, Math.max(0, gap - 0.4) * 2.0);
+            const score = durDiff - gapBonus;
+
+            if (score < bestScore) {
+              bestScore = score;
+              bestIdx = i;
+            }
+          }
+
+          if (bestIdx > 0) {
+            speechStart = Math.max(0, Math.round((speechSegments[bestIdx].startSec - 0.1) * 10) / 10);
+          }
+        } else if (speechSegments.length <= 1 && overhead >= 3.0) {
+          speechStart = Math.max(0, Math.round((overhead - 0.8) * 10) / 10);
+        } else if (speechSegments.length === 0) {
+          const onsetThresh = maxRms * 0.05;
+          let speechStartIdx = 0;
+          for (let w = 0; w < numWindows; w++) {
+            if (energies[w] >= onsetThresh) {
               speechStartIdx = Math.max(0, w - 2);
               break;
             }
           }
+          speechStart = Math.max(0, Math.round((speechStartIdx * windowSec - 0.1) * 10) / 10);
         }
-        const speechStart = Math.max(0, Math.round((speechStartIdx * windowSec - 0.1) * 10) / 10);
 
-        // 2. Detect speech offset (skipping trailing silence / chimes)
-        // Sensitive threshold (1.5% maxRms) + 1.0s generous padding to prevent cutting off final phonemes/words
-        const offsetThresh = maxRms * 0.015;
-        let speechEndIdx = numWindows - 1;
-        for (let w = numWindows - 1; w >= 0; w--) {
-          if (energies[w] >= offsetThresh) {
-            speechEndIdx = Math.min(numWindows - 1, w + Math.floor(1.0 / windowSec));
-            break;
+        // 2. Detect English speech offset (omitting trailing Korean outro questions / chimes)
+        let speechEnd = Math.round(duration * 10) / 10;
+        const englishSegments = speechSegments.filter(s => s.startSec >= speechStart - 0.1);
+        if (englishSegments.length > 0) {
+          const lastEngSeg = englishSegments[englishSegments.length - 1];
+          if (englishSegments.length > sentences.length) {
+            const targetSeg = englishSegments[sentences.length - 1];
+            const span = targetSeg.endSec - speechStart;
+            const nextSeg = englishSegments[sentences.length];
+            if (span >= expectedEnglishSpeechSec * 0.8 || (nextSeg && nextSeg.startSec - targetSeg.endSec >= 0.5)) {
+              speechEnd = Math.min(duration, Math.round((targetSeg.endSec + 0.8) * 10) / 10);
+            } else {
+              speechEnd = Math.min(duration, Math.round((lastEngSeg.endSec + 0.8) * 10) / 10);
+            }
+          } else {
+            speechEnd = Math.min(duration, Math.round((lastEngSeg.endSec + 0.8) * 10) / 10);
           }
         }
-        let speechEnd = Math.min(duration, Math.round((speechEndIdx * windowSec) * 10) / 10);
-        if (speechEnd + 1.0 >= duration - 0.2) {
+
+        if (duration - speechEnd <= 0.6) {
           speechEnd = Math.round(duration * 10) / 10;
         }
+
+        // Single sentence case
+        if (sentences.length === 1) {
+          return [{ start: speechStart, end: speechEnd }];
+        }
+
         const speechDuration = Math.max(1.0, speechEnd - speechStart);
 
         // Smooth energy curve with moving average (~250ms window)
@@ -2056,7 +2312,7 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
           // Find the speech onset of the next sentence following the valley
           let nextOnsetIdx = bestIdx;
           for (let w = bestIdx; w < numWindows; w++) {
-            if (energies[w] >= onsetThresh) {
+            if (energies[w] >= vadThreshold) {
               nextOnsetIdx = Math.max(bestIdx, w);
               break;
             }
@@ -2090,70 +2346,26 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
     }
   }
 
-  // Step 2: Proportional fallback based on word counts
-  return proportionalSentenceBoundaries(sentences, duration);
+  // Step 2: Proportional fallback based on word counts with intro offset
+  return proportionalSentenceBoundaries(sentences, duration, expectedEnglishSpeechSec);
 }
 
-function detectSpeechOnsetOffset(audioBuffer, totalDuration) {
-  try {
-    const rawData = audioBuffer.getChannelData(0);
-    const windowSec = 0.05;
-    const windowSize = Math.floor(audioBuffer.sampleRate * windowSec);
-    const numWindows = Math.floor(rawData.length / windowSize);
-
-    let maxRms = 0;
-    const energies = new Float32Array(numWindows);
-    for (let w = 0; w < numWindows; w++) {
-      let sumSq = 0;
-      const offset = w * windowSize;
-      for (let k = 0; k < windowSize; k += 8) {
-        const v = rawData[offset + k];
-        sumSq += v * v;
-      }
-      const rms = Math.sqrt(sumSq / (windowSize / 8));
-      energies[w] = rms;
-      if (rms > maxRms) maxRms = rms;
-    }
-
-    const onsetThresh = maxRms * 0.05;
-    let startSec = 0;
-    for (let w = 0; w < numWindows; w++) {
-      if (energies[w] >= onsetThresh) {
-        startSec = Math.max(0, Math.round((w * windowSec - 0.1) * 10) / 10);
-        break;
-      }
-    }
-
-    const offsetThresh = maxRms * 0.015;
-    let endSec = totalDuration;
-    for (let w = numWindows - 1; w >= 0; w--) {
-      if (energies[w] >= offsetThresh) {
-        // Add 1.0s headroom so sentence ending is NEVER truncated
-        endSec = Math.min(totalDuration, Math.round(((w + 1) * windowSec + 1.0) * 10) / 10);
-        break;
-      }
-    }
-    if (endSec + 1.0 >= totalDuration - 0.2) {
-      endSec = Math.round(totalDuration * 10) / 10;
-    }
-
-    return { speechStart: startSec, speechEnd: endSec };
-  } catch (e) {
-    return { speechStart: 0, speechEnd: Math.round(totalDuration * 10) / 10 };
-  }
-}
-
-function proportionalSentenceBoundaries(sentences, totalDuration) {
+function proportionalSentenceBoundaries(sentences, totalDuration, expectedEnglishSpeechSec) {
   if (!sentences || !sentences.length) return [];
+  const expSec = expectedEnglishSpeechSec || estimateEnglishSpeechDuration(sentences);
+  const overhead = totalDuration - expSec;
+  const startOffset = overhead >= 2.5 ? Math.round((overhead - 0.5) * 10) / 10 : 0;
+  const effectiveDur = Math.max(1.0, totalDuration - startOffset);
+
   if (sentences.length === 1) {
-    return [{ start: 0, end: Math.round(totalDuration * 10) / 10 }];
+    return [{ start: startOffset, end: Math.round(totalDuration * 10) / 10 }];
   }
   const weights = sentences.map(s => Math.max(3, (s || '').trim().split(/\s+/).filter(Boolean).length));
   const totalWeight = weights.reduce((a, b) => a + b, 0);
-  let cur = 0;
+  let cur = startOffset;
   return sentences.map((s, idx) => {
     const fraction = weights[idx] / totalWeight;
-    const dur = totalDuration * fraction;
+    const dur = effectiveDur * fraction;
     const start = Math.round(cur * 10) / 10;
     const end = idx === sentences.length - 1 ? Math.round(totalDuration * 10) / 10 : Math.round((cur + dur) * 10) / 10;
     cur += dur;
@@ -3457,7 +3669,7 @@ class InputView {
           if (this.charCount) this.charCount.textContent = `${scriptText.length}자`;
         }
 
-        const rawSentences = splitIntoSentences(scriptText);
+        const rawSentences = splitIntoSentences(scriptText, { filterKorean: true });
         const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
 
         // Partition AI chunks sequentially across each sentence so S1 never contains S2/S3 chunks
@@ -3499,7 +3711,7 @@ class InputView {
         appState.setSentenceList(sentenceList);
 
         // Render Results Panel on Page 1
-        this.renderParsedResults();
+        this.renderParsedResults({ scrollToSection: true });
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 완료! 아래에서 청크와 해석을 확인하세요.`);
       } catch (err) {
         console.error(err);
@@ -3561,6 +3773,12 @@ class InputView {
 
       if (!boundaries) {
         boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      } else if (appState.audioBuffer && boundaries.length > 0) {
+        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
+        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
+        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
+          boundaries[0].start = introSec;
+        }
       }
 
       // Safety extension: ensure each sentence end has generous headroom (+0.9s ~ +1.0s)
@@ -3631,7 +3849,7 @@ class InputView {
       appState.setSentenceList(sentenceList);
 
       // Render Results Panel on Page 1
-      this.renderParsedResults();
+      this.renderParsedResults({ scrollToSection: true });
       toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
     } catch (err) {
       console.error('Translation error:', err);
@@ -3670,6 +3888,12 @@ class InputView {
 
       if (!boundaries) {
         boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+      } else if (appState.audioBuffer && boundaries.length > 0) {
+        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
+        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
+        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
+          boundaries[0].start = introSec;
+        }
       }
 
       if (boundaries && boundaries.length === appState.sentenceList.length) {
@@ -3694,7 +3918,8 @@ class InputView {
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
           stn.cachedPeaks = null;
         });
-        this.renderParsedResults();
+        const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+        this.renderParsedResults({ scrollContext: { scrollYBefore: scrollY } });
         toast.show('✨ 음성-스크립트 자동 Sync 완료! 문장별 재생 구간이 최적화되었습니다.');
       }
     } catch (err) {
@@ -3708,7 +3933,15 @@ class InputView {
    */
   mergeWithPreviousSentence(idx) {
     if (idx <= 0 || !appState.sentenceList || idx >= appState.sentenceList.length) return;
-    const prev = appState.sentenceList[idx - 1];
+
+    const targetIdx = idx - 1;
+    const scrollYBefore = window.scrollY || document.documentElement.scrollTop || 0;
+    const prevCardBefore = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"]`) : null;
+    const curCardBefore = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
+    const refCard = prevCardBefore || curCardBefore;
+    const cardTopBefore = refCard ? refCard.getBoundingClientRect().top : null;
+
+    const prev = appState.sentenceList[targetIdx];
     const cur = appState.sentenceList[idx];
 
     const mergedText = `${prev.text} ${cur.text}`.trim();
@@ -3733,13 +3966,16 @@ class InputView {
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
 
-    this.renderParsedResults();
+    this.renderParsedResults({
+      targetIdx,
+      scrollContext: { scrollYBefore, cardTopBefore }
+    });
     toast.show(`🔗 문장 S${idx}와 S${idx + 1}이 하나로 결합되었습니다.`);
 
     aiService.translateNatural(mergedText).then(natural => {
       if (natural) {
         prev.result.natural = natural;
-        const naturalInput = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .sentence-natural-input`);
+        const naturalInput = this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"] .sentence-natural-input`);
         if (naturalInput) naturalInput.value = natural;
       }
     }).catch(() => {});
@@ -3756,6 +3992,10 @@ class InputView {
       toast.show('⚠️ 분리할 위치를 올바르게 선택하세요.');
       return;
     }
+
+    const scrollYBefore = window.scrollY || document.documentElement.scrollTop || 0;
+    const targetCardBefore = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
+    const cardTopBefore = targetCardBefore ? targetCardBefore.getBoundingClientRect().top : null;
 
     const wordsPart1 = words.slice(0, splitWordIndex + 1);
     const wordsPart2 = words.slice(splitWordIndex + 1);
@@ -3805,7 +4045,10 @@ class InputView {
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
 
-    this.renderParsedResults();
+    this.renderParsedResults({
+      targetIdx: idx,
+      scrollContext: { scrollYBefore, cardTopBefore }
+    });
     toast.show(`✂️ 문장이 S${idx + 1}과 S${idx + 2}로 분리되었습니다.`);
 
     Promise.all([
@@ -3917,7 +4160,7 @@ class InputView {
     }
   }
 
-  renderParsedResults() {
+  renderParsedResults(options = {}) {
     if (!this.parsedResultsSection || !this.parsedSentenceList) return;
     const sentences = appState.sentenceList;
     if (!sentences || !sentences.length) {
@@ -3925,9 +4168,23 @@ class InputView {
       return;
     }
 
+    const {
+      scrollToSection = false,
+      targetIdx = null,
+      scrollContext = null
+    } = options;
+
     if (this.resultsCountBadge) {
       this.resultsCountBadge.textContent = `총 ${sentences.length}개 문장`;
     }
+
+    // 1. Lock container height before innerHTML = '' to prevent document collapse and screen jump to top
+    const prevListHeight = this.parsedSentenceList.offsetHeight;
+    if (prevListHeight > 0) {
+      this.parsedSentenceList.style.minHeight = `${prevListHeight}px`;
+    }
+
+    const fallbackScrollY = scrollContext?.scrollYBefore ?? (window.scrollY || document.documentElement.scrollTop || 0);
 
     this.parsedSentenceList.innerHTML = '';
 
@@ -4027,7 +4284,8 @@ class InputView {
       // 2. Hook up Merge button (if idx > 0)
       const mergeBtn = itemCard.querySelector('.stn-merge-btn');
       if (mergeBtn) {
-        mergeBtn.addEventListener('click', () => {
+        mergeBtn.addEventListener('click', (e) => {
+          e.preventDefault();
           this.mergeWithPreviousSentence(idx);
         });
       }
@@ -4035,7 +4293,8 @@ class InputView {
       // 3. Hook up Split button
       const splitBtn = itemCard.querySelector('.stn-split-btn');
       if (splitBtn) {
-        splitBtn.addEventListener('click', () => {
+        splitBtn.addEventListener('click', (e) => {
+          e.preventDefault();
           this.toggleSplitBar(itemCard, stn, idx);
         });
       }
@@ -4158,9 +4417,46 @@ class InputView {
     });
 
     this.parsedResultsSection.classList.remove('hidden');
-    setTimeout(() => {
-      this.parsedResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
+
+    requestAnimationFrame(() => {
+      // Release temporary min-height lock
+      if (this.parsedSentenceList) {
+        this.parsedSentenceList.style.minHeight = '';
+      }
+
+      // If explicit scrollToSection requested (e.g. initial generation or preset load)
+      if (scrollToSection) {
+        this.parsedResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+
+      // If specific sentence index targeted (e.g. after merge or split)
+      if (typeof targetIdx === 'number' && targetIdx >= 0) {
+        const targetCard = this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"]`);
+        if (targetCard) {
+          if (scrollContext && typeof scrollContext.cardTopBefore === 'number') {
+            // Keep card at the exact same screen pixel coordinate
+            const cardTopAfter = targetCard.getBoundingClientRect().top;
+            const delta = cardTopAfter - scrollContext.cardTopBefore;
+            if (Math.abs(delta) > 1) {
+              window.scrollBy({ top: delta, behavior: 'auto' });
+            }
+          } else {
+            targetCard.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+          }
+
+          // Visual confirmation animation
+          targetCard.classList.add('merged-highlight');
+          setTimeout(() => targetCard.classList.remove('merged-highlight'), 1200);
+          return;
+        }
+      }
+
+      // Fallback: restore exact scroll position to prevent jumping to top
+      if (fallbackScrollY > 0) {
+        window.scrollTo({ top: fallbackScrollY, behavior: 'auto' });
+      }
+    });
   }
 
   renderWordDividerTrack(track, stn, chunkInput, directInput) {
@@ -4778,7 +5074,8 @@ class InputView {
   onActivated() {
     // Re-render results if sentence list exists
     if (appState.sentenceList.length > 0) {
-      this.renderParsedResults();
+      const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+      this.renderParsedResults({ scrollContext: { scrollYBefore: scrollY } });
     } else if (this.inputEnglish && !this.inputEnglish.value) {
       this.inputEnglish.focus();
     }

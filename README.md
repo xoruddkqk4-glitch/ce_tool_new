@@ -347,7 +347,30 @@ node scratch/test_page1_editor_and_handout.js
 - **검증 결과**:
   - `scratch/test_user_chunk_verification.js`: 사용자 제보 문장(`Hello, visitors || to Cryston Beach.`)에 대해 `크리스톤`이 Chunk 1에서 완전 배제되고 Chunk 2(`크리스톤 비치를 방문하시는`)에 올바르게 귀속됨을 100% 검증 통과.
   - `scratch/test_user_requirements_v10.js`: 음성 끝점 여유 구간(+0.8s~+1.0s) 및 100% 순수 한국어 직독직해 생성 검증 100% 통과.
+## [2026-10-11 21:55] 업데이트 이력 (Commit ID: 7096638)
+- **수정 내용**:
+  1. **영어 문장 단위 음성-스크립트 자동 Sync 및 우리말 음성(안내 방송) 생략 처리**:
+     - EBS, CSAT(수능), 학교 영어 듣기 평가 MP3 파일 앞부분의 우리말 안내 멘트(예: "1번 문제입니다. 대화를 듣고, 남자가 할 일로 가장 적절한 것을 고르시오.") 및 차임벨 소리를 VAD(Voice Activity Detection) 및 영문 단어 수 기반 예상 발화 시간(`estimateEnglishSpeechDuration`)으로 정밀 감지하여 100% 생략.
+     - 1번 영어 문장(S1)의 시작점(`speechStart`)을 화자가 첫 번째 영어 단어를 발화하는 온셋(Onset) 시점으로 정확히 락킹하여 우리말 음성이 연습 문장에 섞이는 현상 완전 차단.
+     - 오디오 뒷부분에 위치한 trailing 우리말 질문(아웃트로, 예: "남자가 할 일은 무엇일까요?")을 문장 재생 구간에서 자동 제외.
+     - 단일 문장(`sentences.length === 1`) 연습 시에도 앞부분의 우리말 안내 멘트를 자동 스킵하도록 개선.
+     - 순수 영어 오디오(뉴스, TED, 회화 등)의 경우 오탐(False Positive) 없이 시작점(0.4~0.6s)부터 정상 재생되도록 세그먼트 개수 불변식(`speechSegments.length > sentences.length`) 적용.
+  2. **AI 멀티모달 오디오 정렬 및 STT 프롬프트 최적화 (`alignAudioWithScript`, `transcribeAndTranslateAudio`)**:
+     - Gemini Multimodal Audio 프롬프트에 한국 영어 듣기 평가 도메인 규칙을 명시하여, 모든 우리말 안내 방송과 종소리를 배제하고 첫 영어 단어부터 정렬하도록 프롬프트 강화.
+     - Web Audio PCM VAD 인트로 감지 결과와 교차 검증하여 AI가 0초대 한국어 음성을 잡는 오탐 방지.
+  3. **스크립트 내 화자 태그(`M:`, `W:`, `Woman:`, `Man:`, `남:`, `여:`) 및 우리말 주석 자동 정제**:
+     - `cleanPracticeSentence`를 강화하여 스크립트에 포함된 화자 태그 및 인라인 우리말 주석(`(해설)`, `[안내]`)을 자동 제거, 영어 문장 음성과 텍스트가 1:1로 일치하도록 정제.
+  4. **문장 결합 시 화면 최상단 스크롤 점프 버그 수정**:
+     - `mergeWithPreviousSentence` 호출 시 `scrollContext` 옵션을 도입하여 병합 전 사용자 스크롤 위치(`window.scrollY`)를 기억하고, 병합된 대상 카드 위치로 부드럽게 뷰를 유지하도록 개선.
+  5. **단독 배포 번들(`app.js`) 동기화 및 전수 검증 통과**:
+     - `node scratch/build_standalone.js`를 통해 단독 번들 최신화 (0 imports/exports, syntax 검증 통과).
+- **검증 결과**:
+  - `scratch/test_korean_audio_and_script_sync.js`: 스크립트 화자 태그 정제, 다단계 우리말 인트로/차임 생략, 아웃트로 제외, 단일 문장 생략, 순수 영어 오디오 무오탐 검증 4개 테스트 100% 통과.
+  - `scratch/test_scroll_preservation.js`: 문장 결합 시 화면 스크롤 최상단 점프 차단 및 위치 보존 검증 100% 통과.
+  - `scratch/test_user_chunk_verification.js`: 사용자 제보 문장 청크 1:1 의미 매핑 100% 통과.
+  - `scratch/test_user_requirements_v10.js` & `test_page1_button_clicks.js`: 전원 100% 통과.
   - `node -c app.js`: 정적 구문 오류 0건 통과.
+
 
 
 
