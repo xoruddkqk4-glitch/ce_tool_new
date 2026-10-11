@@ -1,0 +1,253 @@
+/* Page 3: Memorization View Specific Styles */
+
+#view-memorize {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.memorize-controls-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 16px 20px;
+}
+
+.memorize-modes-group {
+  display: flex;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  border: var(--border-subtle);
+}
+
+.memorize-mode-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: var(--transition);
+}
+
+.memorize-mode-btn:hover {
+  color: var(--text-main);
+}
+
+.memorize-mode-btn.active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--primary-glow);
+}
+
+.memorize-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.memorize-play-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(135deg, var(--accent-cyan), #0891b2);
+  color: #090e17;
+  font-weight: 700;
+  font-size: 0.85rem;
+  box-shadow: 0 2px 10px rgba(6, 182, 212, 0.35);
+  transition: var(--transition);
+}
+
+.memorize-play-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.5);
+}
+
+.memorize-play-btn.playing {
+  background: linear-gradient(135deg, var(--accent-rose), #e11d48);
+  color: #fff;
+}
+
+.memorize-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.memorize-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 60px 20px;
+  background: var(--glass-bg);
+  border: var(--glass-border);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+}
+
+/* Sentence Row */
+.memorize-sentence-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--glass-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  transition: var(--transition);
+}
+
+.memorize-sentence-row:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(26, 34, 54, 0.9);
+}
+
+.memorize-sentence-row.playing-active {
+  border-color: #00ffcc !important;
+  box-shadow: 0 0 20px rgba(0, 255, 204, 0.35);
+  background: rgba(16, 28, 48, 0.98);
+}
+
+.memorize-sentence-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.memorize-stn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: var(--primary-light);
+  font-size: 0.8rem;
+  font-weight: 800;
+  font-family: monospace;
+  transition: var(--transition);
+}
+
+.memorize-stn-badge:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+.memorize-stn-preview {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.memorize-stn-play {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #00ffcc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  transition: var(--transition);
+}
+
+.memorize-stn-play:hover {
+  background: #00ffcc;
+  color: #090e17;
+  transform: scale(1.1);
+}
+
+/* Chunk Grid */
+.memorize-chunk-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.memorize-chunk-card {
+  perspective: 1000px;
+  min-height: 72px;
+  min-width: 110px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.memorize-card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.4s ease;
+  border-radius: var(--radius-md);
+}
+
+.memorize-chunk-card.flipped .memorize-card-inner {
+  transform: rotateY(180deg);
+}
+
+.memorize-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.memorize-face-en {
+  background: linear-gradient(135deg, rgba(30, 41, 69, 0.95), rgba(20, 27, 45, 0.95));
+}
+
+.memorize-face-ko {
+  background: linear-gradient(135deg, rgba(20, 36, 40, 0.95), rgba(13, 24, 28, 0.95));
+  border-color: rgba(6, 182, 212, 0.3);
+  transform: rotateY(180deg);
+}
+
+.chunk-en-text {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.chunk-ko-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #a5f3fc;
+}
+
+.memorize-card-hint {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  margin-top: 4px;
+}
+
+/* Memorize Mode Visibility Overrides */
+/* 1. Cloze Mode: Blur English text until flipped */
+.memorize-canvas[data-mode="cloze"] .memorize-chunk-card:not(.flipped) .chunk-en-text {
+  filter: blur(5px);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 0 8px;
+}
+
+.memorize-canvas[data-mode="cloze"] .memorize-chunk-card:not(.flipped) .memorize-face-en {
+  border-style: dashed;
+  border-color: var(--accent-cyan);
+}

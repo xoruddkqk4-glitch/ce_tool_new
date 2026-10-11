@@ -1,0 +1,442 @@
+/* FELS Weak-Form 3D Flip Chunk Cards & Rechunking Styles */
+
+.output-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: var(--border-subtle);
+}
+
+.row-title-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-icon {
+  font-size: 1.1rem;
+}
+
+.row-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.05);
+  border: var(--border-subtle);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: var(--transition);
+}
+
+.action-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+  transform: translateY(-1px);
+}
+
+.action-pill-btn.btn-primary-pill {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: var(--primary-light);
+}
+
+.action-pill-btn.btn-primary-pill:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* Chunks Container - Strict Single Horizontal Line */
+.chunks-container,
+.chunks-container.single-line-chunks {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: safe center;
+  gap: 16px;
+  width: 100%;
+  min-height: 250px;
+  padding: 16px 20px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chunks-container::-webkit-scrollbar {
+  height: 6px;
+}
+
+.chunks-container::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+}
+
+.chunks-container::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.4);
+  border-radius: 999px;
+}
+
+.chunks-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.7);
+}
+
+/* 3D Flip Card - Large, Classroom-Friendly, Educational Design */
+.chunk-card-3d {
+  perspective: 1200px;
+  position: relative;
+  height: 195px;
+  min-width: 180px;
+  max-width: 420px;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s ease;
+}
+
+.chunk-card-3d:hover {
+  transform: translateY(-4px);
+}
+
+.card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.55s cubic-bezier(0.34, 1.4, 0.64, 1);
+  border-radius: 16px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.chunk-card-3d.flipped .card-inner {
+  transform: rotateY(180deg);
+}
+
+.card-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: 16px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* Front Face: English & FELS Weak-Form */
+.card-front {
+  background: linear-gradient(145deg, rgba(30, 41, 69, 0.95), rgba(16, 23, 42, 0.98));
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.chunk-card-3d:hover .card-front {
+  border-color: rgba(99, 102, 241, 0.7);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+}
+
+/* Back Face: Korean Interpretation */
+.card-back {
+  background: linear-gradient(145deg, rgba(13, 38, 43, 0.95), rgba(7, 24, 28, 0.98));
+  border-color: rgba(6, 182, 212, 0.45);
+  transform: rotateY(180deg);
+}
+
+.chunk-card-3d:hover .card-back {
+  border-color: rgba(6, 182, 212, 0.8);
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+}
+
+/* Card Top Header Bar */
+.card-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 6px;
+  flex-shrink: 0;
+}
+
+.chunk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: 9999px;
+  padding: 2px 10px;
+  letter-spacing: -0.01em;
+}
+
+.chunk-badge.ko-badge {
+  color: #67e8f9;
+  background: rgba(6, 182, 212, 0.18);
+  border-color: rgba(6, 182, 212, 0.45);
+}
+
+.face-flip-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  opacity: 0.8;
+  transition: all 0.2s ease;
+}
+
+.chunk-card-3d:hover .face-flip-hint {
+  opacity: 1;
+  color: #fff;
+}
+
+.face-flip-hint .flip-icon {
+  font-size: 0.85rem;
+  transition: transform 0.4s ease;
+}
+
+.chunk-card-3d:hover .face-flip-hint .flip-icon {
+  transform: rotate(180deg);
+}
+
+/* Tokens and Blanks Content Area (Wrap enabled to never overflow card bounds) */
+.chunk-tokens-wrap,
+.chunk-tokens-original {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 6px;
+  flex-wrap: wrap;
+  max-width: 100%;
+  width: 100%;
+  margin: auto 0;
+  padding: 4px 2px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.fels-token-content,
+.orig-word-span {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  max-width: 100%;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.fels-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+
+.fels-blank-input {
+  background: rgba(0, 255, 204, 0.08);
+  border: 2px dashed #00ffcc;
+  border-radius: 8px;
+  color: #00ffcc;
+  font-family: inherit;
+  font-size: 1.15rem;
+  font-weight: 800;
+  text-align: center;
+  padding: 2px 6px;
+  height: 38px;
+  max-width: 110px;
+  box-sizing: border-box;
+  box-shadow: 0 0 12px rgba(0, 255, 204, 0.15);
+  transition: all 0.2s ease;
+}
+
+.fels-blank-input:focus {
+  border-style: solid;
+  border-color: #00ffcc;
+  background: rgba(0, 255, 204, 0.18);
+  box-shadow: 0 0 18px rgba(0, 255, 204, 0.55);
+  outline: none;
+  transform: scale(1.03);
+}
+
+.fels-blank-input.is-correct {
+  border: 2px solid #10b981 !important;
+  border-style: solid !important;
+  background: rgba(16, 185, 129, 0.22) !important;
+  color: #34d399 !important;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.45);
+}
+
+.fels-blank-input.is-wrong {
+  border: 2px solid #f43f5e !important;
+  border-style: solid !important;
+  background: rgba(244, 63, 94, 0.22) !important;
+  color: #fb7185 !important;
+  box-shadow: 0 0 16px rgba(244, 63, 94, 0.45);
+}
+
+.fels-answer-reveal {
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #10b981;
+  color: #0f172a;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.fels-punct {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.ko-chunk-content {
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  line-height: 1.35;
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  margin: auto 0;
+  padding: 4px;
+  box-sizing: border-box;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* Static '||' Chunk Divider (Clean separator on Page 2) */
+.chunk-static-divider {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 195px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.chunk-static-divider .divider-symbol {
+  font-family: monospace;
+  font-size: 2rem;
+  font-weight: 800;
+  color: rgba(99, 102, 241, 0.4);
+  letter-spacing: 2px;
+  text-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
+}
+
+/* FELS Score Bar */
+.fels-score-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  color: #6ee7b7;
+  font-size: 0.88rem;
+}
+
+/* Natural Translation Row */
+.row-content {
+  position: relative;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+}
+
+.row-text {
+  font-size: 1.05rem;
+  line-height: 1.6;
+  font-weight: 500;
+}
+
+.row-mask-cover {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  border: 1px dashed var(--border-subtle);
+}
+
+.row-mask-cover:hover {
+  background: rgba(15, 23, 42, 0.82);
+  color: #fff;
+  border-color: var(--accent-cyan);
+}
+
+.row-mask-cover kbd {
+  background: rgba(255, 255, 255, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+.row-content.is-masked .row-text {
+  filter: blur(6px);
+  user-select: none;
+}

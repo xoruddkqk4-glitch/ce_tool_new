@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>청크 잉글리시 (ChunkLingo) - FELS 약형 딕테이션 &amp; 3x1 학습기</title>
+  <meta name="description" content="FELS 7대 약형 기능어 자동 딕테이션 빈칸 훈련, 청크별 빈칸 숨김 플립 카드 직독직해, 자연스러운 우리말 해석 3x1 통합 학습 도구">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Pretendard:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-theme="dark">
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m5 8 6 6"></path>
+            <path d="m4 14 6-6 2-3"></path>
+            <path d="M2 5h12"></path>
+            <path d="M7 2h1"></path>
+            <path d="m22 22-5-10-5 10"></path>
+            <path d="M14 18h6"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>Chunk<span class="gradient-text">Lingo</span> <span class="header-badge">FELS</span></h1>
+          <p class="tagline">FELS 약형 딕테이션 ┆ 직독직해 빈칸 플립 ┆ 우리말 해석 (3x1 뷰)</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btnSettings" class="icon-btn" title="AI API 설정" aria-label="AI API 설정">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </button>
+        <button id="btnThemeToggle" class="icon-btn" title="다크/라이트 테마 변경" aria-label="테마 전환">
+          <svg id="themeIconSun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2"></path>
+            <path d="M12 20v2"></path>
+            <path d="m4.93 4.93 1.41 1.41"></path>
+            <path d="m17.66 17.66 1.41 1.41"></path>
+            <path d="M2 12h2"></path>
+            <path d="M20 12h2"></path>
+            <path d="m6.34 17.66-1.41 1.41"></path>
+            <path d="m19.07 4.93-1.41 1.41"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- 1. 맨 위: 파형 패널 (Waveform Audio Player & A-B Looper) -->
+      <section id="audioPlayerSection" class="audio-player-top-section">
+        <div id="audioPlayerCard" class="audio-player-card">
+          <div class="audio-file-info">
+            <span class="audio-icon">🎵</span>
+            <div class="audio-meta">
+              <span id="audioFileName" class="file-name">음성 재생 준비 완료 (스크립트 입력 시 자동 연동)</span>
+              <span id="audioFileSize" class="file-size">00:00.0 (Web Audio)</span>
+            </div>
+            <div class="audio-top-actions">
+              <span id="shadowingIndicator" class="shadow-pause-badge hidden">🗣️ 0.5s 쉐도잉 대기 중</span>
+              <button id="btnRemoveAudio" class="icon-btn text-btn" title="오디오 파일 삭제">✕</button>
+            </div>
+          </div>
+
+          <!-- Waveform Canvas Box -->
+          <div class="waveform-box">
+            <div class="waveform-canvas-wrapper">
+              <canvas id="waveformCanvas" class="waveform-canvas" height="110"></canvas>
+              <div id="waveformLoading" class="waveform-loading hidden">
+                <span class="pulse-dot"></span>
+                <span>PCM 파형 정밀 디코딩 중...</span>
+              </div>
+            </div>
+            <!-- Waveform HUD Bar -->
+            <div class="waveform-hud-bar">
+              <div class="hud-time-group">
+                <span class="hud-label">TIME</span>
+                <span id="audioCurrentTime" class="audio-time-precise">00:00.0</span>
+                <span class="hud-slash">/</span>
+                <span id="audioDuration" class="audio-time-precise">00:00.0</span>
+              </div>
+              <div id="loopStatusBadge" class="loop-status-pill hidden">
+                <span class="pill-icon">🔁</span>
+                <span id="loopRangeLabel" class="pill-text">루프: 00:01.2 ~ 00:03.4</span>
+                <span id="loopCountLabel" class="pill-counter">(1/3회)</span>
+                <button id="btnClearLoop" class="pill-clear-btn" title="A-B 구간 반복 해제" type="button">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Audio Controls Row -->
+          <div class="audio-controls-row">
+            <button id="btnAudioPlayPause" class="play-btn" title="재생/일시정지 (스페이스바)" type="button">
+              <svg id="playIcon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+            </button>
+
+            <!-- A-B Looper Repeat Count Group -->
+            <div class="looper-control-group">
+              <span class="looper-label">반복 횟수:</span>
+              <div class="looper-btn-group">
+                <button class="loop-count-btn" data-count="1" type="button">1회</button>
+                <button class="loop-count-btn" data-count="2" type="button">2회</button>
+                <button class="loop-count-btn active" data-count="3" type="button">3회</button>
+                <button class="loop-count-btn" data-count="5" type="button">5회</button>
+                <button class="loop-count-btn" data-count="Infinity" type="button">∞</button>
+              </div>
+            </div>
+
+            <!-- Speed Controls -->
+            <div class="audio-speed-group">
+              <span class="speed-label">배속:</span>
+              <button class="speed-btn active" data-speed="1.0" type="button">1.0x</button>
+              <button class="speed-btn" data-speed="0.8" type="button">0.8x</button>
+              <button class="speed-btn" data-speed="1.2" type="button">1.2x</button>
+            </div>
+          </div>
+
+          <!-- Waveform Tip & Shortcut Cheatsheet Bar -->
+          <div class="waveform-tip">
+            <span>💡 <strong>파형 활용법:</strong> 파형 위를 <strong>마우스로 드래그</strong>하면 반투명 시안 박스로 A-B 구간이 지정되어 <strong>반복 재생(0.5초 무음 대기 간격)</strong>되며, 단순 클릭 시 해당 위치로 <strong>즉시 탐색(Seek)</strong>합니다.</span>
+          </div>
+
+          <!-- Quick Keyboard Shortcut Cheatsheet -->
+          <div class="shortcut-cheatsheet-bar">
+            <span class="sc-title">⌨️ 단축키 안내:</span>
+            <span class="sc-item"><kbd class="inline-kbd">Space</kbd> 재생/정지</span>
+            <span class="sc-item"><kbd class="inline-kbd">[</kbd> 시작점</span>
+            <span class="sc-item"><kbd class="inline-kbd">]</kbd> 끝점&amp;재생</span>
+            <span class="sc-item"><kbd class="inline-kbd">\</kbd>(￦) 구간해제</span>
+            <span class="sc-item"><kbd class="inline-kbd">R</kbd> 구간반복</span>
+            <span class="sc-item"><kbd class="inline-kbd">←</kbd> <kbd class="inline-kbd">→</kbd> 문장이동</span>
+            <span class="sc-item"><kbd class="inline-kbd">S</kbd> 약형/대본</span>
+            <span class="sc-item"><kbd class="inline-kbd">T</kbd> 해석토글</span>
+          </div>
+
+          <audio id="nativeAudioPlayer" preload="metadata"></audio>
+        </div>
+      </section>
+
+      <!-- 2. 그 아래: Chunk Learning Output Section -->
+      <section id="outputSection" class="output-stack-section">
+        <div class="stack-control-bar">
+          <span class="stack-summary">청크 학습 뷰 (1행: 청크 카드 [앞면: 영어/FELS ⇄ 뒷면: 직독직해] ➔ 2행: 우리말 해석 [기본 숨김])</span>
+          <div class="global-vis-btns">
+            <button id="btnShowAll" class="text-pill-btn" type="button">전체 보이기</button>
+            <button id="btnHideAll" class="text-pill-btn" type="button">전체 숨기기</button>
+          </div>
+        </div>
+
+
+        <!-- Row 1: 청크 학습 카드 (앞면: 영어/FELS ⇄ 뒷면: 직독직해 3D 플립 카드) -->
+        <div class="stack-row-card card-row-chunks" id="rowChunks" tabindex="0">
+          <div class="row-header">
+            <div class="row-title">
+              <span class="badge badge-accent">1행</span>
+              <h3>청크 학습 카드</h3>
+              <span class="fels-tag-badge" title="앞면: FELS 약형 딕테이션 / 뒷면: 직독직해">앞면: 영어 ⇄ 뒷면: 직독직해</span>
+            </div>
+            <div class="row-actions">
+              <!-- FELS Action Buttons -->
+              <button id="btnCheckAnswers" class="tool-btn btn-fels-primary" title="입력한 빈칸 정답을 채점합니다" type="button">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M20 6 9 17l-5-5"></path>
+                </svg>
+                <span>정답 확인</span>
+              </button>
+              <button id="btnToggleFelsOriginal" class="tool-btn" title="FELS 약형 빈칸과 원문 대본 전환 (S 키)" type="button">
+                <span id="felsModeIcon">🔤</span>
+                <span id="felsModeLabel">원문 보기 <kbd class="inline-kbd">S</kbd></span>
+              </button>
+              <button id="btnResetFels" class="tool-btn" title="빈칸 입력을 비우고 다시 풀기" type="button">
+                <span>🔄 다시 풀기</span>
+              </button>
+              <button id="btnFlipAllCards" class="tool-btn" title="모든 카드를 일괄로 영어(앞면) 또는 직독직해(뒷면)로 뒤집습니다" type="button">
+                <span id="flipAllIcon">🔄</span>
+                <span id="flipAllLabel">전체 뒤집기</span>
+              </button>
+
+              <button class="tool-btn btn-toggle-vis" data-target="rowChunks" title="이 행 숨기기/보이기" type="button">
+                <span class="vis-icon">👁️</span>
+                <span class="vis-label">숨기기</span>
+              </button>
+              <button class="tool-btn btn-speak" data-target="en" title="영문 음성 듣기" type="button">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                </svg>
+                <span>음성</span>
+              </button>
+              <button class="tool-btn btn-copy" data-target="en" title="영어 문장 원문 복사" type="button">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+                </svg>
+                <span class="btn-text">복사</span>
+              </button>
+            </div>
+          </div>
+          
+          <div class="row-body">
+            <!-- FELS Score / Status Alert Banner -->
+            <div id="felsScoreBar" class="fels-score-bar hidden">
+              <span id="felsScoreText" class="fels-score-text"></span>
+            </div>
+
+            <!-- Scroll Track containing 3D Flip Cards (Front: English/FELS, Back: Korean Chunk) -->
+            <div class="chunk-scroll-track" id="trackChunks">
+              <div id="chunksContainer" class="chunk-cards-wrapper">
+                <span class="placeholder-text">영어 스크립트를 입력하고 실행하면 청크 플립 카드가 자동 생성됩니다.</span>
+              </div>
+            </div>
+
+            <div class="row-sub-hint">
+              <span>💡 <strong>청크 조절 &amp; 학습 팁:</strong> 카드를 클릭하면 <strong>앞면(영어/FELS) ↔ 뒷면(우리말 해석)</strong>으로 뒤집히며, 카드 사이의 <strong>'||'</strong>를 마우스로 드래그(또는 클릭)하여 원하는 단어 사이로 이동시켜 <strong>청크 단위를 자유롭게 수정</strong>할 수 있습니다.</span>
+            </div>
+
+            <div class="masked-cover">
+              <span>🙈 청크 학습 카드가 숨겨져 있습니다 (클릭하여 확인)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: 우리말 해석 (Natural Korean Translation) - DEFAULT HIDDEN (기본 숨김) -->
+        <div class="stack-row-card card-row-natural row-hidden" id="rowNatural">
+          <div class="row-header">
+            <div class="row-title">
+              <span class="badge badge-success">2행</span>
+              <h3>우리말 해석</h3>
+              <span class="sub-badge-hidden">기본 숨김</span>
+            </div>
+            <div class="row-actions">
+              <button class="tool-btn btn-toggle-vis" data-target="rowNatural" title="우리말 해석 보이기/숨기기 (T 키)" type="button">
+                <span class="vis-icon">🙈</span>
+                <span class="vis-label">보이기 <kbd class="inline-kbd">T</kbd></span>
+              </button>
+              <button class="tool-btn btn-speak" data-target="natural" title="우리말 음성 듣기" type="button">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                </svg>
+                <span>음성</span>
+              </button>
+              <button class="tool-btn btn-copy" data-target="natural" title="우리말 해석 복사" type="button">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+                </svg>
+                <span class="btn-text">복사</span>
+              </button>
+            </div>
+          </div>
+          <div class="row-body">
+            <p id="txtNatural" class="natural-text placeholder-text">한글 어순과 맞춤법에 맞는 완성된 우리말 문장이 표시됩니다.</p>
+            <div class="masked-cover">
+              <span>🔒 우리말 해석이 숨겨져 있습니다 (클릭하여 확인)</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. 맨 아래: 데이터 입력 패널 -->
+      <section id="inputSection" class="input-card input-bottom-section">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="badge badge-accent">INPUT MODE</span>
+            <h2>데이터 입력 방식 선택</h2>
+          </div>
+          <div class="engine-badge-group">
+            <span id="currentEngineBadge" class="status-chip">
+              <span class="pulse-dot"></span>
+              <span id="engineLabel">스마트 FELS 규칙 엔진 (즉시 실행)</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- 3 Upload Modes Segmented Control -->
+        <div class="mode-tabs-container">
+          <button class="mode-tab-btn" data-mode="both" id="tabModeBoth" type="button">
+            <span class="tab-badge">1</span>
+            <span class="tab-title">🎧 mp3 음성 + 📝 script</span>
+          </button>
+          <button class="mode-tab-btn" data-mode="audio" id="tabModeAudio" type="button">
+            <span class="tab-badge">2</span>
+            <span class="tab-title">🎙️ mp3 음성만</span>
+          </button>
+          <button class="mode-tab-btn active" data-mode="text" id="tabModeText" type="button">
+            <span class="tab-badge">3</span>
+            <span class="tab-title">✍️ script만</span>
+          </button>
+        </div>
+
+        <!-- Mode 1 & 2: MP3 Audio Upload Dropzone -->
+        <div id="audioUploadZone" class="audio-upload-wrapper hidden">
+          <input type="file" id="audioFileInput" accept="audio/mp3,audio/wav,audio/m4a,audio/aac,audio/*" class="file-input-hidden">
+          
+          <div id="audioDropArea" class="audio-drop-area">
+            <div class="drop-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+              </svg>
+            </div>
+            <div class="drop-text-group">
+              <span class="drop-title">MP3 음성 파일 선택 또는 드래그 &amp; 드롭</span>
+              <span class="drop-sub">지원 형식: MP3, WAV, M4A (수능/모의고사/교재 듣기 음성)</span>
+            </div>
+            <button id="btnBrowseAudio" class="secondary-btn" type="button">파일 찾기</button>
+          </div>
+        </div>
+
+        <!-- Mode 2 Notice Banner -->
+        <div id="audioOnlyBanner" class="mode-info-banner hidden">
+          <span>🎙️ <strong>MP3 음성만 업로드 모드:</strong> 음성을 분석하여 영문 스크립트를 자동 추출(STT)한 뒤 3x1 FELS 학습지를 생성합니다. (우측 설정에서 API 키를 등록하면 즉시 추출 가능합니다)</span>
+        </div>
+
+        <!-- Mode 1 & 3: Script Paste Input Area -->
+        <div id="scriptInputZone" class="input-wrapper">
+          <div class="input-area-header">
+            <label for="inputEnglish" class="input-label">
+              <span class="label-badge">SCRIPT</span>
+              <span>영어 스크립트 붙여넣기</span>
+            </label>
+            <div class="input-controls">
+              <span id="charCount" class="char-count">0자</span>
+              <button id="btnClear" class="text-btn" title="입력 비우기" type="button">지우기</button>
+            </div>
+          </div>
+          <textarea 
+            id="inputEnglish" 
+            placeholder="해석할 영어 스크립트를 복사하여 여기에 붙여넣으세요. (예: I went to school.)" 
+            rows="3"
+            spellcheck="false"
+          ></textarea>
+        </div>
+
+        <!-- Sample Quick Presets (Available for script input) -->
+        <div id="presetsContainer" class="presets-container">
+          <span class="preset-label">예시 스크립트:</span>
+          <div class="preset-chips">
+            <button class="chip-btn" data-text="I went to school yesterday. She bought a new book at the bookstore. Taking a rest after work helps refresh your mind.">📚 복수 문장 예시 (3개 문장 자동 분류)</button>
+            <button class="chip-btn" data-text="I went to school.">I went to school.</button>
+            <button class="chip-btn" data-text="She bought a new book at the bookstore yesterday.">She bought a new book...</button>
+            <button class="chip-btn" data-text="He wants to learn English for his future career.">He wants to learn English...</button>
+            <button class="chip-btn" data-text="Taking a rest after work helps refresh your mind.">Taking a rest after work...</button>
+          </div>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="action-bar">
+          <div class="engine-toggle-wrap">
+            <label class="toggle-container" title="Gemini 또는 OpenAI API 키 등록 시 자유로운 복잡 문장 AI 번역 가능">
+              <input type="checkbox" id="chkUseAI">
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">AI 정밀 청킹 모드 <span class="sub-text">(API 키 필요)</span></span>
+            </label>
+          </div>
+
+          <button id="btnTranslate" class="primary-btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14"></path>
+              <path d="m12 5 7 7-7 7"></path>
+            </svg>
+            <span id="btnTranslateText">3x1 해석 및 FELS 생성</span>
+            <kbd class="btn-kbd">Ctrl+↵</kbd>
+          </button>
+        </div>
+      </section>
+
+      <!-- 맨 아래: 첨부 이미지 패널 (문장 자동 분류 네비게이터) -->
+      <section id="sentenceNavSection" class="bottom-sentence-section">
+        <div id="sentenceNavigator" class="sentence-navigator-card hidden">
+          <div class="sentence-nav-header">
+            <div class="sentence-nav-left">
+              <span class="badge badge-accent">SENTENCE</span>
+              <span class="sentence-count-text">
+                문장 자동 분류: 총 <strong id="totalSentenceCount">0</strong>개 문장
+              </span>
+            </div>
+            <div class="sentence-nav-actions">
+              <button id="btnPrevSentence" class="nav-step-btn" title="이전 문장 (← 키)" type="button">◀ 이전 문장 <kbd class="inline-kbd">←</kbd></button>
+              <span id="currentSentenceIndicator" class="sentence-step-indicator">1 / 1</span>
+              <button id="btnNextSentence" class="nav-step-btn" title="다음 문장 (→ 키)" type="button"><kbd class="inline-kbd">→</kbd> 다음 문장 ▶</button>
+              <label class="auto-advance-toggle" title="A-B 루프 횟수 완료 시 다음 문장으로 자동 이동">
+                <input type="checkbox" id="chkAutoAdvance">
+                <span class="toggle-text-sm">자동 다음 문장</span>
+              </label>
+            </div>
+          </div>
+          <!-- Horizontal scrollable sentence chips -->
+          <div class="sentence-chips-track" id="sentenceChipsTrack">
+            <!-- Dynamically populated sentence chips -->
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal-backdrop hidden">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>AI API 환경 설정</h3>
+          <button id="btnCloseModal" class="icon-btn close-modal-btn" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">
+            기본 내장된 <strong>스마트 FELS 규칙 엔진</strong>은 API 키 없이도 즉시 작동합니다.<br>
+            <strong>MP3 음성만 업로드 모드</strong>에서 음성 스크립트를 추출(STT)하거나, 임의의 복잡한 문장을 더욱 정밀하게 해석하려면 Gemini 또는 OpenAI API 키를 입력하세요.
+          </p>
+
+          <div class="form-group">
+            <label for="selectProvider">AI 서비스 제공자</label>
+            <select id="selectProvider" class="form-select">
+              <option value="gemini" selected>Google Gemini (멀티모달 오디오 STT 지원 / 권장)</option>
+              <option value="openai">OpenAI (Whisper STT &amp; GPT-4o mini)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="inputApiKey">API 키 (선택 사항)</label>
+            <input type="password" id="inputApiKey" class="form-input" placeholder="AI API 키를 입력하세요">
+            <span class="field-hint">입력한 키는 사용자의 브라우저 로컬 저장소(localStorage)에만 안전하게 보관됩니다.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="inputCustomPrompt">커스텀 지침 (시스템 프롬프트)</label>
+            <textarea id="inputCustomPrompt" class="form-textarea" rows="2" placeholder="청킹 기준이나 어투 추가 요구사항 (기본값 권장)"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnResetSettings" class="secondary-btn" type="button">초기화</button>
+          <button id="btnSaveSettings" class="primary-btn" type="button">저장하기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

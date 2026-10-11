@@ -1,0 +1,267 @@
+/* Audio Player & Waveform Component Styles */
+.audio-player-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.audio-header-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audio-meta-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.audio-disc-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(99, 102, 241, 0.2));
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+}
+
+.audio-meta-text {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.audio-file-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-file-size {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.audio-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.audio-play-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-cyan), #0891b2);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.4);
+  transition: var(--transition);
+}
+
+.audio-play-btn:hover {
+  transform: scale(1.06);
+  box-shadow: 0 6px 18px rgba(6, 182, 212, 0.6);
+}
+
+.time-hud {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: var(--border-subtle);
+}
+
+.current-time {
+  color: #00ffcc;
+  font-weight: 700;
+}
+
+/* Speed Button Group */
+.speed-btn-group {
+  display: flex;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  border: var(--border-subtle);
+}
+
+.speed-btn {
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: var(--transition);
+}
+
+.speed-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* Waveform Canvas Box */
+.waveform-container {
+  position: relative;
+  width: 100%;
+  height: 100px;
+  min-height: 100px;
+  flex-shrink: 0;
+  display: block;
+  background: #090e17;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid rgba(0, 255, 204, 0.25);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+#waveformCanvas {
+  width: 100%;
+  height: 100%;
+  min-height: 100px;
+  display: block;
+  cursor: crosshair;
+}
+
+.waveform-loading {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 14, 23, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #00ffcc;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.shadowing-indicator {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: rgba(9, 14, 23, 0.88);
+  border: 1px solid #00ffcc;
+  color: #00ffcc;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 700;
+  animation: pulseNeon 1s infinite alternate;
+}
+
+@keyframes pulseNeon {
+  from { box-shadow: 0 0 6px rgba(0, 255, 204, 0.3); }
+  to { box-shadow: 0 0 16px rgba(0, 255, 204, 0.9); }
+}
+
+/* Waveform Footer HUD */
+.waveform-hud-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.looper-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.looper-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.looper-count-group {
+  display: flex;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  border: var(--border-subtle);
+}
+
+.looper-count-btn {
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: var(--transition);
+}
+
+.looper-count-btn.active {
+  background: var(--accent-cyan);
+  color: #090e17;
+  font-weight: 700;
+}
+
+.clear-loop-btn {
+  font-size: 0.75rem;
+  color: var(--accent-rose);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(244, 63, 94, 0.1);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+}
+
+.loop-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: #00ffcc;
+  background: rgba(0, 255, 204, 0.1);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(0, 255, 204, 0.3);
+}
+
+/* Shortcut Reference Bar */
+.audio-shortcut-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: var(--border-subtle);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.shortcut-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.shortcut-item kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-family: monospace;
+  font-weight: 700;
+  color: var(--text-main);
+}

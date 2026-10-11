@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CE Tool - 3페이지 청크 &amp; FELS 약형 학습기</title>
+  <meta name="description" content="3단계 집중 학습 시스템: 데이터 입력 ➔ 문장별 FELS 약형 청취 훈련 ➔ 전체 스크립트 청크 암기">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Pretendard:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Master Stylesheet (Zero-CORS standalone) -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Global Header with 3-Page Navigation Tabs -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-icon">CE</div>
+        <div class="brand-text">
+          <h1>CE <span class="gradient-text">Tool</span></h1>
+        </div>
+      </div>
+
+      <!-- 3-Page Navigation Tabs -->
+      <nav class="page-nav-tabs" role="tablist">
+        <button class="nav-tab-btn active" data-page="input" type="button">
+          <span class="tab-step">1</span>
+          <span class="tab-label">데이터 입력</span>
+        </button>
+        <button class="nav-tab-btn" data-page="practice" type="button">
+          <span class="tab-step">2</span>
+          <span class="tab-label">문장 약형 연습</span>
+        </button>
+        <button class="nav-tab-btn" data-page="memorize" type="button">
+          <span class="tab-step">3</span>
+          <span class="tab-label">전체 스크립트 암기</span>
+        </button>
+      </nav>
+
+      <div class="header-actions">
+        <span id="engineBadge" class="engine-badge rule-active">⚙️ 로컬 규칙 엔진</span>
+        <button id="btnSettings" class="icon-btn" title="AI API 환경설정" type="button">⚙️</button>
+        <button id="btnThemeToggle" class="icon-btn" title="테마 전환" type="button">☀️</button>
+      </div>
+    </header>
+
+    <!-- Main Views Container -->
+    <main class="main-content">
+      
+      <!-- ================================================================= -->
+      <!-- PAGE 1: 데이터 입력 페이지 (Input View)                            -->
+      <!-- ================================================================= -->
+      <div id="view-input" class="view-container">
+        <div class="glass-card">
+          <!-- 3 Mode Segmented Tabs -->
+          <div class="mode-selector-bar">
+            <button class="mode-tab" data-mode="both" type="button">
+              <span>🎧 mp3 음성 + 📝 script</span>
+            </button>
+            <button class="mode-tab" data-mode="audio" type="button">
+              <span>🎙️ mp3 음성만 (STT)</span>
+            </button>
+            <button class="mode-tab active" data-mode="text" type="button">
+              <span>✍️ script만 (텍스트)</span>
+            </button>
+          </div>
+
+          <!-- Mode 1 & 2: MP3 Drop Area -->
+          <div id="audioUploadSection" class="audio-upload-container hidden" style="margin-top: 14px;">
+            <input type="file" id="audioFileInput" accept="audio/*" class="hidden">
+            <div id="dropArea" class="audio-drop-area">
+              <div class="drop-icon">📁</div>
+              <p class="drop-title">MP3 음성 파일을 여기에 드래그하거나 클릭하여 업로드</p>
+              <p class="drop-hint">지원 형식: MP3, WAV, M4A, OGG (수능/교재 듣기 음성)</p>
+            </div>
+          </div>
+
+          <!-- Mode 1 & 3: Script Input Textarea -->
+          <div id="scriptInputSection" style="margin-top: 14px;">
+            <div class="script-textarea-wrap">
+              <textarea 
+                id="inputEnglish" 
+                class="script-textarea" 
+                placeholder="해석 및 훈련할 영어 스크립트를 입력하거나 붙여넣으세요. (예: I went to school yesterday. She bought a new book at the bookstore.)"
+                rows="4"
+              ></textarea>
+              <div class="textarea-footer">
+                <span id="charCount">0자</span>
+                <button id="btnClear" class="text-btn" type="button">지우기</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Preset Chips -->
+          <div class="presets-section" style="margin-top: 16px;">
+            <span class="presets-label">💡 빠른 예시 문장:</span>
+            <div class="preset-chips-track">
+              <button class="preset-chip" data-text="I went to school yesterday. She bought a new book at the bookstore. Taking a rest after work helps refresh your mind." type="button">
+                📚 복수 문장 예시 (3개 문장 자동 분류)
+              </button>
+              <button class="preset-chip" data-text="I went to school." type="button">I went to school.</button>
+              <button class="preset-chip" data-text="She bought a new book at the bookstore yesterday." type="button">She bought a new book...</button>
+              <button class="preset-chip" data-text="He wants to learn English for his future career." type="button">He wants to learn English...</button>
+              <button class="preset-chip" data-text="Taking a rest after work helps refresh your mind." type="button">Taking a rest after work...</button>
+            </div>
+          </div>
+
+          <!-- Action Button -->
+          <div class="input-actions-bar" style="margin-top: 18px;">
+            <button id="btnTranslate" class="primary-btn" type="button">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12h14"></path>
+                <path d="m12 5 7 7-7 7"></path>
+              </svg>
+              <span id="btnTranslateText">3x1 해석 및 FELS 생성</span>
+              <kbd class="btn-kbd">Ctrl+↵</kbd>
+            </button>
+          </div>
+        </div>
+
+        <!-- ================================================================= -->
+        <!-- 업로드 결과 검토 & 청크/해석 수동 편집기 & A4 유인물 출력           -->
+        <!-- ================================================================= -->
+        <div id="parsedResultsSection" class="glass-card hidden" style="margin-top: 24px;">
+          <div class="results-header">
+            <div class="results-title-group">
+              <span class="results-icon">📋</span>
+              <div>
+                <h3 class="results-title">업로드 데이터 검토 및 청크 편집기</h3>
+                <p class="results-subtitle">문장별 청크 구분(||)과 우리말 해석을 확인하고 필요한 경우 직접 수정한 뒤 2단계로 진행하세요.</p>
+              </div>
+            </div>
+            <div class="results-header-actions">
+              <span id="resultsCountBadge" class="results-badge">0개 문장</span>
+              <button id="btnPrintHandout" class="action-pill-btn btn-secondary-pill" type="button" title="학생용 A4 1장 약형드랩 유인물 인쇄 또는 다운로드">
+                <span>📄 A4 유인물 인쇄 / 다운로드</span>
+              </button>
+              <button id="btnStartPractice" class="action-pill-btn btn-primary-pill" type="button" title="2단계 문장 약형 연습 시작">
+                <span>🚀 2단계 연습 시작 ➔</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Parsed Sentences Dynamic List Container -->
+          <div id="parsedSentenceList" class="parsed-sentence-list">
+            <!-- Dynamically populated sentence cards -->
+          </div>
+
+          <!-- Bottom Action Bar -->
+          <div class="results-footer-bar">
+            <button id="btnBottomPrintHandout" class="secondary-btn" type="button">
+              📄 학생용 A4 1장 약형드랩 유인물 인쇄 / 다운로드
+            </button>
+            <button id="btnBottomStartPractice" class="primary-btn" type="button">
+              🚀 이 데이터로 2단계 문장 약형 연습 시작 ➔
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- PAGE 2: 문장 단위 약형드랩 연습 페이지 (Practice View)                -->
+      <!-- 엄격 배치 순서:                                                    -->
+      <!-- ① [상단: 2 비율] 약형드랩 청크 학습 카드 (#rowChunks)                  -->
+      <!-- ② [중단: 1 비율] 음성 파형 패널 (#audioPlayerSection)                 -->
+      <!-- ③ [하단] 우리말 해석 (#rowNatural)                                  -->
+      <!-- ================================================================= -->
+      <div id="view-practice" class="view-container hidden">
+        
+        <!-- ① [상단: 2 비율] 약형드랩 기반 청크 학습 카드 (#rowChunks) -->
+        <section id="rowChunks" class="glass-card output-row practice-card-panel" tabindex="0">
+          <div class="row-header">
+            <div class="row-title-area">
+              <span class="row-icon">🧩</span>
+              <h3 class="row-title">청크 학습 카드</h3>
+              <span class="action-pill-btn" style="pointer-events: none; opacity: 0.85;">앞면: 영어 ⇄ 뒷면: 해석</span>
+            </div>
+            <div class="row-actions">
+              <button id="btnCheckFels" class="action-pill-btn btn-primary-pill" title="입력한 빈칸 정답 채점" type="button">
+                <span>✓ 정답 확인</span>
+              </button>
+              <button id="btnToggleFelsMode" class="action-pill-btn" title="FELS 약형 빈칸과 원문 대본 전환 (S 키)" type="button">
+                <span id="felsModeIcon">🔤</span>
+                <span id="felsModeLabel">원문 보기</span>
+                <kbd class="btn-kbd">S</kbd>
+              </button>
+              <button id="btnResetFels" class="action-pill-btn" title="빈칸 입력을 비우고 다시 풀기" type="button">
+                <span>🔄 다시 풀기</span>
+              </button>
+              <button id="btnFlipAllCards" class="action-pill-btn" title="모든 카드를 일괄 뒤집기" type="button">
+                <span id="flipAllIcon">🔄</span>
+                <span id="flipAllLabel">해석 뒷면</span>
+              </button>
+              <button class="icon-btn speak-btn" data-target="en" title="영문 음성 듣기" type="button">🔊</button>
+            </div>
+          </div>
+
+          <!-- FELS Score / Status Alert Banner -->
+          <div id="felsScoreBar" class="fels-score-bar hidden">
+            <span id="felsScoreText"></span>
+          </div>
+
+          <!-- 3D Flip Cards Single Row Container -->
+          <div id="chunksContainer" class="chunks-container single-line-chunks">
+            <span class="placeholder-text">영어 스크립트를 입력하고 실행하면 청크 학습 카드가 생성됩니다.</span>
+          </div>
+
+          <div class="practice-card-tip">
+            <span>💡 <strong>팁:</strong> 카드를 클릭하여 해석(뒷면)을 확인하거나, 빈칸에 약형 기능어를 입력 후 [✓ 정답 확인]을 누르세요. (<kbd>Space</kbd> 재생/정지, <kbd>S</kbd> 원문보기, <kbd>T</kbd> 해석보기)</span>
+          </div>
+        </section>
+
+        <!-- ② [중단: 1 비율] 문장 단위 음성 파형 패널 (#audioPlayerSection) -->
+        <section id="audioPlayerSection" class="glass-card audio-player-card">
+          <div class="audio-header-compact">
+            <div class="audio-meta-left">
+              <div class="audio-disc-icon">🎵</div>
+              <div class="audio-meta-text">
+                <span id="audioFileName" class="audio-file-name">음성 재생 준비 완료 (문장 단위 파형 연동)</span>
+                <span id="audioFileSize" class="audio-file-size">00:00.0 (Web Audio PCM)</span>
+              </div>
+            </div>
+
+            <div class="audio-controls-right">
+              <!-- Time HUD -->
+              <div class="time-hud">
+                <span id="audioCurrentTime" class="current-time">00:00.0</span>
+                <span>/</span>
+                <span id="audioDuration">00:00.0</span>
+              </div>
+
+              <!-- Speed Controls -->
+              <div class="speed-btn-group">
+                <button class="speed-btn" data-speed="0.8" type="button">0.8x</button>
+                <button class="speed-btn active" data-speed="1.0" type="button">1.0x</button>
+                <button class="speed-btn" data-speed="1.2" type="button">1.2x</button>
+              </div>
+
+              <!-- Play / Pause Button -->
+              <button id="btnAudioPlay" class="audio-play-btn" title="재생 / 일시정지 (스페이스바)" type="button">
+                <svg id="iconPlay" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <svg id="iconPause" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="hidden">
+                  <rect x="6" y="4" width="4" height="16" rx="1"></rect>
+                  <rect x="14" y="4" width="4" height="16" rx="1"></rect>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Waveform Canvas Box (Zoomed to active sentence) -->
+          <div class="waveform-container">
+            <canvas id="waveformCanvas" height="110"></canvas>
+            <div id="waveformLoading" class="waveform-loading hidden">
+              <span class="spin-icon">⏳</span>
+              <span>파형 정밀 디코딩 중...</span>
+            </div>
+            <div id="shadowingIndicator" class="shadowing-indicator hidden">
+              🗣️ 0.5s 쉐도잉 대기 중
+            </div>
+          </div>
+
+          <!-- Looper HUD Footer -->
+          <div class="waveform-hud-footer">
+            <div class="looper-controls-left">
+              <span class="looper-label">🔁 루프 반복:</span>
+              <div class="looper-count-group">
+                <button class="looper-count-btn" data-count="1" type="button">1회</button>
+                <button class="looper-count-btn active" data-count="3" type="button">3회</button>
+                <button class="looper-count-btn" data-count="5" type="button">5회</button>
+                <button class="looper-count-btn" data-count="infinite" type="button">∞</button>
+              </div>
+              <button id="btnClearLoop" class="clear-loop-btn" title="반복 구간 해제 (\ 키)" type="button">✕ 구간 해제</button>
+            </div>
+
+            <div id="loopStatusBadge" class="loop-status-badge hidden">
+              <span>🔁</span>
+              <span id="loopRangeLabel">루프: 00:00.0 ~ 00:00.0</span>
+              <span id="loopCountLabel">(1/3회)</span>
+            </div>
+          </div>
+
+          <!-- 9 Unified Keyboard Shortcuts Bar -->
+          <div class="audio-shortcut-bar">
+            <span style="font-weight: 700; color: #00ffcc;">⌨️ 전역 단축키:</span>
+            <span class="shortcut-item"><kbd>Space</kbd> 재생/정지</span>
+            <span class="shortcut-item"><kbd>[</kbd> 시작점</span>
+            <span class="shortcut-item"><kbd>]</kbd> 끝점&amp;재생</span>
+            <span class="shortcut-item"><kbd>\</kbd>(￦) 구간해제</span>
+            <span class="shortcut-item"><kbd>R</kbd> 구간반복</span>
+            <span class="shortcut-item"><kbd>←</kbd> 이전문장</span>
+            <span class="shortcut-item"><kbd>→</kbd> 다음문장</span>
+            <span class="shortcut-item"><kbd>S</kbd> 약형/대본</span>
+            <span class="shortcut-item"><kbd>T</kbd> 해석토글</span>
+          </div>
+        </section>
+
+        <!-- ③ [하단] 우리말 해석 (#rowNatural) - 기본 숨김 -->
+        <section id="rowNatural" class="glass-card output-row">
+          <div class="row-header">
+            <div class="row-title-area">
+              <span class="row-icon">🇰🇷</span>
+              <h3 class="row-title">우리말 해석</h3>
+              <span class="action-pill-btn" style="pointer-events: none; opacity: 0.6; font-size: 0.72rem;">기본 숨김</span>
+            </div>
+            <div class="row-actions">
+              <button class="action-pill-btn" data-target="rowNatural" title="우리말 해석 보이기/숨기기 (T 키)" type="button">
+                <span>👁️ 보이기/숨기기</span>
+                <kbd class="btn-kbd">T</kbd>
+              </button>
+              <button class="icon-btn speak-btn" data-target="natural" title="우리말 음성 듣기" type="button">🔊</button>
+            </div>
+          </div>
+          <div class="row-content is-masked">
+            <p id="txtNatural" class="row-text">한글 어순과 맞춤법에 맞는 완성된 우리말 문장이 표시됩니다.</p>
+            <div id="maskCoverNatural" class="row-mask-cover">
+              <span>🔒 우리말 해석이 숨겨져 있습니다 (클릭하거나 <kbd>T</kbd> 키를 눌러 확인)</span>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- PAGE 3: 전체 스크립트 암기 페이지 (Memorize View)                    -->
+      <!-- ================================================================= -->
+      <div id="view-memorize" class="view-container hidden">
+        <!-- Memorize Control Bar -->
+        <div class="glass-card memorize-controls-card">
+          <div class="memorize-modes-group">
+            <button class="memorize-mode-btn active" data-memorize-mode="all" type="button">전체 보기</button>
+            <button class="memorize-mode-btn" data-memorize-mode="en" type="button">영어만 보기</button>
+            <button class="memorize-mode-btn" data-memorize-mode="ko" type="button">한국어만 보기</button>
+            <button class="memorize-mode-btn" data-memorize-mode="cloze" type="button">청크 가리기 (Cloze)</button>
+          </div>
+
+          <div class="memorize-actions-group">
+            <button id="btnPlayAllScript" class="memorize-play-btn" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              <span>전체 스크립트 연속 재생</span>
+            </button>
+            <button id="btnFlipAllMemorize" class="action-pill-btn" type="button">
+              <span>🔄 전체 뒤집기</span>
+            </button>
+            <span id="memorizeStatsBadge" class="action-pill-btn" style="pointer-events: none; opacity: 0.85;">총 0개 문장</span>
+          </div>
+        </div>
+
+        <!-- Full Script Chunk Cards Canvas -->
+        <div id="memorizeCanvas" class="memorize-canvas" data-mode="all">
+          <!-- Dynamically populated with all sentence chunk cards -->
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ④ [화면 맨 밑단 도킹] 문장 자동 분류 네비게이터 (#sentenceNavigator) -->
+    <footer id="sentenceNavigator" class="sentence-navigator-dock hidden">
+      <div class="nav-controls-left">
+        <button id="btnPrevSentence" class="stn-nav-btn" title="이전 문장 (← 키)" type="button">
+          <span>◀ 이전 문장</span>
+          <kbd>←</kbd>
+        </button>
+        <span class="stn-count-indicator">
+          <span id="currentSentenceNum" class="current">1</span> / <span id="totalSentenceNum">1</span>
+        </span>
+        <button id="btnNextSentence" class="stn-nav-btn" title="다음 문장 (→ 키)" type="button">
+          <kbd>→</kbd>
+          <span>다음 문장 ▶</span>
+        </button>
+      </div>
+
+      <!-- Horizontal Sentence Chips Track -->
+      <div id="sentenceChipsTrack" class="sentence-chips-track">
+        <!-- Dynamically populated sentence chips -->
+      </div>
+
+      <div class="nav-settings-right">
+        <label class="auto-advance-label" title="반복 완료 시 다음 문장으로 자동 이동">
+          <input type="checkbox" id="chkAutoAdvance">
+          <span>자동 다음 문장</span>
+        </label>
+      </div>
+    </footer>
+
+    <!-- Native Audio Player Singleton -->
+    <audio id="nativeAudioPlayer" preload="auto"></audio>
+
+    <!-- AI Settings Modal -->
+    <div id="settingsModal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>AI API 환경 설정</h3>
+          <button id="btnCloseModal" class="icon-btn" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>AI 서비스 제공자</label>
+            <div class="provider-options">
+              <label class="radio-label">
+                <input type="radio" name="aiProvider" value="gemini" checked>
+                <span>Google Gemini (권장 / 멀티모달 오디오 STT)</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="aiProvider" value="openai">
+                <span>OpenAI (GPT-4o mini)</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="apiKeyInput">API 키</label>
+            <input type="password" id="apiKeyInput" class="form-input" placeholder="AI API 키를 입력하세요">
+            <span class="field-hint">브라우저 로컬 저장소(localStorage)에만 안전하게 보관됩니다.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="customPrompt">커스텀 지침 (시스템 프롬프트)</label>
+            <textarea id="customPrompt" class="form-textarea" placeholder="청킹 기준이나 어투 추가 요구사항 (선택 사항)"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnSaveSettings" class="primary-btn" type="button">저장하기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- A4 Printable Student Handout Modal -->
+    <div id="handoutModal" class="modal-overlay hidden">
+      <div class="modal-card handout-modal-card">
+        <div class="modal-header handout-modal-header no-print">
+          <div class="handout-modal-title">
+            <h3>📄 학생용 A4 1장 문장 단위 약형드랩 유인물</h3>
+            <span class="handout-tag">A4 Portrait 최적화</span>
+          </div>
+          <div class="handout-header-controls">
+            <div class="handout-type-toggle">
+              <button type="button" id="btnHandoutTypeStudent" class="handout-toggle-btn active">학생용 시험지</button>
+              <button type="button" id="btnHandoutTypeTeacher" class="handout-toggle-btn">교사용 정답지</button>
+            </div>
+            <button id="btnDoPrint" class="action-pill-btn btn-primary-pill" type="button">🖨️ 인쇄 / PDF 저장</button>
+            <button id="btnDownloadHtml" class="action-pill-btn" type="button">💾 HTML 다운로드</button>
+            <button id="btnCloseHandout" class="icon-btn" type="button">✕</button>
+          </div>
+        </div>
+        <div class="modal-body handout-modal-body">
+          <!-- The Printable A4 Sheet container -->
+          <div id="printableSheet" class="a4-printable-sheet">
+            <!-- Dynamically generated A4 Sheet content -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating Toast Notification -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <!-- Standalone Script Entry Point (Compatible with file:/// and http://) -->
+  <script src="app.js"></script>
+</body>
+</html>

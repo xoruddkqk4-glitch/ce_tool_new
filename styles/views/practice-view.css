@@ -1,0 +1,37 @@
+/* Page 2: Practice View Specific Styles */
+
+#view-practice {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 90px; /* Space for bottom fixed sentence navigator */
+}
+
+/* 1. Top Section: Chunks Learning Cards Panel (2 Ratio - 440px) */
+#rowChunks,
+.practice-card-panel {
+  order: 1 !important;
+  min-height: 440px;
+  height: 440px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* 2. Middle Section: Audio Waveform Player Panel (1 Ratio - 220px, Strictly 2:1 Ratio!) */
+#audioPlayerSection,
+.audio-player-card {
+  order: 2 !important;
+  min-height: 220px;
+  height: 220px;
+  padding: 12px 18px !important;
+  gap: 8px !important;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* 3. Bottom Section: Natural Korean Translation Panel (Masked by default) */
+#rowNatural {
+  order: 3 !important;
+}
