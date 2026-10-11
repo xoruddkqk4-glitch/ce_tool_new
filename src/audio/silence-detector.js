@@ -52,32 +52,36 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
       }
 
       if (maxRms > 0.001) {
-        // Detect speech onset (skipping intro silence / chimes)
-        const speechThresh = maxRms * 0.06;
+        // 1. Detect speech onset (skipping intro silence / chimes)
+        const onsetThresh = maxRms * 0.05;
         let speechStartIdx = 0;
         for (let w = 0; w < numWindows; w++) {
-          if (energies[w] >= speechThresh) {
-            // Require at least 2 consecutive windows of energy
-            if (w + 1 < numWindows && energies[w + 1] >= speechThresh * 0.7) {
+          if (energies[w] >= onsetThresh) {
+            if (w + 1 < numWindows && energies[w + 1] >= onsetThresh * 0.6) {
               speechStartIdx = Math.max(0, w - 2);
               break;
             }
           }
         }
-        const speechStart = Math.round(speechStartIdx * windowSec * 10) / 10;
+        const speechStart = Math.max(0, Math.round((speechStartIdx * windowSec - 0.1) * 10) / 10);
 
-        // Detect speech offset (skipping trailing silence / chimes)
+        // 2. Detect speech offset (skipping trailing silence / chimes)
+        // Sensitive threshold (1.5% maxRms) + 1.0s generous padding to prevent cutting off final phonemes/words
+        const offsetThresh = maxRms * 0.015;
         let speechEndIdx = numWindows - 1;
         for (let w = numWindows - 1; w >= 0; w--) {
-          if (energies[w] >= speechThresh) {
-            speechEndIdx = Math.min(numWindows - 1, w + 3);
+          if (energies[w] >= offsetThresh) {
+            speechEndIdx = Math.min(numWindows - 1, w + Math.floor(1.0 / windowSec));
             break;
           }
         }
-        const speechEnd = Math.round(speechEndIdx * windowSec * 10) / 10;
+        let speechEnd = Math.min(duration, Math.round((speechEndIdx * windowSec) * 10) / 10);
+        if (speechEnd + 1.0 >= duration - 0.2) {
+          speechEnd = Math.round(duration * 10) / 10;
+        }
         const speechDuration = Math.max(1.0, speechEnd - speechStart);
 
-        // Smooth energy curve with moving average (~250ms window) to suppress plosive stops
+        // Smooth energy curve with moving average (~250ms window)
         const smoothRadius = 3;
         const smoothed = new Float32Array(numWindows);
         for (let i = 0; i < numWindows; i++) {
@@ -95,26 +99,24 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
         // Calculate expected sentence transition timestamps based on word counts
         const weights = sentences.map(s => {
           const words = (s || '').trim().split(/\s+/).filter(Boolean);
-          // Sentence ending with question mark or exclamation usually has slightly longer cadence
           const punctBonus = /[?!]/.test(s) ? 1.5 : 1.0;
           return Math.max(3, words.length * punctBonus);
         });
         const totalWeight = weights.reduce((a, b) => a + b, 0);
 
         let curWeight = 0;
-        let lastBoundary = speechStart;
-        const boundaries = [];
+        let lastStart = speechStart;
+        const transitions = [];
 
         for (let i = 0; i < sentences.length - 1; i++) {
           curWeight += weights[i];
           const expectedTime = speechStart + speechDuration * (curWeight / totalWeight);
           const expectedIdx = Math.floor(expectedTime / windowSec);
           
-          // Search around expected transition for the lowest energy dip (valley / pause)
-          const searchSec = Math.min(4.0, Math.max(1.2, (speechDuration * (weights[i] / totalWeight)) * 0.5));
+          const searchSec = Math.min(4.5, Math.max(1.5, (speechDuration * (weights[i] / totalWeight)) * 0.6));
           const searchRadius = Math.floor(searchSec / windowSec);
-          const minAllowedIdx = Math.floor((lastBoundary + 0.4) / windowSec);
-          const maxAllowedIdx = Math.floor((speechEnd - 0.4) / windowSec);
+          const minAllowedIdx = Math.floor((lastStart + 0.5) / windowSec);
+          const maxAllowedIdx = Math.floor((speechEnd - 0.5) / windowSec);
 
           const startIdx = Math.max(minAllowedIdx, expectedIdx - searchRadius);
           const endIdx = Math.min(maxAllowedIdx, expectedIdx + searchRadius);
@@ -123,22 +125,46 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
           let bestIdx = expectedIdx;
 
           for (let k = startIdx; k <= endIdx; k++) {
-            // Distance penalty to favor dips closer to expected rhythm
             const distFromExp = Math.abs(k - expectedIdx) / searchRadius;
-            const score = smoothed[k] * (1.0 + 0.35 * distFromExp);
+            const score = smoothed[k] * (1.0 + 0.3 * distFromExp);
             if (score < minVal) {
               minVal = score;
               bestIdx = k;
             }
           }
 
-          const boundaryTime = Math.round(bestIdx * windowSec * 10) / 10;
-          const safeBoundary = Math.max(lastBoundary + 0.4, Math.min(speechEnd - 0.3, boundaryTime));
-          boundaries.push({ start: lastBoundary, end: safeBoundary });
-          lastBoundary = safeBoundary;
+          const valleyTime = Math.round(bestIdx * windowSec * 10) / 10;
+
+          // Find the speech onset of the next sentence following the valley
+          let nextOnsetIdx = bestIdx;
+          for (let w = bestIdx; w < numWindows; w++) {
+            if (energies[w] >= onsetThresh) {
+              nextOnsetIdx = Math.max(bestIdx, w);
+              break;
+            }
+          }
+          const nextOnsetTime = Math.round(nextOnsetIdx * windowSec * 10) / 10;
+
+          transitions.push({ valleyTime, nextOnsetTime });
+          lastStart = nextOnsetTime;
         }
 
-        boundaries.push({ start: lastBoundary, end: speechEnd });
+        // Construct boundaries where:
+        // 1. Current sentence has generous tail headroom (+0.8s), stopping 0.15s before next sentence
+        // 2. Next sentence starts cleanly 0.15s before its actual speech onset
+        const boundaries = [];
+        let curSentenceStart = speechStart;
+
+        for (let i = 0; i < sentences.length - 1; i++) {
+          const { valleyTime, nextOnsetTime } = transitions[i];
+          const nextSentenceStart = Math.max(curSentenceStart + 0.6, Math.round((nextOnsetTime - 0.15) * 10) / 10);
+          const maxTail = Math.round((valleyTime + 0.8) * 10) / 10;
+          const curSentenceEnd = Math.max(curSentenceStart + 0.5, Math.min(nextSentenceStart - 0.15, maxTail));
+          boundaries.push({ start: curSentenceStart, end: curSentenceEnd });
+          curSentenceStart = nextSentenceStart;
+        }
+
+        boundaries.push({ start: curSentenceStart, end: speechEnd });
         return boundaries;
       }
     } catch (e) {
@@ -171,21 +197,26 @@ function detectSpeechOnsetOffset(audioBuffer, totalDuration) {
       if (rms > maxRms) maxRms = rms;
     }
 
-    const thresh = maxRms * 0.06;
+    const onsetThresh = maxRms * 0.05;
     let startSec = 0;
     for (let w = 0; w < numWindows; w++) {
-      if (energies[w] >= thresh) {
+      if (energies[w] >= onsetThresh) {
         startSec = Math.max(0, Math.round((w * windowSec - 0.1) * 10) / 10);
         break;
       }
     }
 
+    const offsetThresh = maxRms * 0.015;
     let endSec = totalDuration;
     for (let w = numWindows - 1; w >= 0; w--) {
-      if (energies[w] >= thresh) {
-        endSec = Math.min(totalDuration, Math.round(((w + 1) * windowSec + 0.2) * 10) / 10);
+      if (energies[w] >= offsetThresh) {
+        // Add 1.0s headroom so sentence ending is NEVER truncated
+        endSec = Math.min(totalDuration, Math.round(((w + 1) * windowSec + 1.0) * 10) / 10);
         break;
       }
+    }
+    if (endSec + 1.0 >= totalDuration - 0.2) {
+      endSec = Math.round(totalDuration * 10) / 10;
     }
 
     return { speechStart: startSec, speechEnd: endSec };

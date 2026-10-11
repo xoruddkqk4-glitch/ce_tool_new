@@ -308,8 +308,11 @@ assert.ok(btnTranslate.listeners['click'] && btnTranslate.listeners['click'].len
 
 (async () => {
   btnTranslate.click();
-  // Wait a tick for async processing
-  await new Promise(r => setTimeout(r, 500));
+  // Wait for async processing
+  for (let t = 0; t < 40; t++) {
+    await new Promise(r => setTimeout(r, 100));
+    if (app.appState.sentenceList && app.appState.sentenceList.length > 0) break;
+  }
 
   const sentences = app.appState.sentenceList;
   console.log('Generated sentences count:', sentences ? sentences.length : 0);

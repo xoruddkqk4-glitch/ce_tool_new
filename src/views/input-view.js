@@ -446,15 +446,36 @@ export class InputView {
         boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
       }
 
+      // Safety extension: ensure each sentence end has generous headroom (+0.9s ~ +1.0s)
+      // and is NEVER cut off prematurely by 1 second
+      if (boundaries && boundaries.length === rawSentences.length) {
+        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
+        for (let i = 0; i < boundaries.length; i++) {
+          const b = boundaries[i];
+          if (b.end !== null) {
+            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
+              ? boundaries[i + 1].start
+              : totalDuration;
+            if (nextStart !== null && nextStart > b.start) {
+              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
+              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
+            } else if (totalDuration !== null) {
+              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
+            }
+          }
+        }
+      }
+
       // Parallel fetch natural Korean translation for all sentences
       const naturalTranslations = await Promise.all(
         rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
       );
 
       const sentenceList = rawSentences.map((stnText, idx) => {
-        const res = this.ruleEngine.process(stnText);
-        if (naturalTranslations[idx]) {
-          res.natural = naturalTranslations[idx];
+        const natural = naturalTranslations[idx];
+        const res = this.ruleEngine.process(stnText, natural);
+        if (natural) {
+          res.natural = natural;
         }
         return {
           index: idx,
@@ -465,12 +486,36 @@ export class InputView {
         };
       });
 
+      // Refine 직독직해 chunks based strictly on natural Korean translation
+      await Promise.all(
+        sentenceList.map(async (stn) => {
+          if (stn.result && stn.result.chunks && stn.result.natural) {
+            try {
+              const directKoChunks = await aiService.generateDirectChunks(
+                stn.result.chunks,
+                stn.result.natural,
+                stn.text
+              );
+              if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+                directKoChunks.forEach((ko, i) => {
+                  stn.result.chunks[i].ko = ko;
+                });
+                stn.result.chunk_text = directKoChunks.join(' || ');
+                stn.result.direct = directKoChunks.join(' / ');
+              }
+            } catch (chunkErr) {
+              console.warn('Chunk direct translation error:', chunkErr);
+            }
+          }
+        })
+      );
+
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
 
       // Render Results Panel on Page 1
       this.renderParsedResults();
-      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 청크 분석 완료! 아래에서 검토 및 수정할 수 있습니다.`);
+      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
     } catch (err) {
       console.error('Translation error:', err);
       toast.show(`❌ 오류: ${err.message}`);
@@ -511,6 +556,22 @@ export class InputView {
       }
 
       if (boundaries && boundaries.length === appState.sentenceList.length) {
+        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
+        for (let i = 0; i < boundaries.length; i++) {
+          const b = boundaries[i];
+          if (b.end !== null) {
+            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
+              ? boundaries[i + 1].start
+              : totalDuration;
+            if (nextStart !== null && nextStart > b.start) {
+              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
+              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
+            } else if (totalDuration !== null) {
+              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
+            }
+          }
+        }
+
         appState.sentenceList.forEach((stn, i) => {
           stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
@@ -696,17 +757,41 @@ export class InputView {
   }
 
   /**
-   * Re-fetch natural translation for single sentence
+   * Re-fetch natural translation for single sentence and regenerate 직독직해
    */
-  async retranslateSentence(stn, naturalInput) {
-    toast.show('🤖 우리말 자연스러운 해석 가져오는 중...');
+  async retranslateSentence(stn, naturalInput, directInput) {
+    toast.show('🤖 우리말 자연스러운 해석 및 직독직해 가져오는 중...');
     try {
       const natural = await aiService.translateNatural(stn.text);
       if (natural) {
         if (!stn.result) stn.result = {};
         stn.result.natural = natural;
         if (naturalInput) naturalInput.value = natural;
-        toast.show('✨ 자연스러운 해석이 업데이트되었습니다!');
+
+        // Automatically regenerate 직독직해 based on the updated natural translation!
+        if (stn.result.chunks && stn.result.chunks.length > 0) {
+          try {
+            const directKoChunks = await aiService.generateDirectChunks(
+              stn.result.chunks,
+              natural,
+              stn.text
+            );
+            if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+              directKoChunks.forEach((ko, i) => {
+                stn.result.chunks[i].ko = ko;
+              });
+              stn.result.chunk_text = directKoChunks.join(' || ');
+              stn.result.direct = directKoChunks.join(' / ');
+              if (directInput) {
+                directInput.value = this.getDirectChunkString(stn.result.chunks);
+              }
+            }
+          } catch (chunkErr) {
+            console.warn('Chunk direct translation error:', chunkErr);
+          }
+        }
+
+        toast.show('✨ 자연스러운 해석 및 직독직해가 업데이트되었습니다!');
       } else {
         toast.show('⚠️ 번역 결과를 가져오지 못했습니다.');
       }
@@ -875,7 +960,7 @@ export class InputView {
       // 6. Hook up Retranslate Button
       if (retransBtn) {
         retransBtn.addEventListener('click', () => {
-          this.retranslateSentence(stn, naturalInput);
+          this.retranslateSentence(stn, naturalInput, directInput);
         });
       }
 
@@ -923,6 +1008,32 @@ export class InputView {
         naturalInput.addEventListener('input', () => {
           if (!stn.result) stn.result = {};
           stn.result.natural = naturalInput.value;
+        });
+        naturalInput.addEventListener('change', async () => {
+          if (!stn.result) stn.result = {};
+          stn.result.natural = naturalInput.value;
+          // Synchronize 직독직해 when natural interpretation is edited by user
+          if (stn.result.chunks && stn.result.chunks.length > 0) {
+            try {
+              const directKoChunks = await aiService.generateDirectChunks(
+                stn.result.chunks,
+                stn.result.natural,
+                stn.text
+              );
+              if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+                directKoChunks.forEach((ko, i) => {
+                  stn.result.chunks[i].ko = ko;
+                });
+                stn.result.chunk_text = directKoChunks.join(' || ');
+                stn.result.direct = directKoChunks.join(' / ');
+                if (directInput) {
+                  directInput.value = this.getDirectChunkString(stn.result.chunks);
+                }
+              }
+            } catch (chunkErr) {
+              console.warn('Sync chunk direct error:', chunkErr);
+            }
+          }
         });
       }
 
@@ -999,7 +1110,7 @@ export class InputView {
       if (boundaryWordIndices.has(idx) || idx === words.length - 1) {
         const enStr = curWords.join(' ');
         const existingChunk = (stn.result?.chunks || []).find(c => c.en.trim() === enStr.trim());
-        const koStr = existingChunk ? existingChunk.ko : this.ruleEngine.translateChunkText(enStr);
+        const koStr = existingChunk ? existingChunk.ko : '';
         newChunks.push({ en: enStr, ko: koStr });
         curWords = [];
       }
@@ -1007,11 +1118,16 @@ export class InputView {
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+
+    if (stn.result.natural) {
+      this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+    }
+
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
   }
 
-  updateChunksFromTextInput(stn, chunkedText, directInput, track) {
+  async updateChunksFromTextInput(stn, chunkedText, directInput, track) {
     const parts = (chunkedText || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!parts.length) return;
 
@@ -1019,12 +1135,28 @@ export class InputView {
       const existing = (stn.result?.chunks || []).find(c => c.en.trim() === part);
       return {
         en: part,
-        ko: existing ? existing.ko : this.ruleEngine.translateChunkText(part)
+        ko: existing ? existing.ko : ''
       };
     });
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+
+    if (stn.result.natural) {
+      try {
+        const directKoChunks = await aiService.generateDirectChunks(newChunks, stn.result.natural, stn.text);
+        if (directKoChunks && directKoChunks.length === newChunks.length) {
+          directKoChunks.forEach((ko, i) => {
+            newChunks[i].ko = ko;
+          });
+        } else {
+          this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+        }
+      } catch (e) {
+        this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+      }
+    }
+
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
 
@@ -1059,7 +1191,7 @@ export class InputView {
     stn.text = cleanText;
 
     // Re-process chunks with rule engine
-    const newResult = this.ruleEngine.process(cleanText);
+    const newResult = this.ruleEngine.process(cleanText, stn.result?.natural);
     if (!stn.result) stn.result = {};
     stn.result.chunks = newResult.chunks;
     stn.result.chunk_text = newResult.chunk_text;
@@ -1080,12 +1212,23 @@ export class InputView {
     appState.scriptText = (appState.sentenceList || []).map(s => s.text).join(' ');
     toast.show(`📝 문장 S${stn.index + 1} 원문이 수정되었습니다.`);
 
-    // Auto-translate natural in background
+    // Auto-translate natural in background and regenerate 직독직해
     try {
       const natural = await aiService.translateNatural(cleanText);
       if (natural) {
         stn.result.natural = natural;
         if (naturalInput) naturalInput.value = natural;
+        const directKoChunks = await aiService.generateDirectChunks(stn.result.chunks, natural, cleanText);
+        if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+          directKoChunks.forEach((ko, i) => {
+            stn.result.chunks[i].ko = ko;
+          });
+          stn.result.chunk_text = directKoChunks.join(' || ');
+          stn.result.direct = directKoChunks.join(' / ');
+          if (directInput) {
+            directInput.value = this.getDirectChunkString(stn.result.chunks);
+          }
+        }
       }
     } catch (e) {}
   }

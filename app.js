@@ -524,15 +524,50 @@ function verifyAnswer(userVal, expectedWord) {
 class RuleChunkEngine {
   constructor() {}
 
-  process(rawInput) {
+  process(rawInput, naturalText = null) {
     const cleanInput = rawInput.trim();
     const lower = cleanInput.toLowerCase().replace(/[.,!?;:]+$/, '').trim();
 
     const fullKey = cleanInput.toLowerCase().trim();
-    if (PRESETS[fullKey]) return PRESETS[fullKey];
-    if (PRESETS[lower + '.']) return PRESETS[lower + '.'];
+    let res = null;
+    if (PRESETS[fullKey]) res = JSON.parse(JSON.stringify(PRESETS[fullKey]));
+    else if (PRESETS[lower + '.']) res = JSON.parse(JSON.stringify(PRESETS[lower + '.']));
+    else res = this.parseAndSynthesize(cleanInput);
 
-    return this.parseAndSynthesize(cleanInput);
+    if (naturalText && res && res.chunks) {
+      res.natural = naturalText;
+      this.alignNaturalToChunks(res.chunks, naturalText);
+      res.chunk_text = res.chunks.map(c => c.ko).join(' || ');
+      res.direct = res.chunks.map(c => c.ko).join(' / ');
+    }
+
+    return res;
+  }
+
+  alignNaturalToChunks(chunks, naturalText) {
+    if (!chunks || !chunks.length || !naturalText) return;
+    const words = naturalText.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return;
+
+    if (chunks.length === 1) {
+      chunks[0].ko = naturalText.trim();
+      return;
+    }
+
+    const chunkWeights = chunks.map(c => Math.max(1, (c.en || '').split(/\s+/).filter(Boolean).length));
+    const totalWeight = chunkWeights.reduce((a, b) => a + b, 0);
+
+    let curWordIdx = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      if (i === chunks.length - 1) {
+        chunks[i].ko = words.slice(curWordIdx).join(' ').trim();
+      } else {
+        const count = Math.max(1, Math.round(words.length * (chunkWeights[i] / totalWeight)));
+        const sliceEnd = Math.min(words.length - (chunks.length - 1 - i), curWordIdx + count);
+        chunks[i].ko = words.slice(curWordIdx, sliceEnd).join(' ').trim();
+        curWordIdx = sliceEnd;
+      }
+    }
   }
 
   parseAndSynthesize(text) {
@@ -830,6 +865,10 @@ class RuleChunkEngine {
 
   attachParticle(word, particlePair) {
     if (!word) return '';
+    // If word contains only English/Latin letters, do NOT append Korean particles (e.g. "as는", "beach를")
+    if (/^[a-zA-Z\s,.'"-]+$/.test(word.trim())) {
+      return word.trim();
+    }
     const lastChar = word[word.length - 1];
     const code = lastChar.charCodeAt(0);
     const hasBatchim = (code >= 0xac00 && code <= 0xd7a3) ? (code - 0xac00) % 28 > 0 : false;
@@ -1266,6 +1305,109 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
   }
 
   /**
+   * Generate natural chunk-by-chunk sequential Korean interpretation (직독직해)
+   * based on the fluent natural Korean translation.
+   */
+  async generateDirectChunks(chunks, naturalText, englishSentence) {
+    if (!chunks || !chunks.length) return [];
+    if (!naturalText || !naturalText.trim()) {
+      return chunks.map(c => (typeof c === 'string' ? c : c.ko || c.en || ''));
+    }
+
+    const cleanChunks = chunks.map(c => (typeof c === 'string' ? c : c.en || '').trim());
+
+    // 1. If AI API key is configured (Gemini / OpenAI), use prompt to partition natural Korean
+    if (this.hasKey()) {
+      try {
+        const prompt = `You are an expert English-Korean linguist.
+We have an English sentence: "${englishSentence || cleanChunks.join(' ')}"
+And its natural Korean translation: "${naturalText}"
+
+The English sentence is divided into ${cleanChunks.length} sequential thought chunks:
+${cleanChunks.map((c, i) => `[Chunk ${i + 1}] "${c}"`).join('\n')}
+
+Task: Create the 직독직해 (chunk-by-chunk sequential Korean interpretation) based strictly on the provided natural Korean translation.
+Requirements:
+1. Every chunk MUST be 100% pure Korean. NEVER include English words or attach Korean particles to English (e.g. NEVER output "as는", "beach is famous를", etc.).
+2. The Korean words, tone and vocabulary must come directly from the natural Korean translation.
+3. Follow the sequential thought order of the English chunks (순차 해석 / 직독직해).
+4. Return ONLY valid JSON with an array of strings in "chunks", matching the count of ${cleanChunks.length}:
+{
+  "chunks": [ "한국어 직독직해 1", "한국어 직독직해 2", ... ]
+}`;
+        if (this.provider === 'gemini') {
+          const res = await this.callGemini(englishSentence || cleanChunks.join(' '), prompt);
+          if (res && Array.isArray(res.chunks) && res.chunks.length === cleanChunks.length) {
+            return res.chunks.map(s => String(s).trim());
+          }
+        } else {
+          const res = await this.callOpenAI(englishSentence || cleanChunks.join(' '), prompt);
+          if (res && Array.isArray(res.chunks) && res.chunks.length === cleanChunks.length) {
+            return res.chunks.map(s => String(s).trim());
+          }
+        }
+      } catch (aiErr) {
+        console.warn('AI direct chunk generation fallback:', aiErr);
+      }
+    }
+
+    // 2. High-speed, high-quality parallel chunk translation with natural alignment
+    try {
+      const translatedChunks = await Promise.all(
+        cleanChunks.map(async (cText) => {
+          if (!cText) return '';
+          const cleanText = cText.replace(/^[,.!?–—;:]+|[,.!?–—;:]+$/g, '').trim();
+          if (!cleanText) return '';
+          const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(cleanText)}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && Array.isArray(data[0])) {
+              return data[0].map(item => item[0]).join('').trim();
+            }
+          }
+          return '';
+        })
+      );
+
+      const allValid = translatedChunks.every(t => t && t.length > 0 && !/[a-zA-Z]{3,}/.test(t));
+      if (allValid && translatedChunks.length === cleanChunks.length) {
+        return translatedChunks.map(t => t.replace(/^[,\s]+|[,\s]+$/g, ''));
+      }
+    } catch (fetchErr) {
+      console.warn('Public chunk translation error:', fetchErr);
+    }
+
+    // 3. Smart offline semantic slice of naturalText
+    return this.sliceNaturalTextIntoChunks(cleanChunks, naturalText);
+  }
+
+  sliceNaturalTextIntoChunks(chunks, naturalText) {
+    if (!chunks || !chunks.length) return [];
+    if (chunks.length === 1) return [naturalText.trim()];
+
+    const words = naturalText.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return chunks.map(() => '');
+
+    const chunkWeights = chunks.map(c => Math.max(1, (c || '').split(/\s+/).filter(Boolean).length));
+    const totalWeight = chunkWeights.reduce((a, b) => a + b, 0);
+
+    const result = [];
+    let curWordIdx = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      if (i === chunks.length - 1) {
+        result.push(words.slice(curWordIdx).join(' ').trim());
+      } else {
+        const count = Math.max(1, Math.round(words.length * (chunkWeights[i] / totalWeight)));
+        const sliceEnd = Math.min(words.length - (chunks.length - 1 - i), curWordIdx + count);
+        result.push(words.slice(curWordIdx, sliceEnd).join(' ').trim());
+        curWordIdx = sliceEnd;
+      }
+    }
+    return result;
+  }
+
+  /**
    * AI-powered Audio & Script Forced Alignment using Gemini Multimodal Audio
    */
   async alignAudioWithScript(base64Audio, mimeType, sentences) {
@@ -1279,6 +1421,10 @@ ${sentences.map((s, idx) => `[S${idx + 1}] "${s}"`).join('\n')}
 
 For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this sentence in the audio.
 Ignore introductory chimes, directions, or non-English announcements at the beginning.
+
+CRITICAL FOR TIMESTAMPS:
+- 'start': The exact moment the speaker begins the first word of the sentence.
+- 'end': MUST NOT cut off the last word of the sentence. Include the complete release and acoustic decay of the final word plus 0.8s trailing padding (or up until right before the next sentence starts).
 
 Respond ONLY with valid JSON:
 {
@@ -1311,7 +1457,24 @@ Respond ONLY with valid JSON:
 
       const result = await this.postToGemini(payload);
       if (result && Array.isArray(result.alignments)) {
-        return result.alignments;
+        // Post-process alignments to guarantee no sentence-end truncation
+        const processed = result.alignments.map((a, i) => {
+          const nextStart = (i + 1 < result.alignments.length) ? Number(result.alignments[i + 1].start) : null;
+          let end = Number(a.end) || 0;
+          const start = Number(a.start) || 0;
+          if (nextStart !== null && nextStart > start) {
+            const safeMax = Math.max(start + 0.5, nextStart - 0.15);
+            end = Math.min(safeMax, Math.round((end + 0.9) * 10) / 10);
+          } else {
+            end = Math.round((end + 1.0) * 10) / 10;
+          }
+          return {
+            sentence_index: a.sentence_index ?? i,
+            start,
+            end
+          };
+        });
+        return processed;
       }
     } catch (err) {
       console.warn('Gemini audio-script alignment failed:', err);
@@ -1530,32 +1693,36 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
       }
 
       if (maxRms > 0.001) {
-        // Detect speech onset (skipping intro silence / chimes)
-        const speechThresh = maxRms * 0.06;
+        // 1. Detect speech onset (skipping intro silence / chimes)
+        const onsetThresh = maxRms * 0.05;
         let speechStartIdx = 0;
         for (let w = 0; w < numWindows; w++) {
-          if (energies[w] >= speechThresh) {
-            // Require at least 2 consecutive windows of energy
-            if (w + 1 < numWindows && energies[w + 1] >= speechThresh * 0.7) {
+          if (energies[w] >= onsetThresh) {
+            if (w + 1 < numWindows && energies[w + 1] >= onsetThresh * 0.6) {
               speechStartIdx = Math.max(0, w - 2);
               break;
             }
           }
         }
-        const speechStart = Math.round(speechStartIdx * windowSec * 10) / 10;
+        const speechStart = Math.max(0, Math.round((speechStartIdx * windowSec - 0.1) * 10) / 10);
 
-        // Detect speech offset (skipping trailing silence / chimes)
+        // 2. Detect speech offset (skipping trailing silence / chimes)
+        // Sensitive threshold (1.5% maxRms) + 1.0s generous padding to prevent cutting off final phonemes/words
+        const offsetThresh = maxRms * 0.015;
         let speechEndIdx = numWindows - 1;
         for (let w = numWindows - 1; w >= 0; w--) {
-          if (energies[w] >= speechThresh) {
-            speechEndIdx = Math.min(numWindows - 1, w + 3);
+          if (energies[w] >= offsetThresh) {
+            speechEndIdx = Math.min(numWindows - 1, w + Math.floor(1.0 / windowSec));
             break;
           }
         }
-        const speechEnd = Math.round(speechEndIdx * windowSec * 10) / 10;
+        let speechEnd = Math.min(duration, Math.round((speechEndIdx * windowSec) * 10) / 10);
+        if (speechEnd + 1.0 >= duration - 0.2) {
+          speechEnd = Math.round(duration * 10) / 10;
+        }
         const speechDuration = Math.max(1.0, speechEnd - speechStart);
 
-        // Smooth energy curve with moving average (~250ms window) to suppress plosive stops
+        // Smooth energy curve with moving average (~250ms window)
         const smoothRadius = 3;
         const smoothed = new Float32Array(numWindows);
         for (let i = 0; i < numWindows; i++) {
@@ -1573,26 +1740,24 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
         // Calculate expected sentence transition timestamps based on word counts
         const weights = sentences.map(s => {
           const words = (s || '').trim().split(/\s+/).filter(Boolean);
-          // Sentence ending with question mark or exclamation usually has slightly longer cadence
           const punctBonus = /[?!]/.test(s) ? 1.5 : 1.0;
           return Math.max(3, words.length * punctBonus);
         });
         const totalWeight = weights.reduce((a, b) => a + b, 0);
 
         let curWeight = 0;
-        let lastBoundary = speechStart;
-        const boundaries = [];
+        let lastStart = speechStart;
+        const transitions = [];
 
         for (let i = 0; i < sentences.length - 1; i++) {
           curWeight += weights[i];
           const expectedTime = speechStart + speechDuration * (curWeight / totalWeight);
           const expectedIdx = Math.floor(expectedTime / windowSec);
           
-          // Search around expected transition for the lowest energy dip (valley / pause)
-          const searchSec = Math.min(4.0, Math.max(1.2, (speechDuration * (weights[i] / totalWeight)) * 0.5));
+          const searchSec = Math.min(4.5, Math.max(1.5, (speechDuration * (weights[i] / totalWeight)) * 0.6));
           const searchRadius = Math.floor(searchSec / windowSec);
-          const minAllowedIdx = Math.floor((lastBoundary + 0.4) / windowSec);
-          const maxAllowedIdx = Math.floor((speechEnd - 0.4) / windowSec);
+          const minAllowedIdx = Math.floor((lastStart + 0.5) / windowSec);
+          const maxAllowedIdx = Math.floor((speechEnd - 0.5) / windowSec);
 
           const startIdx = Math.max(minAllowedIdx, expectedIdx - searchRadius);
           const endIdx = Math.min(maxAllowedIdx, expectedIdx + searchRadius);
@@ -1601,22 +1766,46 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
           let bestIdx = expectedIdx;
 
           for (let k = startIdx; k <= endIdx; k++) {
-            // Distance penalty to favor dips closer to expected rhythm
             const distFromExp = Math.abs(k - expectedIdx) / searchRadius;
-            const score = smoothed[k] * (1.0 + 0.35 * distFromExp);
+            const score = smoothed[k] * (1.0 + 0.3 * distFromExp);
             if (score < minVal) {
               minVal = score;
               bestIdx = k;
             }
           }
 
-          const boundaryTime = Math.round(bestIdx * windowSec * 10) / 10;
-          const safeBoundary = Math.max(lastBoundary + 0.4, Math.min(speechEnd - 0.3, boundaryTime));
-          boundaries.push({ start: lastBoundary, end: safeBoundary });
-          lastBoundary = safeBoundary;
+          const valleyTime = Math.round(bestIdx * windowSec * 10) / 10;
+
+          // Find the speech onset of the next sentence following the valley
+          let nextOnsetIdx = bestIdx;
+          for (let w = bestIdx; w < numWindows; w++) {
+            if (energies[w] >= onsetThresh) {
+              nextOnsetIdx = Math.max(bestIdx, w);
+              break;
+            }
+          }
+          const nextOnsetTime = Math.round(nextOnsetIdx * windowSec * 10) / 10;
+
+          transitions.push({ valleyTime, nextOnsetTime });
+          lastStart = nextOnsetTime;
         }
 
-        boundaries.push({ start: lastBoundary, end: speechEnd });
+        // Construct boundaries where:
+        // 1. Current sentence has generous tail headroom (+0.8s), stopping 0.15s before next sentence
+        // 2. Next sentence starts cleanly 0.15s before its actual speech onset
+        const boundaries = [];
+        let curSentenceStart = speechStart;
+
+        for (let i = 0; i < sentences.length - 1; i++) {
+          const { valleyTime, nextOnsetTime } = transitions[i];
+          const nextSentenceStart = Math.max(curSentenceStart + 0.6, Math.round((nextOnsetTime - 0.15) * 10) / 10);
+          const maxTail = Math.round((valleyTime + 0.8) * 10) / 10;
+          const curSentenceEnd = Math.max(curSentenceStart + 0.5, Math.min(nextSentenceStart - 0.15, maxTail));
+          boundaries.push({ start: curSentenceStart, end: curSentenceEnd });
+          curSentenceStart = nextSentenceStart;
+        }
+
+        boundaries.push({ start: curSentenceStart, end: speechEnd });
         return boundaries;
       }
     } catch (e) {
@@ -1649,21 +1838,26 @@ function detectSpeechOnsetOffset(audioBuffer, totalDuration) {
       if (rms > maxRms) maxRms = rms;
     }
 
-    const thresh = maxRms * 0.06;
+    const onsetThresh = maxRms * 0.05;
     let startSec = 0;
     for (let w = 0; w < numWindows; w++) {
-      if (energies[w] >= thresh) {
+      if (energies[w] >= onsetThresh) {
         startSec = Math.max(0, Math.round((w * windowSec - 0.1) * 10) / 10);
         break;
       }
     }
 
+    const offsetThresh = maxRms * 0.015;
     let endSec = totalDuration;
     for (let w = numWindows - 1; w >= 0; w--) {
-      if (energies[w] >= thresh) {
-        endSec = Math.min(totalDuration, Math.round(((w + 1) * windowSec + 0.2) * 10) / 10);
+      if (energies[w] >= offsetThresh) {
+        // Add 1.0s headroom so sentence ending is NEVER truncated
+        endSec = Math.min(totalDuration, Math.round(((w + 1) * windowSec + 1.0) * 10) / 10);
         break;
       }
+    }
+    if (endSec + 1.0 >= totalDuration - 0.2) {
+      endSec = Math.round(totalDuration * 10) / 10;
     }
 
     return { speechStart: startSec, speechEnd: endSec };
@@ -3092,15 +3286,36 @@ class InputView {
         boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
       }
 
+      // Safety extension: ensure each sentence end has generous headroom (+0.9s ~ +1.0s)
+      // and is NEVER cut off prematurely by 1 second
+      if (boundaries && boundaries.length === rawSentences.length) {
+        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
+        for (let i = 0; i < boundaries.length; i++) {
+          const b = boundaries[i];
+          if (b.end !== null) {
+            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
+              ? boundaries[i + 1].start
+              : totalDuration;
+            if (nextStart !== null && nextStart > b.start) {
+              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
+              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
+            } else if (totalDuration !== null) {
+              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
+            }
+          }
+        }
+      }
+
       // Parallel fetch natural Korean translation for all sentences
       const naturalTranslations = await Promise.all(
         rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
       );
 
       const sentenceList = rawSentences.map((stnText, idx) => {
-        const res = this.ruleEngine.process(stnText);
-        if (naturalTranslations[idx]) {
-          res.natural = naturalTranslations[idx];
+        const natural = naturalTranslations[idx];
+        const res = this.ruleEngine.process(stnText, natural);
+        if (natural) {
+          res.natural = natural;
         }
         return {
           index: idx,
@@ -3111,12 +3326,36 @@ class InputView {
         };
       });
 
+      // Refine 직독직해 chunks based strictly on natural Korean translation
+      await Promise.all(
+        sentenceList.map(async (stn) => {
+          if (stn.result && stn.result.chunks && stn.result.natural) {
+            try {
+              const directKoChunks = await aiService.generateDirectChunks(
+                stn.result.chunks,
+                stn.result.natural,
+                stn.text
+              );
+              if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+                directKoChunks.forEach((ko, i) => {
+                  stn.result.chunks[i].ko = ko;
+                });
+                stn.result.chunk_text = directKoChunks.join(' || ');
+                stn.result.direct = directKoChunks.join(' / ');
+              }
+            } catch (chunkErr) {
+              console.warn('Chunk direct translation error:', chunkErr);
+            }
+          }
+        })
+      );
+
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
 
       // Render Results Panel on Page 1
       this.renderParsedResults();
-      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 청크 분석 완료! 아래에서 검토 및 수정할 수 있습니다.`);
+      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
     } catch (err) {
       console.error('Translation error:', err);
       toast.show(`❌ 오류: ${err.message}`);
@@ -3157,6 +3396,22 @@ class InputView {
       }
 
       if (boundaries && boundaries.length === appState.sentenceList.length) {
+        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
+        for (let i = 0; i < boundaries.length; i++) {
+          const b = boundaries[i];
+          if (b.end !== null) {
+            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
+              ? boundaries[i + 1].start
+              : totalDuration;
+            if (nextStart !== null && nextStart > b.start) {
+              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
+              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
+            } else if (totalDuration !== null) {
+              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
+            }
+          }
+        }
+
         appState.sentenceList.forEach((stn, i) => {
           stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
@@ -3342,17 +3597,41 @@ class InputView {
   }
 
   /**
-   * Re-fetch natural translation for single sentence
+   * Re-fetch natural translation for single sentence and regenerate 직독직해
    */
-  async retranslateSentence(stn, naturalInput) {
-    toast.show('🤖 우리말 자연스러운 해석 가져오는 중...');
+  async retranslateSentence(stn, naturalInput, directInput) {
+    toast.show('🤖 우리말 자연스러운 해석 및 직독직해 가져오는 중...');
     try {
       const natural = await aiService.translateNatural(stn.text);
       if (natural) {
         if (!stn.result) stn.result = {};
         stn.result.natural = natural;
         if (naturalInput) naturalInput.value = natural;
-        toast.show('✨ 자연스러운 해석이 업데이트되었습니다!');
+
+        // Automatically regenerate 직독직해 based on the updated natural translation!
+        if (stn.result.chunks && stn.result.chunks.length > 0) {
+          try {
+            const directKoChunks = await aiService.generateDirectChunks(
+              stn.result.chunks,
+              natural,
+              stn.text
+            );
+            if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+              directKoChunks.forEach((ko, i) => {
+                stn.result.chunks[i].ko = ko;
+              });
+              stn.result.chunk_text = directKoChunks.join(' || ');
+              stn.result.direct = directKoChunks.join(' / ');
+              if (directInput) {
+                directInput.value = this.getDirectChunkString(stn.result.chunks);
+              }
+            }
+          } catch (chunkErr) {
+            console.warn('Chunk direct translation error:', chunkErr);
+          }
+        }
+
+        toast.show('✨ 자연스러운 해석 및 직독직해가 업데이트되었습니다!');
       } else {
         toast.show('⚠️ 번역 결과를 가져오지 못했습니다.');
       }
@@ -3521,7 +3800,7 @@ class InputView {
       // 6. Hook up Retranslate Button
       if (retransBtn) {
         retransBtn.addEventListener('click', () => {
-          this.retranslateSentence(stn, naturalInput);
+          this.retranslateSentence(stn, naturalInput, directInput);
         });
       }
 
@@ -3569,6 +3848,32 @@ class InputView {
         naturalInput.addEventListener('input', () => {
           if (!stn.result) stn.result = {};
           stn.result.natural = naturalInput.value;
+        });
+        naturalInput.addEventListener('change', async () => {
+          if (!stn.result) stn.result = {};
+          stn.result.natural = naturalInput.value;
+          // Synchronize 직독직해 when natural interpretation is edited by user
+          if (stn.result.chunks && stn.result.chunks.length > 0) {
+            try {
+              const directKoChunks = await aiService.generateDirectChunks(
+                stn.result.chunks,
+                stn.result.natural,
+                stn.text
+              );
+              if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+                directKoChunks.forEach((ko, i) => {
+                  stn.result.chunks[i].ko = ko;
+                });
+                stn.result.chunk_text = directKoChunks.join(' || ');
+                stn.result.direct = directKoChunks.join(' / ');
+                if (directInput) {
+                  directInput.value = this.getDirectChunkString(stn.result.chunks);
+                }
+              }
+            } catch (chunkErr) {
+              console.warn('Sync chunk direct error:', chunkErr);
+            }
+          }
         });
       }
 
@@ -3645,7 +3950,7 @@ class InputView {
       if (boundaryWordIndices.has(idx) || idx === words.length - 1) {
         const enStr = curWords.join(' ');
         const existingChunk = (stn.result?.chunks || []).find(c => c.en.trim() === enStr.trim());
-        const koStr = existingChunk ? existingChunk.ko : this.ruleEngine.translateChunkText(enStr);
+        const koStr = existingChunk ? existingChunk.ko : '';
         newChunks.push({ en: enStr, ko: koStr });
         curWords = [];
       }
@@ -3653,11 +3958,16 @@ class InputView {
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+
+    if (stn.result.natural) {
+      this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+    }
+
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
   }
 
-  updateChunksFromTextInput(stn, chunkedText, directInput, track) {
+  async updateChunksFromTextInput(stn, chunkedText, directInput, track) {
     const parts = (chunkedText || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!parts.length) return;
 
@@ -3665,12 +3975,28 @@ class InputView {
       const existing = (stn.result?.chunks || []).find(c => c.en.trim() === part);
       return {
         en: part,
-        ko: existing ? existing.ko : this.ruleEngine.translateChunkText(part)
+        ko: existing ? existing.ko : ''
       };
     });
 
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
+
+    if (stn.result.natural) {
+      try {
+        const directKoChunks = await aiService.generateDirectChunks(newChunks, stn.result.natural, stn.text);
+        if (directKoChunks && directKoChunks.length === newChunks.length) {
+          directKoChunks.forEach((ko, i) => {
+            newChunks[i].ko = ko;
+          });
+        } else {
+          this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+        }
+      } catch (e) {
+        this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+      }
+    }
+
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
 
@@ -3705,7 +4031,7 @@ class InputView {
     stn.text = cleanText;
 
     // Re-process chunks with rule engine
-    const newResult = this.ruleEngine.process(cleanText);
+    const newResult = this.ruleEngine.process(cleanText, stn.result?.natural);
     if (!stn.result) stn.result = {};
     stn.result.chunks = newResult.chunks;
     stn.result.chunk_text = newResult.chunk_text;
@@ -3726,12 +4052,23 @@ class InputView {
     appState.scriptText = (appState.sentenceList || []).map(s => s.text).join(' ');
     toast.show(`📝 문장 S${stn.index + 1} 원문이 수정되었습니다.`);
 
-    // Auto-translate natural in background
+    // Auto-translate natural in background and regenerate 직독직해
     try {
       const natural = await aiService.translateNatural(cleanText);
       if (natural) {
         stn.result.natural = natural;
         if (naturalInput) naturalInput.value = natural;
+        const directKoChunks = await aiService.generateDirectChunks(stn.result.chunks, natural, cleanText);
+        if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
+          directKoChunks.forEach((ko, i) => {
+            stn.result.chunks[i].ko = ko;
+          });
+          stn.result.chunk_text = directKoChunks.join(' || ');
+          stn.result.direct = directKoChunks.join(' / ');
+          if (directInput) {
+            directInput.value = this.getDirectChunkString(stn.result.chunks);
+          }
+        }
       }
     } catch (e) {}
   }

@@ -8,15 +8,50 @@ import { PRESETS, PREPOSITIONS, ADVERBS, DICTIONARY, VERB_MAP, PRONOUNS } from '
 export class RuleChunkEngine {
   constructor() {}
 
-  process(rawInput) {
+  process(rawInput, naturalText = null) {
     const cleanInput = rawInput.trim();
     const lower = cleanInput.toLowerCase().replace(/[.,!?;:]+$/, '').trim();
 
     const fullKey = cleanInput.toLowerCase().trim();
-    if (PRESETS[fullKey]) return PRESETS[fullKey];
-    if (PRESETS[lower + '.']) return PRESETS[lower + '.'];
+    let res = null;
+    if (PRESETS[fullKey]) res = JSON.parse(JSON.stringify(PRESETS[fullKey]));
+    else if (PRESETS[lower + '.']) res = JSON.parse(JSON.stringify(PRESETS[lower + '.']));
+    else res = this.parseAndSynthesize(cleanInput);
 
-    return this.parseAndSynthesize(cleanInput);
+    if (naturalText && res && res.chunks) {
+      res.natural = naturalText;
+      this.alignNaturalToChunks(res.chunks, naturalText);
+      res.chunk_text = res.chunks.map(c => c.ko).join(' || ');
+      res.direct = res.chunks.map(c => c.ko).join(' / ');
+    }
+
+    return res;
+  }
+
+  alignNaturalToChunks(chunks, naturalText) {
+    if (!chunks || !chunks.length || !naturalText) return;
+    const words = naturalText.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return;
+
+    if (chunks.length === 1) {
+      chunks[0].ko = naturalText.trim();
+      return;
+    }
+
+    const chunkWeights = chunks.map(c => Math.max(1, (c.en || '').split(/\s+/).filter(Boolean).length));
+    const totalWeight = chunkWeights.reduce((a, b) => a + b, 0);
+
+    let curWordIdx = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      if (i === chunks.length - 1) {
+        chunks[i].ko = words.slice(curWordIdx).join(' ').trim();
+      } else {
+        const count = Math.max(1, Math.round(words.length * (chunkWeights[i] / totalWeight)));
+        const sliceEnd = Math.min(words.length - (chunks.length - 1 - i), curWordIdx + count);
+        chunks[i].ko = words.slice(curWordIdx, sliceEnd).join(' ').trim();
+        curWordIdx = sliceEnd;
+      }
+    }
   }
 
   parseAndSynthesize(text) {
@@ -314,6 +349,10 @@ export class RuleChunkEngine {
 
   attachParticle(word, particlePair) {
     if (!word) return '';
+    // If word contains only English/Latin letters, do NOT append Korean particles (e.g. "as는", "beach를")
+    if (/^[a-zA-Z\s,.'"-]+$/.test(word.trim())) {
+      return word.trim();
+    }
     const lastChar = word[word.length - 1];
     const code = lastChar.charCodeAt(0);
     const hasBatchim = (code >= 0xac00 && code <= 0xd7a3) ? (code - 0xac00) % 28 > 0 : false;

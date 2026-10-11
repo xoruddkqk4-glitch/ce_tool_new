@@ -185,6 +185,109 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
   }
 
   /**
+   * Generate natural chunk-by-chunk sequential Korean interpretation (직독직해)
+   * based on the fluent natural Korean translation.
+   */
+  async generateDirectChunks(chunks, naturalText, englishSentence) {
+    if (!chunks || !chunks.length) return [];
+    if (!naturalText || !naturalText.trim()) {
+      return chunks.map(c => (typeof c === 'string' ? c : c.ko || c.en || ''));
+    }
+
+    const cleanChunks = chunks.map(c => (typeof c === 'string' ? c : c.en || '').trim());
+
+    // 1. If AI API key is configured (Gemini / OpenAI), use prompt to partition natural Korean
+    if (this.hasKey()) {
+      try {
+        const prompt = `You are an expert English-Korean linguist.
+We have an English sentence: "${englishSentence || cleanChunks.join(' ')}"
+And its natural Korean translation: "${naturalText}"
+
+The English sentence is divided into ${cleanChunks.length} sequential thought chunks:
+${cleanChunks.map((c, i) => `[Chunk ${i + 1}] "${c}"`).join('\n')}
+
+Task: Create the 직독직해 (chunk-by-chunk sequential Korean interpretation) based strictly on the provided natural Korean translation.
+Requirements:
+1. Every chunk MUST be 100% pure Korean. NEVER include English words or attach Korean particles to English (e.g. NEVER output "as는", "beach is famous를", etc.).
+2. The Korean words, tone and vocabulary must come directly from the natural Korean translation.
+3. Follow the sequential thought order of the English chunks (순차 해석 / 직독직해).
+4. Return ONLY valid JSON with an array of strings in "chunks", matching the count of ${cleanChunks.length}:
+{
+  "chunks": [ "한국어 직독직해 1", "한국어 직독직해 2", ... ]
+}`;
+        if (this.provider === 'gemini') {
+          const res = await this.callGemini(englishSentence || cleanChunks.join(' '), prompt);
+          if (res && Array.isArray(res.chunks) && res.chunks.length === cleanChunks.length) {
+            return res.chunks.map(s => String(s).trim());
+          }
+        } else {
+          const res = await this.callOpenAI(englishSentence || cleanChunks.join(' '), prompt);
+          if (res && Array.isArray(res.chunks) && res.chunks.length === cleanChunks.length) {
+            return res.chunks.map(s => String(s).trim());
+          }
+        }
+      } catch (aiErr) {
+        console.warn('AI direct chunk generation fallback:', aiErr);
+      }
+    }
+
+    // 2. High-speed, high-quality parallel chunk translation with natural alignment
+    try {
+      const translatedChunks = await Promise.all(
+        cleanChunks.map(async (cText) => {
+          if (!cText) return '';
+          const cleanText = cText.replace(/^[,.!?–—;:]+|[,.!?–—;:]+$/g, '').trim();
+          if (!cleanText) return '';
+          const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(cleanText)}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && Array.isArray(data[0])) {
+              return data[0].map(item => item[0]).join('').trim();
+            }
+          }
+          return '';
+        })
+      );
+
+      const allValid = translatedChunks.every(t => t && t.length > 0 && !/[a-zA-Z]{3,}/.test(t));
+      if (allValid && translatedChunks.length === cleanChunks.length) {
+        return translatedChunks.map(t => t.replace(/^[,\s]+|[,\s]+$/g, ''));
+      }
+    } catch (fetchErr) {
+      console.warn('Public chunk translation error:', fetchErr);
+    }
+
+    // 3. Smart offline semantic slice of naturalText
+    return this.sliceNaturalTextIntoChunks(cleanChunks, naturalText);
+  }
+
+  sliceNaturalTextIntoChunks(chunks, naturalText) {
+    if (!chunks || !chunks.length) return [];
+    if (chunks.length === 1) return [naturalText.trim()];
+
+    const words = naturalText.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return chunks.map(() => '');
+
+    const chunkWeights = chunks.map(c => Math.max(1, (c || '').split(/\s+/).filter(Boolean).length));
+    const totalWeight = chunkWeights.reduce((a, b) => a + b, 0);
+
+    const result = [];
+    let curWordIdx = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      if (i === chunks.length - 1) {
+        result.push(words.slice(curWordIdx).join(' ').trim());
+      } else {
+        const count = Math.max(1, Math.round(words.length * (chunkWeights[i] / totalWeight)));
+        const sliceEnd = Math.min(words.length - (chunks.length - 1 - i), curWordIdx + count);
+        result.push(words.slice(curWordIdx, sliceEnd).join(' ').trim());
+        curWordIdx = sliceEnd;
+      }
+    }
+    return result;
+  }
+
+  /**
    * AI-powered Audio & Script Forced Alignment using Gemini Multimodal Audio
    */
   async alignAudioWithScript(base64Audio, mimeType, sentences) {
@@ -198,6 +301,10 @@ ${sentences.map((s, idx) => `[S${idx + 1}] "${s}"`).join('\n')}
 
 For each sentence, determine the precise start and end timestamps (in seconds, rounded to 1 decimal place) when the speaker speaks this sentence in the audio.
 Ignore introductory chimes, directions, or non-English announcements at the beginning.
+
+CRITICAL FOR TIMESTAMPS:
+- 'start': The exact moment the speaker begins the first word of the sentence.
+- 'end': MUST NOT cut off the last word of the sentence. Include the complete release and acoustic decay of the final word plus 0.8s trailing padding (or up until right before the next sentence starts).
 
 Respond ONLY with valid JSON:
 {
@@ -230,7 +337,24 @@ Respond ONLY with valid JSON:
 
       const result = await this.postToGemini(payload);
       if (result && Array.isArray(result.alignments)) {
-        return result.alignments;
+        // Post-process alignments to guarantee no sentence-end truncation
+        const processed = result.alignments.map((a, i) => {
+          const nextStart = (i + 1 < result.alignments.length) ? Number(result.alignments[i + 1].start) : null;
+          let end = Number(a.end) || 0;
+          const start = Number(a.start) || 0;
+          if (nextStart !== null && nextStart > start) {
+            const safeMax = Math.max(start + 0.5, nextStart - 0.15);
+            end = Math.min(safeMax, Math.round((end + 0.9) * 10) / 10);
+          } else {
+            end = Math.round((end + 1.0) * 10) / 10;
+          }
+          return {
+            sentence_index: a.sentence_index ?? i,
+            start,
+            end
+          };
+        });
+        return processed;
       }
     } catch (err) {
       console.warn('Gemini audio-script alignment failed:', err);
