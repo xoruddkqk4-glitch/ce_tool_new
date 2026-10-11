@@ -3,35 +3,40 @@
 #view-practice {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding-bottom: 90px; /* Space for bottom fixed sentence navigator */
+  gap: 14px;
+  padding-bottom: 24px;
 }
 
-/* 1. Top Section: Chunks Learning Cards Panel (2 Ratio - 440px) */
+/* 1. Top Section: Chunks Learning Cards Panel (Compact Single-Row Height) */
 #rowChunks,
 .practice-card-panel {
   order: 1 !important;
-  min-height: 440px;
-  height: 440px;
+  min-height: auto;
+  height: auto;
+  padding: 10px 16px !important;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 6px;
 }
 
-/* 2. Middle Section: Audio Waveform Player Panel (1 Ratio - 220px, Strictly 2:1 Ratio!) */
+/* 2. Middle Section: Audio Waveform Player Panel (Compact Height with Unobstructed Waveform) */
 #audioPlayerSection,
 .audio-player-card {
   order: 2 !important;
-  min-height: 220px;
-  height: 220px;
-  padding: 12px 18px !important;
+  min-height: auto;
+  height: auto;
+  padding: 10px 16px !important;
   gap: 8px !important;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  margin-top: 4px;
+  box-sizing: border-box;
 }
 
-/* 3. Bottom Section: Natural Korean Translation Panel (Masked by default) */
+/* 3. Bottom Section: Natural Korean Translation Panel (Clearly separated from Audio Player) */
 #rowNatural {
   order: 3 !important;
+  margin-top: 14px !important;
+  padding: 12px 18px !important;
+  box-sizing: border-box;
 }

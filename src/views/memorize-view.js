@@ -156,11 +156,9 @@ export class MemorizeView {
           <div class="memorize-card-inner">
             <div class="memorize-face memorize-face-en">
               <span class="chunk-en-text">${chunk.en}</span>
-              <span class="memorize-card-hint">클릭하여 해석 보기</span>
             </div>
             <div class="memorize-face memorize-face-ko">
               <span class="chunk-ko-text">${chunk.ko}</span>
-              <span class="memorize-card-hint">클릭하여 영어 보기</span>
             </div>
           </div>
         `;

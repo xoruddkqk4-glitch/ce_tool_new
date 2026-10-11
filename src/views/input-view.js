@@ -46,6 +46,7 @@ export class InputView {
     this.resultsCountBadge = document.getElementById('resultsCountBadge');
     this.btnPrintHandout = document.getElementById('btnPrintHandout');
     this.btnStartPractice = document.getElementById('btnStartPractice');
+    this.btnHeaderStartPractice = document.getElementById('btnHeaderStartPractice');
     this.btnBottomPrintHandout = document.getElementById('btnBottomPrintHandout');
     this.btnBottomStartPractice = document.getElementById('btnBottomStartPractice');
 
@@ -171,11 +172,22 @@ export class InputView {
     }
 
     // Transition to Page 2
+    const startPracticeHandler = () => {
+      if (!appState.sentenceList || appState.sentenceList.length === 0) {
+        if (this.inputEnglish && this.inputEnglish.value.trim()) {
+          this.handleTranslate();
+        }
+      }
+      this.router.navigateTo('practice');
+    };
     if (this.btnStartPractice) {
-      this.btnStartPractice.addEventListener('click', () => this.router.navigateTo('practice'));
+      this.btnStartPractice.addEventListener('click', startPracticeHandler);
+    }
+    if (this.btnHeaderStartPractice) {
+      this.btnHeaderStartPractice.addEventListener('click', startPracticeHandler);
     }
     if (this.btnBottomStartPractice) {
-      this.btnBottomStartPractice.addEventListener('click', () => this.router.navigateTo('practice'));
+      this.btnBottomStartPractice.addEventListener('click', startPracticeHandler);
     }
 
     // Handout Modal Controls

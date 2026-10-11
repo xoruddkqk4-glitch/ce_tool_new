@@ -34,6 +34,37 @@
   box-shadow: 0 0 14px var(--primary-glow);
 }
 
+/* Dark Green 3x1 Action Button beside script tab */
+.primary-btn.btn-dark-green {
+  background: linear-gradient(135deg, #15803d 0%, #166534 100%) !important;
+  border: 1px solid #22c55e !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(22, 101, 52, 0.4) !important;
+  padding: 8px 16px !important;
+  border-radius: var(--radius-pill) !important;
+  font-size: 0.88rem !important;
+  margin-left: 6px;
+  cursor: pointer;
+}
+
+.primary-btn.btn-dark-green:hover:not(:disabled) {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
+  box-shadow: 0 6px 20px rgba(34, 197, 94, 0.5) !important;
+  transform: translateY(-1px);
+}
+
+.btn-start-practice {
+  font-size: 1rem !important;
+  padding: 12px 28px !important;
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%) !important;
+  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.4) !important;
+}
+
+.btn-start-practice:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(6, 182, 212, 0.5) !important;
+}
+
 /* Audio Drop Zone */
 .audio-drop-area {
   border: 2px dashed rgba(6, 182, 212, 0.4);

@@ -1,6 +1,9 @@
-/* CE Tool Master Stylesheet (Unified for file:/// & http:// compatibility) */
+/* ==========================================================================
+   CE Tool 3-Page Architecture - Master Stylesheet (Consolidated)
+   Generated from modular styles/ directory
+   ========================================================================== */
 
-/* --- styles/base/variables.css --- */
+/* --- File: styles/base/variables.css --- */
 /* Color Tokens & Theme Variables */
 :root {
   --bg-primary: #0a0f1d;
@@ -68,7 +71,7 @@
   --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.2);
 }
 
-/* --- styles/base/reset.css --- */
+/* --- File: styles/base/reset.css --- */
 * {
   margin: 0;
   padding: 0;
@@ -109,7 +112,7 @@ input, textarea {
   display: none !important;
 }
 
-/* --- styles/layout/layout.css --- */
+/* --- File: styles/layout/layout.css --- */
 .app-container {
   width: 100%;
   max-width: 980px;
@@ -188,20 +191,23 @@ input, textarea {
   to { transform: rotate(360deg); }
 }
 
-/* --- styles/layout/nav-tabs.css --- */
-/* 3-Page Navigation Tabs & Header */
+/* --- File: styles/layout/nav-tabs.css --- */
+/* 3-Page Navigation Tabs & Header (Sticky Top) */
 .app-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  padding: 10px 20px;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  margin-bottom: 20px;
+  margin-bottom: 6px;
 }
 
 .brand {
@@ -337,7 +343,7 @@ input, textarea {
   transform: translateY(-1px);
 }
 
-/* --- styles/components/audio-player.css --- */
+/* --- File: styles/components/audio-player.css --- */
 /* Audio Player & Waveform Component Styles */
 .audio-player-card {
   display: flex;
@@ -606,7 +612,7 @@ input, textarea {
   color: var(--text-main);
 }
 
-/* --- styles/components/chunk-cards.css --- */
+/* --- File: styles/components/chunk-cards.css --- */
 /* FELS Weak-Form 3D Flip Chunk Cards & Rechunking Styles */
 
 .output-row {
@@ -676,57 +682,44 @@ input, textarea {
   color: #fff;
 }
 
-/* Chunks Container - Strict Single Horizontal Line */
+/* Chunks Container - Strict Single Horizontal Line without horizontal scrollbar */
 .chunks-container,
 .chunks-container.single-line-chunks {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: safe center;
-  gap: 16px;
+  justify-content: center;
+  gap: 10px;
   width: 100%;
-  min-height: 250px;
-  padding: 16px 20px;
-  overflow-x: auto;
+  min-height: 82px;
+  padding: 4px 6px;
+  overflow-x: hidden;
   overflow-y: hidden;
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
+  box-sizing: border-box;
 }
 
 .chunks-container::-webkit-scrollbar {
-  height: 6px;
+  display: none;
+  height: 0;
 }
 
-.chunks-container::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 999px;
-}
-
-.chunks-container::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.4);
-  border-radius: 999px;
-}
-
-.chunks-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.7);
-}
-
-/* 3D Flip Card - Large, Classroom-Friendly, Educational Design */
+/* 3D Flip Card - Compact, Single-Row Educational Design */
 .chunk-card-3d {
   perspective: 1200px;
   position: relative;
-  height: 195px;
-  min-width: 180px;
-  max-width: 420px;
-  flex-shrink: 0;
+  height: 80px;
+  min-height: 80px;
+  flex: 1 1 0px;
+  min-width: 0;
+  max-width: none;
   cursor: pointer;
   user-select: none;
   transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s ease;
 }
 
 .chunk-card-3d:hover {
-  transform: translateY(-4px);
+  transform: translateY(-2px);
 }
 
 .card-inner {
@@ -735,8 +728,8 @@ input, textarea {
   height: 100%;
   transform-style: preserve-3d;
   transition: transform 0.55s cubic-bezier(0.34, 1.4, 0.64, 1);
-  border-radius: 16px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .chunk-card-3d.flipped .card-inner {
@@ -748,15 +741,17 @@ input, textarea {
   inset: 0;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
-  border-radius: 16px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 6px 8px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
   border: 1.5px solid rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   transition: border-color 0.25s ease, box-shadow 0.25s ease;
   overflow: hidden;
   box-sizing: border-box;
@@ -770,7 +765,7 @@ input, textarea {
 
 .chunk-card-3d:hover .card-front {
   border-color: rgba(99, 102, 241, 0.7);
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.25);
 }
 
 /* Back Face: Korean Interpretation */
@@ -785,15 +780,9 @@ input, textarea {
   box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
 }
 
-/* Card Top Header Bar */
+/* Card Top Header Bar (Hidden as requested) */
 .card-top-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 6px;
-  flex-shrink: 0;
+  display: none !important;
 }
 
 .chunk-badge {
@@ -881,18 +870,18 @@ input, textarea {
 
 .fels-blank-input {
   background: rgba(0, 255, 204, 0.08);
-  border: 2px dashed #00ffcc;
-  border-radius: 8px;
+  border: 1.5px dashed #00ffcc;
+  border-radius: 6px;
   color: #00ffcc;
   font-family: inherit;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   font-weight: 800;
   text-align: center;
-  padding: 2px 6px;
-  height: 38px;
-  max-width: 110px;
+  padding: 2px 4px;
+  height: 30px;
+  max-width: 100px;
   box-sizing: border-box;
-  box-shadow: 0 0 12px rgba(0, 255, 204, 0.15);
+  box-shadow: 0 0 10px rgba(0, 255, 204, 0.15);
   transition: all 0.2s ease;
 }
 
@@ -964,16 +953,9 @@ input, textarea {
   overflow: hidden;
 }
 
-/* Static '||' Chunk Divider (Clean separator on Page 2) */
+/* Static '||' Chunk Divider (Removed as requested) */
 .chunk-static-divider {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 195px;
-  padding: 0 6px;
-  flex-shrink: 0;
-  pointer-events: none;
-  user-select: none;
+  display: none !important;
 }
 
 .chunk-static-divider .divider-symbol {
@@ -1050,24 +1032,30 @@ input, textarea {
   user-select: none;
 }
 
-/* --- styles/components/sentence-navigator.css --- */
-/* Bottom Docked Sentence Navigator */
+/* --- File: styles/components/sentence-navigator.css --- */
+/* Top Sticky Sentence Navigator (Positioned under header, immune to scrolling) */
+.sentence-navigator-bar,
 .sentence-navigator-dock {
-  position: fixed;
-  bottom: 0;
+  position: sticky;
+  top: 66px;
   left: 0;
   right: 0;
+  width: 100%;
   background: rgba(10, 15, 29, 0.94);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 10px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-lg);
+  padding: 8px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  z-index: 100;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+  gap: 12px;
+  z-index: 95;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  margin-top: 4px;
+  margin-bottom: 14px;
+  box-sizing: border-box;
 }
 
 .nav-controls-left {
@@ -1210,7 +1198,7 @@ input, textarea {
   height: 16px;
 }
 
-/* --- styles/components/modal-toast.css --- */
+/* --- File: styles/components/modal-toast.css --- */
 /* Modal & Floating Toast Styles */
 
 /* Modal */
@@ -1377,7 +1365,7 @@ input, textarea {
   opacity: 1;
 }
 
-/* --- styles/views/input-view.css --- */
+/* --- File: styles/views/input-view.css --- */
 /* Page 1: Input View Specific Styles */
 
 .mode-selector-bar {
@@ -1412,6 +1400,37 @@ input, textarea {
   border-color: var(--primary);
   color: #fff;
   box-shadow: 0 0 14px var(--primary-glow);
+}
+
+/* Dark Green 3x1 Action Button beside script tab */
+.primary-btn.btn-dark-green {
+  background: linear-gradient(135deg, #15803d 0%, #166534 100%) !important;
+  border: 1px solid #22c55e !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(22, 101, 52, 0.4) !important;
+  padding: 8px 16px !important;
+  border-radius: var(--radius-pill) !important;
+  font-size: 0.88rem !important;
+  margin-left: 6px;
+  cursor: pointer;
+}
+
+.primary-btn.btn-dark-green:hover:not(:disabled) {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
+  box-shadow: 0 6px 20px rgba(34, 197, 94, 0.5) !important;
+  transform: translateY(-1px);
+}
+
+.btn-start-practice {
+  font-size: 1rem !important;
+  padding: 12px 28px !important;
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%) !important;
+  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.4) !important;
+}
+
+.btn-start-practice:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(6, 182, 212, 0.5) !important;
 }
 
 /* Audio Drop Zone */
@@ -2172,46 +2191,51 @@ input, textarea {
   }
 }
 
-/* --- styles/views/practice-view.css --- */
+/* --- File: styles/views/practice-view.css --- */
 /* Page 2: Practice View Specific Styles */
 
 #view-practice {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding-bottom: 90px; /* Space for bottom fixed sentence navigator */
+  gap: 14px;
+  padding-bottom: 24px;
 }
 
-/* 1. Top Section: Chunks Learning Cards Panel (2 Ratio - 440px) */
+/* 1. Top Section: Chunks Learning Cards Panel (Compact Single-Row Height) */
 #rowChunks,
 .practice-card-panel {
   order: 1 !important;
-  min-height: 440px;
-  height: 440px;
+  min-height: auto;
+  height: auto;
+  padding: 10px 16px !important;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 6px;
 }
 
-/* 2. Middle Section: Audio Waveform Player Panel (1 Ratio - 220px, Strictly 2:1 Ratio!) */
+/* 2. Middle Section: Audio Waveform Player Panel (Compact Height with Unobstructed Waveform) */
 #audioPlayerSection,
 .audio-player-card {
   order: 2 !important;
-  min-height: 220px;
-  height: 220px;
-  padding: 12px 18px !important;
+  min-height: auto;
+  height: auto;
+  padding: 10px 16px !important;
   gap: 8px !important;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  margin-top: 4px;
+  box-sizing: border-box;
 }
 
-/* 3. Bottom Section: Natural Korean Translation Panel (Masked by default) */
+/* 3. Bottom Section: Natural Korean Translation Panel (Clearly separated from Audio Player) */
 #rowNatural {
   order: 3 !important;
+  margin-top: 14px !important;
+  padding: 12px 18px !important;
+  box-sizing: border-box;
 }
 
-/* --- styles/views/memorize-view.css --- */
+/* --- File: styles/views/memorize-view.css --- */
 /* Page 3: Memorization View Specific Styles */
 
 #view-memorize {

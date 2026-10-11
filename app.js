@@ -1540,12 +1540,15 @@ class WaveformRenderer {
       return sentence.cachedPeaks;
     }
 
-    if (audioBuffer && sentence.audioStart !== null && sentence.audioEnd !== null) {
+    // 1. If decoded audioBuffer exists, slice real PCM samples
+    if (audioBuffer && !sentence.isSynthesizedAudio) {
       try {
         const rawData = audioBuffer.getChannelData(0);
         const sr = audioBuffer.sampleRate;
-        const startSample = Math.max(0, Math.floor(sentence.audioStart * sr));
-        const endSample = Math.min(rawData.length, Math.floor(sentence.audioEnd * sr));
+        const sttStart = (sentence.audioStart !== null && sentence.audioStart !== undefined) ? sentence.audioStart : 0;
+        const sttEnd = (sentence.audioEnd !== null && sentence.audioEnd !== undefined) ? sentence.audioEnd : audioBuffer.duration;
+        const startSample = Math.max(0, Math.floor(sttStart * sr));
+        const endSample = Math.min(rawData.length, Math.floor(sttEnd * sr));
         const sampleCount = endSample - startSample;
 
         if (sampleCount > totalBars) {
@@ -1563,48 +1566,49 @@ class WaveformRenderer {
             peaks.push(sum);
             if (sum > maxPeak) maxPeak = sum;
           }
-          if (maxPeak > 0) {
-            const normalized = peaks.map(p => Math.min(1, (p / maxPeak) * 0.92));
+          if (maxPeak > 0.001) {
+            const normalized = peaks.map(p => Math.min(1, Math.max(0.05, (p / maxPeak) * 0.95)));
             sentence.cachedPeaks = normalized;
             return normalized;
           }
-          sentence.cachedPeaks = peaks;
-          return peaks;
         }
       } catch (e) {
         console.warn('Sentence audio peak slice error:', e);
       }
     }
 
-    // Word rhythm fallback
+    // 2. Dynamic, realistic speech rhythm fallback
     const words = (sentence.text || '').trim().split(/\s+/).filter(Boolean);
-    if (words.length > 0) {
-      const peaks = [];
-      const barsPerWord = totalBars / words.length;
-      for (let i = 0; i < totalBars; i++) {
-        const posInWord = (i % barsPerWord) / barsPerWord;
-        if (posInWord < 0.80) {
-          const normPos = posInWord / 0.80;
-          const diamondEnv = Math.sin(normPos * Math.PI);
-          const texture = 0.90 + 0.10 * Math.sin(i * 1.5) * Math.cos(i * 0.7);
-          const peak = Math.max(0.14, Math.min(0.96, diamondEnv * texture * 0.88));
-          peaks.push(peak);
-        } else {
-          const baseline = 0.08 + 0.04 * Math.sin(i * 0.8);
-          peaks.push(baseline);
-        }
+    const numWords = Math.max(1, words.length);
+    const barsPerWord = totalBars / numWords;
+    const peaks = [];
+
+    for (let i = 0; i < totalBars; i++) {
+      const wordIdx = Math.min(numWords - 1, Math.floor(i / barsPerWord));
+      const posInWord = (i % barsPerWord) / barsPerWord;
+      const wordStr = words[wordIdx] || 'word';
+
+      // Vary amplitude by word length & stress pattern
+      const isContentWord = wordStr.length >= 4;
+      const stressFactor = isContentWord ? 0.92 : (wordStr.length <= 2 ? 0.42 : 0.68);
+
+      if (posInWord < 0.82) {
+        const normPos = posInWord / 0.82;
+        // Asymmetric bell curve for natural syllable onset and decay
+        const envelope = Math.pow(Math.sin(normPos * Math.PI), 1.2);
+        // Multi-frequency micro-texture (speech harmonics)
+        const harmonics = 0.80 + 0.14 * Math.sin(i * 1.7) * Math.cos(i * 0.85) + 0.06 * Math.sin(i * 3.3);
+        const peak = Math.max(0.12, Math.min(0.96, envelope * harmonics * stressFactor));
+        peaks.push(peak);
+      } else {
+        // Inter-word dip / acoustic pause
+        const pauseFloor = 0.05 + 0.03 * Math.sin(i * 0.6);
+        peaks.push(pauseFloor);
       }
-      sentence.cachedPeaks = peaks;
-      return peaks;
     }
 
-    // Baseline fallback
-    const fallback = [];
-    for (let i = 0; i < totalBars; i++) {
-      const wave = 0.25 + 0.45 * Math.sin(i * 0.12) * Math.cos(i * 0.06);
-      fallback.push(Math.max(0.1, Math.min(0.85, Math.abs(wave))));
-    }
-    return fallback;
+    sentence.cachedPeaks = peaks;
+    return peaks;
   }
 
   draw(params) {
@@ -1715,13 +1719,21 @@ class WaveformRenderer {
     }
 
     // 4. Waveform Bars
-    const bars = activeSentence ? (activeSentence.cachedPeaks || []) : [];
+    let bars = activeSentence ? activeSentence.cachedPeaks : null;
+    if (!bars || bars.length === 0) {
+      if (activeSentence) {
+        bars = WaveformRenderer.extractSentencePeaks(params.audioBuffer, activeSentence, CONSTANTS.TOTAL_WAVEFORM_BARS);
+        activeSentence.cachedPeaks = bars;
+      } else {
+        bars = [];
+      }
+    }
     const totalBars = bars.length || CONSTANTS.TOTAL_WAVEFORM_BARS;
     const barWidth = Math.max(1.8, (width / totalBars) * 0.72);
 
     for (let i = 0; i < totalBars; i++) {
       const bx = (i / totalBars) * width;
-      const peak = bars[i] || 0.12;
+      const peak = bars[i] !== undefined ? bars[i] : 0.12;
       const bh = Math.max(2, peak * (height / 2) * 0.88);
 
       if (bx <= progressX) {
@@ -2305,6 +2317,7 @@ class InputView {
     this.resultsCountBadge = document.getElementById('resultsCountBadge');
     this.btnPrintHandout = document.getElementById('btnPrintHandout');
     this.btnStartPractice = document.getElementById('btnStartPractice');
+    this.btnHeaderStartPractice = document.getElementById('btnHeaderStartPractice');
     this.btnBottomPrintHandout = document.getElementById('btnBottomPrintHandout');
     this.btnBottomStartPractice = document.getElementById('btnBottomStartPractice');
 
@@ -2430,11 +2443,22 @@ class InputView {
     }
 
     // Transition to Page 2
+    const startPracticeHandler = () => {
+      if (!appState.sentenceList || appState.sentenceList.length === 0) {
+        if (this.inputEnglish && this.inputEnglish.value.trim()) {
+          this.handleTranslate();
+        }
+      }
+      this.router.navigateTo('practice');
+    };
     if (this.btnStartPractice) {
-      this.btnStartPractice.addEventListener('click', () => this.router.navigateTo('practice'));
+      this.btnStartPractice.addEventListener('click', startPracticeHandler);
+    }
+    if (this.btnHeaderStartPractice) {
+      this.btnHeaderStartPractice.addEventListener('click', startPracticeHandler);
     }
     if (this.btnBottomStartPractice) {
-      this.btnBottomStartPractice.addEventListener('click', () => this.router.navigateTo('practice'));
+      this.btnBottomStartPractice.addEventListener('click', startPracticeHandler);
     }
 
     // Handout Modal Controls
@@ -3620,16 +3644,7 @@ class PracticeView {
     }
 
     chunks.forEach((chunk, idx) => {
-      // Static '||' Divider between chunk cards on Page 2 (Rechunking is on Page 1)
-      if (idx > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'chunk-static-divider';
-        divider.setAttribute('aria-hidden', 'true');
-        divider.innerHTML = `<span class="divider-symbol">||</span>`;
-        this.chunksContainer.appendChild(divider);
-      }
-
-      // 3D Flip Card
+      // 3D Flip Card (Compact, Headerless, Single-Row)
       const card = document.createElement('div');
       card.className = 'chunk-card-3d';
       card.setAttribute('data-idx', idx);
@@ -3640,16 +3655,6 @@ class PracticeView {
       // FRONT FACE: English / FELS Weak-Form Blanks
       const frontFace = document.createElement('div');
       frontFace.className = 'card-face card-front';
-
-      const frontTop = document.createElement('div');
-      frontTop.className = 'card-top-bar';
-      frontTop.innerHTML = `
-        <span class="chunk-badge">청크 ${idx + 1}</span>
-        <span class="face-flip-hint" title="클릭하여 해석 보기">
-          <span>해석</span>
-          <span class="flip-icon">🔄</span>
-        </span>
-      `;
 
       // Word container for FELS mode
       const felsWrap = document.createElement('div');
@@ -3727,7 +3732,6 @@ class PracticeView {
         origWrap.appendChild(origSpan);
       });
 
-      frontFace.appendChild(frontTop);
       frontFace.appendChild(felsWrap);
       frontFace.appendChild(origWrap);
 
@@ -3735,21 +3739,10 @@ class PracticeView {
       const backFace = document.createElement('div');
       backFace.className = 'card-face card-back';
 
-      const backTop = document.createElement('div');
-      backTop.className = 'card-top-bar';
-      backTop.innerHTML = `
-        <span class="chunk-badge ko-badge">해석 ${idx + 1}</span>
-        <span class="face-flip-hint" title="클릭하여 영어 보기">
-          <span>영어</span>
-          <span class="flip-icon">🔄</span>
-        </span>
-      `;
-
       const koWrap = document.createElement('div');
       koWrap.className = 'ko-chunk-content';
       koWrap.textContent = chunk.ko || '';
 
-      backFace.appendChild(backTop);
       backFace.appendChild(koWrap);
 
       inner.appendChild(frontFace);
@@ -3802,38 +3795,10 @@ class PracticeView {
 
     this.stabilizedWidths = [];
 
-    cards.forEach((card, idx) => {
-      card.style.width = 'auto';
-
-      const felsWrap = card.querySelector('.chunk-tokens-fels');
-      const origWrap = card.querySelector('.chunk-tokens-original');
-      const koWrap = card.querySelector('.ko-chunk-content');
-
-      let wFels = 0;
-      let wOrig = 0;
-      let wKo = 0;
-
-      if (felsWrap) {
-        const prevDisplay = felsWrap.style.display;
-        felsWrap.style.display = 'flex';
-        wFels = felsWrap.scrollWidth + 36;
-        felsWrap.style.display = prevDisplay;
-      }
-
-      if (origWrap) {
-        const prevDisplay = origWrap.style.display;
-        origWrap.style.display = 'flex';
-        wOrig = origWrap.scrollWidth + 36;
-        origWrap.style.display = prevDisplay;
-      }
-
-      if (koWrap) {
-        wKo = koWrap.scrollWidth + 36;
-      }
-
-      const targetW = Math.max(180, Math.min(340, Math.ceil(Math.max(wFels, wOrig, wKo, 180))));
-      this.stabilizedWidths[idx] = targetW;
-      card.style.width = `${targetW}px`;
+    cards.forEach((card) => {
+      card.style.flex = '1 1 0px';
+      card.style.minWidth = '0';
+      card.style.width = '';
     });
   }
 
@@ -4317,6 +4282,7 @@ class PracticeView {
 
     this.waveformRenderer.draw({
       activeSentence: activeStn,
+      audioBuffer: appState.audioBuffer,
       sentenceIndex: appState.activeSentenceIndex,
       totalSentences: appState.sentenceList.length,
       currentTime: this.nativeAudioPlayer.currentTime,
@@ -4586,11 +4552,9 @@ class MemorizeView {
           <div class="memorize-card-inner">
             <div class="memorize-face memorize-face-en">
               <span class="chunk-en-text">${chunk.en}</span>
-              <span class="memorize-card-hint">클릭하여 해석 보기</span>
             </div>
             <div class="memorize-face memorize-face-ko">
               <span class="chunk-ko-text">${chunk.ko}</span>
-              <span class="memorize-card-hint">클릭하여 영어 보기</span>
             </div>
           </div>
         `;

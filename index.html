@@ -48,6 +48,35 @@
       </div>
     </header>
 
+    <!-- ④ [상단 고정 도킹] 문장 자동 분류 네비게이터 (#sentenceNavigator) -->
+    <nav id="sentenceNavigator" class="sentence-navigator-bar hidden">
+      <div class="nav-controls-left">
+        <button id="btnPrevSentence" class="stn-nav-btn" title="이전 문장 (← 키)" type="button">
+          <span>◀ 이전 문장</span>
+          <kbd>←</kbd>
+        </button>
+        <span class="stn-count-indicator">
+          <span id="currentSentenceNum" class="current">1</span> / <span id="totalSentenceNum">1</span>
+        </span>
+        <button id="btnNextSentence" class="stn-nav-btn" title="다음 문장 (→ 키)" type="button">
+          <kbd>→</kbd>
+          <span>다음 문장 ▶</span>
+        </button>
+      </div>
+
+      <!-- Horizontal Sentence Chips Track -->
+      <div id="sentenceChipsTrack" class="sentence-chips-track">
+        <!-- Dynamically populated sentence chips -->
+      </div>
+
+      <div class="nav-settings-right">
+        <label class="auto-advance-label" title="반복 완료 시 다음 문장으로 자동 이동">
+          <input type="checkbox" id="chkAutoAdvance">
+          <span>자동 다음 문장</span>
+        </label>
+      </div>
+    </nav>
+
     <!-- Main Views Container -->
     <main class="main-content">
       
@@ -56,7 +85,7 @@
       <!-- ================================================================= -->
       <div id="view-input" class="view-container">
         <div class="glass-card">
-          <!-- 3 Mode Segmented Tabs -->
+          <!-- 3 Mode Segmented Tabs + 3x1 Action Button on the Right -->
           <div class="mode-selector-bar">
             <button class="mode-tab" data-mode="both" type="button">
               <span>🎧 mp3 음성 + 📝 script</span>
@@ -66,6 +95,14 @@
             </button>
             <button class="mode-tab active" data-mode="text" type="button">
               <span>✍️ script만 (텍스트)</span>
+            </button>
+            <button id="btnTranslate" class="primary-btn btn-dark-green" type="button" title="3x1 해석 및 FELS 생성 (Ctrl+Enter)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12h14"></path>
+                <path d="m12 5 7 7-7 7"></path>
+              </svg>
+              <span id="btnTranslateText">3×1 해석 및 FELS 생성</span>
+              <kbd class="btn-kbd">Ctrl+↵</kbd>
             </button>
           </div>
 
@@ -109,15 +146,10 @@
             </div>
           </div>
 
-          <!-- Action Button -->
+          <!-- Action Button: 2단계 약형 연습 시작 -->
           <div class="input-actions-bar" style="margin-top: 18px;">
-            <button id="btnTranslate" class="primary-btn" type="button">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M5 12h14"></path>
-                <path d="m12 5 7 7-7 7"></path>
-              </svg>
-              <span id="btnTranslateText">3x1 해석 및 FELS 생성</span>
-              <kbd class="btn-kbd">Ctrl+↵</kbd>
+            <button id="btnStartPractice" class="primary-btn btn-start-practice" type="button" title="이 데이터로 2단계 문장 약형 연습 시작">
+              <span>🚀 이 데이터로 2단계 약형 연습 시작 ➔</span>
             </button>
           </div>
         </div>
@@ -139,7 +171,7 @@
               <button id="btnPrintHandout" class="action-pill-btn btn-secondary-pill" type="button" title="학생용 A4 1장 약형드랩 유인물 인쇄 또는 다운로드">
                 <span>📄 A4 유인물 인쇄 / 다운로드</span>
               </button>
-              <button id="btnStartPractice" class="action-pill-btn btn-primary-pill" type="button" title="2단계 문장 약형 연습 시작">
+              <button id="btnHeaderStartPractice" class="action-pill-btn btn-primary-pill" type="button" title="2단계 문장 약형 연습 시작">
                 <span>🚀 2단계 연습 시작 ➔</span>
               </button>
             </div>
@@ -360,35 +392,6 @@
       </div>
 
     </main>
-
-    <!-- ④ [화면 맨 밑단 도킹] 문장 자동 분류 네비게이터 (#sentenceNavigator) -->
-    <footer id="sentenceNavigator" class="sentence-navigator-dock hidden">
-      <div class="nav-controls-left">
-        <button id="btnPrevSentence" class="stn-nav-btn" title="이전 문장 (← 키)" type="button">
-          <span>◀ 이전 문장</span>
-          <kbd>←</kbd>
-        </button>
-        <span class="stn-count-indicator">
-          <span id="currentSentenceNum" class="current">1</span> / <span id="totalSentenceNum">1</span>
-        </span>
-        <button id="btnNextSentence" class="stn-nav-btn" title="다음 문장 (→ 키)" type="button">
-          <kbd>→</kbd>
-          <span>다음 문장 ▶</span>
-        </button>
-      </div>
-
-      <!-- Horizontal Sentence Chips Track -->
-      <div id="sentenceChipsTrack" class="sentence-chips-track">
-        <!-- Dynamically populated sentence chips -->
-      </div>
-
-      <div class="nav-settings-right">
-        <label class="auto-advance-label" title="반복 완료 시 다음 문장으로 자동 이동">
-          <input type="checkbox" id="chkAutoAdvance">
-          <span>자동 다음 문장</span>
-        </label>
-      </div>
-    </footer>
 
     <!-- Native Audio Player Singleton -->
     <audio id="nativeAudioPlayer" preload="auto"></audio>

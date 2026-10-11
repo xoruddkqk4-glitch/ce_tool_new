@@ -26,12 +26,15 @@ export class WaveformRenderer {
       return sentence.cachedPeaks;
     }
 
-    if (audioBuffer && sentence.audioStart !== null && sentence.audioEnd !== null) {
+    // 1. If decoded audioBuffer exists, slice real PCM samples
+    if (audioBuffer && !sentence.isSynthesizedAudio) {
       try {
         const rawData = audioBuffer.getChannelData(0);
         const sr = audioBuffer.sampleRate;
-        const startSample = Math.max(0, Math.floor(sentence.audioStart * sr));
-        const endSample = Math.min(rawData.length, Math.floor(sentence.audioEnd * sr));
+        const sttStart = (sentence.audioStart !== null && sentence.audioStart !== undefined) ? sentence.audioStart : 0;
+        const sttEnd = (sentence.audioEnd !== null && sentence.audioEnd !== undefined) ? sentence.audioEnd : audioBuffer.duration;
+        const startSample = Math.max(0, Math.floor(sttStart * sr));
+        const endSample = Math.min(rawData.length, Math.floor(sttEnd * sr));
         const sampleCount = endSample - startSample;
 
         if (sampleCount > totalBars) {
@@ -49,48 +52,49 @@ export class WaveformRenderer {
             peaks.push(sum);
             if (sum > maxPeak) maxPeak = sum;
           }
-          if (maxPeak > 0) {
-            const normalized = peaks.map(p => Math.min(1, (p / maxPeak) * 0.92));
+          if (maxPeak > 0.001) {
+            const normalized = peaks.map(p => Math.min(1, Math.max(0.05, (p / maxPeak) * 0.95)));
             sentence.cachedPeaks = normalized;
             return normalized;
           }
-          sentence.cachedPeaks = peaks;
-          return peaks;
         }
       } catch (e) {
         console.warn('Sentence audio peak slice error:', e);
       }
     }
 
-    // Word rhythm fallback
+    // 2. Dynamic, realistic speech rhythm fallback
     const words = (sentence.text || '').trim().split(/\s+/).filter(Boolean);
-    if (words.length > 0) {
-      const peaks = [];
-      const barsPerWord = totalBars / words.length;
-      for (let i = 0; i < totalBars; i++) {
-        const posInWord = (i % barsPerWord) / barsPerWord;
-        if (posInWord < 0.80) {
-          const normPos = posInWord / 0.80;
-          const diamondEnv = Math.sin(normPos * Math.PI);
-          const texture = 0.90 + 0.10 * Math.sin(i * 1.5) * Math.cos(i * 0.7);
-          const peak = Math.max(0.14, Math.min(0.96, diamondEnv * texture * 0.88));
-          peaks.push(peak);
-        } else {
-          const baseline = 0.08 + 0.04 * Math.sin(i * 0.8);
-          peaks.push(baseline);
-        }
+    const numWords = Math.max(1, words.length);
+    const barsPerWord = totalBars / numWords;
+    const peaks = [];
+
+    for (let i = 0; i < totalBars; i++) {
+      const wordIdx = Math.min(numWords - 1, Math.floor(i / barsPerWord));
+      const posInWord = (i % barsPerWord) / barsPerWord;
+      const wordStr = words[wordIdx] || 'word';
+
+      // Vary amplitude by word length & stress pattern
+      const isContentWord = wordStr.length >= 4;
+      const stressFactor = isContentWord ? 0.92 : (wordStr.length <= 2 ? 0.42 : 0.68);
+
+      if (posInWord < 0.82) {
+        const normPos = posInWord / 0.82;
+        // Asymmetric bell curve for natural syllable onset and decay
+        const envelope = Math.pow(Math.sin(normPos * Math.PI), 1.2);
+        // Multi-frequency micro-texture (speech harmonics)
+        const harmonics = 0.80 + 0.14 * Math.sin(i * 1.7) * Math.cos(i * 0.85) + 0.06 * Math.sin(i * 3.3);
+        const peak = Math.max(0.12, Math.min(0.96, envelope * harmonics * stressFactor));
+        peaks.push(peak);
+      } else {
+        // Inter-word dip / acoustic pause
+        const pauseFloor = 0.05 + 0.03 * Math.sin(i * 0.6);
+        peaks.push(pauseFloor);
       }
-      sentence.cachedPeaks = peaks;
-      return peaks;
     }
 
-    // Baseline fallback
-    const fallback = [];
-    for (let i = 0; i < totalBars; i++) {
-      const wave = 0.25 + 0.45 * Math.sin(i * 0.12) * Math.cos(i * 0.06);
-      fallback.push(Math.max(0.1, Math.min(0.85, Math.abs(wave))));
-    }
-    return fallback;
+    sentence.cachedPeaks = peaks;
+    return peaks;
   }
 
   draw(params) {
@@ -201,13 +205,21 @@ export class WaveformRenderer {
     }
 
     // 4. Waveform Bars
-    const bars = activeSentence ? (activeSentence.cachedPeaks || []) : [];
+    let bars = activeSentence ? activeSentence.cachedPeaks : null;
+    if (!bars || bars.length === 0) {
+      if (activeSentence) {
+        bars = WaveformRenderer.extractSentencePeaks(params.audioBuffer, activeSentence, CONSTANTS.TOTAL_WAVEFORM_BARS);
+        activeSentence.cachedPeaks = bars;
+      } else {
+        bars = [];
+      }
+    }
     const totalBars = bars.length || CONSTANTS.TOTAL_WAVEFORM_BARS;
     const barWidth = Math.max(1.8, (width / totalBars) * 0.72);
 
     for (let i = 0; i < totalBars; i++) {
       const bx = (i / totalBars) * width;
-      const peak = bars[i] || 0.12;
+      const peak = bars[i] !== undefined ? bars[i] : 0.12;
       const bh = Math.max(2, peak * (height / 2) * 0.88);
 
       if (bx <= progressX) {

@@ -388,16 +388,7 @@ export class PracticeView {
     }
 
     chunks.forEach((chunk, idx) => {
-      // Static '||' Divider between chunk cards on Page 2 (Rechunking is on Page 1)
-      if (idx > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'chunk-static-divider';
-        divider.setAttribute('aria-hidden', 'true');
-        divider.innerHTML = `<span class="divider-symbol">||</span>`;
-        this.chunksContainer.appendChild(divider);
-      }
-
-      // 3D Flip Card
+      // 3D Flip Card (Compact, Headerless, Single-Row)
       const card = document.createElement('div');
       card.className = 'chunk-card-3d';
       card.setAttribute('data-idx', idx);
@@ -408,16 +399,6 @@ export class PracticeView {
       // FRONT FACE: English / FELS Weak-Form Blanks
       const frontFace = document.createElement('div');
       frontFace.className = 'card-face card-front';
-
-      const frontTop = document.createElement('div');
-      frontTop.className = 'card-top-bar';
-      frontTop.innerHTML = `
-        <span class="chunk-badge">청크 ${idx + 1}</span>
-        <span class="face-flip-hint" title="클릭하여 해석 보기">
-          <span>해석</span>
-          <span class="flip-icon">🔄</span>
-        </span>
-      `;
 
       // Word container for FELS mode
       const felsWrap = document.createElement('div');
@@ -495,7 +476,6 @@ export class PracticeView {
         origWrap.appendChild(origSpan);
       });
 
-      frontFace.appendChild(frontTop);
       frontFace.appendChild(felsWrap);
       frontFace.appendChild(origWrap);
 
@@ -503,21 +483,10 @@ export class PracticeView {
       const backFace = document.createElement('div');
       backFace.className = 'card-face card-back';
 
-      const backTop = document.createElement('div');
-      backTop.className = 'card-top-bar';
-      backTop.innerHTML = `
-        <span class="chunk-badge ko-badge">해석 ${idx + 1}</span>
-        <span class="face-flip-hint" title="클릭하여 영어 보기">
-          <span>영어</span>
-          <span class="flip-icon">🔄</span>
-        </span>
-      `;
-
       const koWrap = document.createElement('div');
       koWrap.className = 'ko-chunk-content';
       koWrap.textContent = chunk.ko || '';
 
-      backFace.appendChild(backTop);
       backFace.appendChild(koWrap);
 
       inner.appendChild(frontFace);
@@ -570,38 +539,10 @@ export class PracticeView {
 
     this.stabilizedWidths = [];
 
-    cards.forEach((card, idx) => {
-      card.style.width = 'auto';
-
-      const felsWrap = card.querySelector('.chunk-tokens-fels');
-      const origWrap = card.querySelector('.chunk-tokens-original');
-      const koWrap = card.querySelector('.ko-chunk-content');
-
-      let wFels = 0;
-      let wOrig = 0;
-      let wKo = 0;
-
-      if (felsWrap) {
-        const prevDisplay = felsWrap.style.display;
-        felsWrap.style.display = 'flex';
-        wFels = felsWrap.scrollWidth + 36;
-        felsWrap.style.display = prevDisplay;
-      }
-
-      if (origWrap) {
-        const prevDisplay = origWrap.style.display;
-        origWrap.style.display = 'flex';
-        wOrig = origWrap.scrollWidth + 36;
-        origWrap.style.display = prevDisplay;
-      }
-
-      if (koWrap) {
-        wKo = koWrap.scrollWidth + 36;
-      }
-
-      const targetW = Math.max(180, Math.min(340, Math.ceil(Math.max(wFels, wOrig, wKo, 180))));
-      this.stabilizedWidths[idx] = targetW;
-      card.style.width = `${targetW}px`;
+    cards.forEach((card) => {
+      card.style.flex = '1 1 0px';
+      card.style.minWidth = '0';
+      card.style.width = '';
     });
   }
 
@@ -1085,6 +1026,7 @@ export class PracticeView {
 
     this.waveformRenderer.draw({
       activeSentence: activeStn,
+      audioBuffer: appState.audioBuffer,
       sentenceIndex: appState.activeSentenceIndex,
       totalSentences: appState.sentenceList.length,
       currentTime: this.nativeAudioPlayer.currentTime,
