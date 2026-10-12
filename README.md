@@ -419,7 +419,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 신규 3개 테스트 포함 26/26개 전체 테스트 스위트 100% Pass (16.6초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
-## [2026-10-12 22:04] 업데이트 이력 (Commit ID: pending)
+## [2026-10-12 22:04] 업데이트 이력 (Commit ID: e3d61f8)
 - **수정 내용**:
   1. **프로젝트 단위 음성·청크 완전 통합 패키징 (`.ceproject` 포맷)**:
      - MP3/WAV 음성 파일(바이너리 Base64 Data URL)과 전체 스크립트, 청크 2x2 대칭 편집 데이터(원문, 자연스러운 해석, 청크 구분 `||`, 직독직해 순차 해석, 문장별 오디오 타임스탬프)를 하나의 독립된 `.ceproject` 파일로 완전 패키징.
