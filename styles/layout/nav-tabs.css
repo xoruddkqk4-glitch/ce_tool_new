@@ -59,6 +59,8 @@
   padding: 4px;
   border-radius: var(--radius-pill);
   border: var(--glass-border);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .nav-tab-btn {
@@ -71,6 +73,8 @@
   font-weight: 600;
   color: var(--text-muted);
   transition: var(--transition);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav-tab-btn .tab-step {
@@ -103,18 +107,51 @@
   color: var(--primary-dark);
 }
 
+/* Header Actions - 2x2 Compact Grid (Minimizes horizontal width) */
 .header-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 24px;
+  grid-template-rows: repeat(2, 22px);
+  gap: 3px 5px;
   align-items: center;
-  gap: 10px;
+  flex-shrink: 0;
 }
 
 .engine-badge {
-  font-size: 0.75rem;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 2px 8px;
+  font-size: 0.7rem;
   font-weight: 700;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
+  line-height: 1.15;
+  border-radius: 6px;
   border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: var(--transition);
+}
+
+.engine-badge:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+.engine-badge .badge-icon {
+  font-size: 0.8rem;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+.engine-badge .badge-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .engine-badge.ai-active {
@@ -127,6 +164,31 @@
   background: rgba(16, 185, 129, 0.15);
   border-color: rgba(16, 185, 129, 0.4);
   color: var(--accent-emerald);
+}
+
+/* Header Action Buttons in 2x2 Grid */
+.header-actions #btnSettings {
+  grid-column: 2;
+  grid-row: 1;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  font-size: 0.75rem;
+  border-radius: 4px;
+}
+
+.header-actions #btnThemeToggle {
+  grid-column: 2;
+  grid-row: 2;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  font-size: 0.75rem;
+  border-radius: 4px;
+}
+
+.header-actions .icon-btn:active {
+  transform: scale(0.96);
 }
 
 .icon-btn {

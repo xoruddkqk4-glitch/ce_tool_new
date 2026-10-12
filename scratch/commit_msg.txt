@@ -1,0 +1,18 @@
+docs: update README.md and detailed commit results
+
+[User Request]
+- 버튼이 추가되면서 오른쪽으로 디자인이 밀려 저장 관련 버튼들을 2x2로 가로 길이를 최소화해서 배치 요청
+- 우측 액션 영역도 2x2 배열로 가로 길이를 줄이고 낮과 밤 아이콘을 2행에 배치 요청
+- 웹페이지 탭 제목을 'CE Tool - 약형드랩'으로 수정 요청
+
+[Action & Verification Results]
+- styles/components/project-toolbar.css: 프로젝트 툴바를 2x2 컴팩트 그리드로 재구성 (1행: 불러오기/저장하기, 2행: 새이름으로/상태알약), 툴팁 단축키화, 중앙 탭 nowrap 방어
+- styles/layout/nav-tabs.css: 우측 헤더 액션 영역을 2x2 컴팩트 그리드로 재구성 (1열 1-2행: engineBadge, 2열 1행: btnSettings, 2열 2행: btnThemeToggle)
+- src/ui/settings-modal.js, index.html: engineBadge 2단 구조화(badge-icon, badge-label) 및 뱃지 클릭 모달 오픈 연동
+- index.html: <title>CE Tool - 약형드랩</title> 변경
+- 단독 배포 번들 빌드: styles.css (76.9 KB), app.js (295.5 KB)
+- 정적 문법 검사: npm run check (26개 파일 통과)
+- 단위/통합 테스트: npm test (27/27 test files passed)
+
+[Summary]
+- 헤더 좌/우 2x2 컴팩트 그리드 레이아웃 구축을 통한 가로 여백 최적화 및 웹 탭 제목 최신화 완료

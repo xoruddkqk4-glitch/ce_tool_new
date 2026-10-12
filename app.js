@@ -3778,6 +3778,9 @@ class SettingsModal {
     if (this.btnSettings) {
       this.btnSettings.addEventListener('click', () => this.open());
     }
+    if (this.engineBadge) {
+      this.engineBadge.addEventListener('click', () => this.open());
+    }
     if (this.btnCloseModal) {
       this.btnCloseModal.addEventListener('click', () => this.close());
     }
@@ -3837,11 +3840,15 @@ class SettingsModal {
     const hasKey = aiService.hasKey();
     if (hasKey) {
       // callOpenAI() uses gpt-4o-mini, so the badge must not claim GPT-4o
-      this.engineBadge.textContent = provider === 'gemini' ? '✨ Gemini AI' : '🟢 OpenAI GPT-4o mini';
+      const icon = provider === 'gemini' ? '✨' : '🟢';
+      const label = provider === 'gemini' ? 'Gemini AI' : 'OpenAI';
+      this.engineBadge.innerHTML = `<span class="badge-icon">${icon}</span><span class="badge-label">${label}</span>`;
       this.engineBadge.className = 'engine-badge ai-active';
+      this.engineBadge.title = `AI 엔진 활성: ${label} (클릭하여 설정)`;
     } else {
-      this.engineBadge.textContent = '⚙️ 로컬 규칙 엔진';
+      this.engineBadge.innerHTML = `<span class="badge-icon">⚙️</span><span class="badge-label">규칙 엔진</span>`;
       this.engineBadge.className = 'engine-badge rule-active';
+      this.engineBadge.title = '로컬 규칙 엔진 활성 (클릭하여 AI API 설정)';
     }
   }
 }

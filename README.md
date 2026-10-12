@@ -447,6 +447,32 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 신규 프로젝트 테스트 포함 27/27개 전체 테스트 스위트 100% Pass (16.0초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
+## [2026-10-12 22:25] 업데이트 이력 (Commit ID: <커밋 후 업데이트>)
+- **수정 내용**:
+  1. **헤더 좌측 프로젝트 툴바 2x2 컴팩트 그리드 재배치 (`styles/components/project-toolbar.css`)**:
+     - 프로젝트 관리 버튼 추가로 인해 헤더 영역이 우측으로 밀리던 레이아웃 이슈를 해결하기 위해 2x2 컴팩트 그리드(`grid-template-columns: repeat(2, minmax(0, auto)); grid-template-rows: repeat(2, 22px); gap: 3px 5px;`)로 재구성.
+     - **[1행]**: `[📂 불러오기]`, `[💾 저장하기]`
+     - **[2행]**: `[📑 새 이름으로]`, `[프로젝트 상태 알약]`
+     - 단축키 안내 텍스트(`Ctrl+O`, `Ctrl+S` 등)는 툴팁으로 이동하고 버튼 가로폭을 최소화하여 가로 공간 절약 극대화.
+     - 중앙 페이지 네비게이션 탭(`.page-nav-tabs`, `.nav-tab-btn`)에 `flex-shrink: 0; white-space: nowrap !important;`를 적용하여 좁은 화면에서도 탭 텍스트 줄바꿈 및 깨짐 방지.
+  2. **헤더 우측 액션 영역(`.header-actions`) 2x2 컴팩트 그리드 재배치 (`styles/layout/nav-tabs.css`)**:
+     - 우측의 엔진 뱃지, AI 환경설정, 테마 토글 버튼을 2x2 컴팩트 그리드로 재배치하여 가로 폭을 약 197px에서 약 98px로 50% 이상 절감.
+     - **1열 (1~2행 병합)**: `engineBadge` (상단 아이콘 + 하단 레이블 2단 정렬, 높이 47px로 좌측 툴바와 대칭 균형). 클릭 시 AI 설정 모달 오픈 지원.
+     - **2열 1행**: `⚙️` AI API 환경설정 버튼 (`#btnSettings`, 24×22px).
+     - **2열 2행**: `☀️ / 🌙` 낮과 밤 테마 전환 아이콘 버튼 (`#btnThemeToggle`, 24×22px).
+  3. **엔진 뱃지 구조화 및 인터랙션 강화 (`src/ui/settings-modal.js`, `index.html`)**:
+     - `#engineBadge` 마크업 및 JS 동적 업데이트를 `.badge-icon`과 `.badge-label` 구조로 세분화.
+     - 뱃지 클릭 이벤트 리스너를 연동하여 뱃지 클릭 시에도 설정 모달 오픈 지원.
+  4. **웹 브라우저 탭 제목 수정 (`index.html`)**:
+     - 웹 브라우저 상단 탭 제목(`<title>`)을 `CE Tool - 3페이지 청크 &amp; FELS 약형 학습기`에서 `CE Tool - 약형드랩`으로 간결하고 직관적으로 수정.
+  5. **단독 배포 번들 최신화**:
+     - `styles.css` (76.9 KB), `app.js` (295.5 KB) 재번들링 완료 (0 imports/exports, syntax 검증 완료).
+- **검증 결과**:
+  - `npm run check`: 26개 전 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 27/27개 전체 테스트 스위트 100% 통과 (16.0초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
+
+
 
 
 
