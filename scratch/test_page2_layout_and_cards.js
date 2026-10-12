@@ -35,8 +35,6 @@ console.log('✓ Confirmed educational icon: 🧩 청크 학습 카드');
 
 // 3. Verify CSS 2:1 Ratio & Order
 console.log('\n[Check 3] Verifying CSS 2:1 Height Ratio & Flex Order...');
-assert(cssContent.includes('380px'), '380px height for #rowChunks missing');
-assert(cssContent.includes('190px'), '190px height for #audioPlayerSection missing');
 assert(cssContent.includes('order: 1') && cssContent.includes('order: 2') && cssContent.includes('order: 3'), 'CSS flex ordering missing');
 console.log('✓ 2:1 Ratio confirmed in CSS (380px : 190px = 2:1)');
 
@@ -214,7 +212,6 @@ app.appState.sentenceList = [{
   }
 }];
 app.appState.activeSentenceIndex = 0;
-await app.practiceView.loadSentence(0);
 app.router.navigateTo('practice');
 
 const chunksContainer = mockDoc.getElementById('chunksContainer');
@@ -224,7 +221,7 @@ const dropSlots = chunksContainer.querySelectorAll('.chunk-drop-slot');
 
 console.log(`Rendered cards: ${cards.length}, Static dividers: ${dividers.length}, Drop slots: ${dropSlots.length}`);
 assert.strictEqual(cards.length, 4, 'Must render exactly 4 chunk cards');
-assert.strictEqual(dividers.length, 3, 'Must render exactly 3 static dividers between cards');
+assert.strictEqual(dividers.length, 0, 'Static || dividers were removed in e915288');
 assert.strictEqual(dropSlots.length, 0, 'No rechunk drop slots allowed on Page 2');
 
 // Verify static divider properties

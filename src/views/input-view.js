@@ -16,16 +16,29 @@ import { splitIntoSentences, distributeChunksSequentially, cleanPracticeSentence
 import { aiService } from '../services/ai-service.js';
 import { RuleChunkEngine } from '../core/rule-chunk-engine.js';
 import { decodeAudioFile, getAudioContext } from '../audio/audio-context.js';
-import { detectAudioSentenceBoundaries, detectKoreanIntroDuration } from '../audio/silence-detector.js';
+import { detectAudioSentenceBoundaries } from '../audio/silence-detector.js';
+import { resolveSentenceBoundaries } from '../audio/boundary-utils.js';
+import { playbackController } from '../audio/playback-controller.js';
 import { synthesizeSilentAudioForScript, speakText } from '../audio/tts-synthesizer.js';
 import { getFelsInfo } from '../config/fels-dict.js';
 import { toast } from '../ui/toast-manager.js';
+import { escapeHtml } from '../utils/dom.js';
+
+// Placeholder kept in the 직독직해 slash string for empty chunks so slot positions never shift
+const DIRECT_EMPTY_PLACEHOLDER = '—';
+// Inline base64 audio requests above this size are rejected by Gemini (≈20MB request limit)
+const MAX_AI_INLINE_AUDIO_BYTES = 15 * 1024 * 1024;
+// Some OSes report an empty MIME type on drag & drop, so also accept by extension
+const AUDIO_FILE_EXT_RE = /\.(mp3|wav|m4a|ogg|aac|flac|webm)$/i;
 
 export class InputView {
   constructor(router) {
     this.router = router;
     this.ruleEngine = new RuleChunkEngine();
     this.handoutMode = 'student'; // 'student' | 'teacher'
+    this.isStartingPractice = false;     // re-entrancy guard for the 3 "start practice" buttons
+    this.busySentences = new WeakSet();   // sentences with an in-flight chunk re-translation
+    this.cachedBase64 = null;             // { file, base64 } — avoid re-encoding the same upload
 
     // DOM Elements - Input Form
     this.container = document.getElementById('view-input');
@@ -94,8 +107,9 @@ export class InputView {
 
       this.dropArea.addEventListener('drop', (e) => {
         const files = e.dataTransfer.files;
-        if (files.length > 0 && files[0].type.startsWith('audio/')) {
-          this.handleAudioFile(files[0]);
+        const f = files.length > 0 ? files[0] : null;
+        if (f && ((f.type || '').startsWith('audio/') || AUDIO_FILE_EXT_RE.test(f.name || ''))) {
+          this.handleAudioFile(f);
         } else {
           toast.show('⚠️ 오디오 파일(.mp3, .wav 등)만 업로드 가능합니다.');
         }
@@ -178,13 +192,21 @@ export class InputView {
     }
 
     // Transition to Page 2
-    const startPracticeHandler = () => {
-      if (!appState.sentenceList || appState.sentenceList.length === 0) {
-        if (this.inputEnglish && this.inputEnglish.value.trim()) {
-          this.handleTranslate();
+    // Waits for the translation to finish before navigating (previously raced: Page 2 opened with stale/demo data)
+    const startPracticeHandler = async () => {
+      if (this.isStartingPractice) return;
+      this.isStartingPractice = true;
+      try {
+        if (!appState.sentenceList || appState.sentenceList.length === 0) {
+          if (this.inputEnglish && this.inputEnglish.value.trim()) {
+            const ok = await this.handleTranslate();
+            if (!ok) return;
+          }
         }
+        this.router.navigateTo('practice');
+      } finally {
+        this.isStartingPractice = false;
       }
-      this.router.navigateTo('practice');
     };
     if (this.btnStartPractice) {
       this.btnStartPractice.addEventListener('click', startPracticeHandler);
@@ -220,6 +242,15 @@ export class InputView {
     if (this.btnHandoutTypeTeacher) {
       this.btnHandoutTypeTeacher.addEventListener('click', () => this.openHandoutModal('teacher'));
     }
+
+    // Escape closes the handout modal (settings modal handles its own Escape)
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && this.handoutModal && !this.handoutModal.classList.contains('hidden')) {
+          this.closeHandoutModal();
+        }
+      });
+    }
   }
 
   setMode(mode) {
@@ -234,17 +265,49 @@ export class InputView {
     if (mode === 'both') {
       if (this.audioUploadSection) this.audioUploadSection.classList.remove('hidden');
       if (scriptInputSection) scriptInputSection.classList.remove('hidden');
-      if (this.btnTranslateText) this.btnTranslateText.textContent = '3x1 생성 및 음성 연동';
     } else if (mode === 'audio') {
       if (this.audioUploadSection) this.audioUploadSection.classList.remove('hidden');
       if (scriptInputSection) scriptInputSection.classList.add('hidden');
-      if (this.btnTranslateText) this.btnTranslateText.textContent = '🎙️ 음성에서 스크립트 추출 및 3x1 생성';
     } else {
       // text only
       if (this.audioUploadSection) this.audioUploadSection.classList.add('hidden');
       if (scriptInputSection) scriptInputSection.classList.remove('hidden');
-      if (this.btnTranslateText) this.btnTranslateText.textContent = '3x1 해석 및 FELS 생성';
     }
+    if (this.btnTranslateText) this.btnTranslateText.textContent = this.getTranslateButtonLabel(mode);
+  }
+
+  getTranslateButtonLabel(mode = appState.currentMode) {
+    if (mode === 'both') return '3x1 생성 및 음성 연동';
+    if (mode === 'audio') return '🎙️ 음성에서 스크립트 추출 및 3x1 생성';
+    return '3x1 해석 및 FELS 생성';
+  }
+
+  /** Gemini inline audio is only attempted for real uploads within the size limit. */
+  canSendAudioToAI(file) {
+    return !!file && typeof file.size === 'number' && file.size <= MAX_AI_INLINE_AUDIO_BYTES;
+  }
+
+  shouldUseAiAlignment() {
+    const file = appState.uploadedAudioFile;
+    return !!file && !appState.isSynthesizedAudio && aiService.hasKey() &&
+      aiService.provider === 'gemini' && this.canSendAudioToAI(file);
+  }
+
+  /** Base64-encodes the upload once and reuses it for STT / alignment / re-sync. */
+  async getAudioBase64(file) {
+    if (this.cachedBase64 && this.cachedBase64.file === file) return this.cachedBase64.base64;
+    const base64 = await this.readFileAsBase64(file);
+    this.cachedBase64 = { file, base64 };
+    return base64;
+  }
+
+  /** Shared boundary resolution for handleTranslate() and autoSyncAudioScript(). */
+  async computeSentenceBoundaries(rawSentences) {
+    const file = appState.uploadedAudioFile;
+    const aiAlign = this.shouldUseAiAlignment()
+      ? async () => aiService.alignAudioWithScript(await this.getAudioBase64(file), file.type || 'audio/mp3', rawSentences)
+      : null;
+    return resolveSentenceBoundaries({ audioBuffer: appState.audioBuffer, sentences: rawSentences, aiAlign });
   }
 
   async handleAudioFile(file) {
@@ -276,8 +339,8 @@ export class InputView {
       <div class="audio-file-info">
         <div class="audio-file-icon">🎵</div>
         <div class="audio-file-details">
-          <div class="audio-file-name">${file.name}</div>
-          <div class="audio-file-meta">${formatSize(file.size)} • ${file.type || 'audio/mp3'}</div>
+          <div class="audio-file-name">${escapeHtml(file.name)}</div>
+          <div class="audio-file-meta">${formatSize(file.size)} • ${escapeHtml(file.type || 'audio/mp3')}</div>
         </div>
         <button id="btnRemoveAudio" class="icon-btn remove-btn" title="오디오 삭제">✕</button>
       </div>
@@ -312,25 +375,35 @@ export class InputView {
     toast.show('오디오 파일이 제거되었습니다.');
   }
 
+  /**
+   * @returns {Promise<boolean>} true when appState.sentenceList was (re)built successfully
+   */
   async handleTranslate() {
+    // Ctrl+Enter / preset chips can fire while a request is already running (button is disabled then)
+    if (this.btnTranslate && this.btnTranslate.disabled === true) return false;
     const mode = appState.currentMode;
 
     // Mode 2: Audio Only (STT)
     if (mode === 'audio') {
       if (!appState.uploadedAudioFile) {
         toast.show('⚠️ 먼저 MP3 음성 파일을 선택 또는 드래그하여 업로드하세요.');
-        return;
+        return false;
       }
       if (!aiService.hasKey()) {
         toast.show('⚠️ 음성 인식(STT)을 위해 우측 상단 설정에서 AI API 키를 입력하세요.');
         const btnSettings = document.getElementById('btnSettings');
         if (btnSettings) btnSettings.click();
-        return;
+        return false;
+      }
+      if (!this.canSendAudioToAI(appState.uploadedAudioFile)) {
+        toast.show('⚠️ 15MB를 초과하는 음성 파일은 AI 음성 인식을 지원하지 않습니다. 파일을 나눠 업로드하거나 스크립트를 직접 입력하세요.');
+        return false;
       }
 
+      let success = false;
       this.setLoading(true);
       try {
-        const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
+        const base64Audio = await this.getAudioBase64(appState.uploadedAudioFile);
         const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
         const aiResult = await aiService.transcribeAndTranslateAudio(base64Audio, mimeType);
 
@@ -380,6 +453,7 @@ export class InputView {
 
         appState.scriptText = scriptText;
         appState.setSentenceList(sentenceList);
+        success = true; // data is ready even if a later UI render step fails
 
         // Render Results Panel on Page 1
         this.renderParsedResults({ scrollToSection: true });
@@ -390,7 +464,7 @@ export class InputView {
       } finally {
         this.setLoading(false);
       }
-      return;
+      return success;
     }
 
     // Mode 1 (Both) or Mode 3 (Text)
@@ -398,9 +472,10 @@ export class InputView {
     if (!text) {
       toast.show('⚠️ 해석할 영어 스크립트를 먼저 입력하거나 붙여넣으세요.');
       if (this.inputEnglish) this.inputEnglish.focus();
-      return;
+      return false;
     }
 
+    let success = false;
     this.setLoading(true);
 
     try {
@@ -427,50 +502,8 @@ export class InputView {
       let rawSentences = splitIntoSentences(text, { filterKorean: true });
       if (rawSentences.length === 0) rawSentences.push(cleanPracticeSentence(text) || text);
 
-      let boundaries = null;
-      // If authentic MP3 uploaded and Gemini key available, attempt AI audio-script alignment
-      if (appState.uploadedAudioFile && !appState.isSynthesizedAudio && aiService.hasKey() && aiService.provider === 'gemini') {
-        try {
-          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
-          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
-          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
-          if (alignments && alignments.length === rawSentences.length) {
-            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
-          }
-        } catch (alignErr) {
-          console.warn('AI audio alignment fallback:', alignErr);
-        }
-      }
-
-      if (!boundaries) {
-        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
-      } else if (appState.audioBuffer && boundaries.length > 0) {
-        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
-        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
-        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
-          boundaries[0].start = introSec;
-        }
-      }
-
-      // Safety extension: ensure each sentence end has generous headroom (+0.9s ~ +1.0s)
-      // and is NEVER cut off prematurely by 1 second
-      if (boundaries && boundaries.length === rawSentences.length) {
-        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
-        for (let i = 0; i < boundaries.length; i++) {
-          const b = boundaries[i];
-          if (b.end !== null) {
-            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
-              ? boundaries[i + 1].start
-              : totalDuration;
-            if (nextStart !== null && nextStart > b.start) {
-              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
-              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
-            } else if (totalDuration !== null) {
-              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
-            }
-          }
-        }
-      }
+      // AI alignment (optional) → VAD fallback → Korean intro check → end padding (see audio/boundary-utils.js)
+      const boundaries = await this.computeSentenceBoundaries(rawSentences);
 
       // Parallel fetch natural Korean translation for all sentences
       const naturalTranslations = await Promise.all(
@@ -518,6 +551,7 @@ export class InputView {
 
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
+      success = true; // data is ready even if a later UI render step fails
 
       // Render Results Panel on Page 1
       this.renderParsedResults({ scrollToSection: true });
@@ -528,6 +562,7 @@ export class InputView {
     } finally {
       this.setLoading(false);
     }
+    return success;
   }
 
   /**
@@ -542,48 +577,9 @@ export class InputView {
     toast.show('⚡ 음성과 스크립트 자동 Sync 계산 중...');
     try {
       const rawSentences = appState.sentenceList.map(s => s.text);
-      let boundaries = null;
-
-      if (aiService.hasKey() && aiService.provider === 'gemini' && !appState.isSynthesizedAudio) {
-        try {
-          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
-          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
-          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
-          if (alignments && alignments.length === rawSentences.length) {
-            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
-          }
-        } catch (aiErr) {
-          console.warn('AI audio alignment fallback:', aiErr);
-        }
-      }
-
-      if (!boundaries) {
-        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
-      } else if (appState.audioBuffer && boundaries.length > 0) {
-        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
-        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
-        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
-          boundaries[0].start = introSec;
-        }
-      }
+      const boundaries = await this.computeSentenceBoundaries(rawSentences);
 
       if (boundaries && boundaries.length === appState.sentenceList.length) {
-        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
-        for (let i = 0; i < boundaries.length; i++) {
-          const b = boundaries[i];
-          if (b.end !== null) {
-            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
-              ? boundaries[i + 1].start
-              : totalDuration;
-            if (nextStart !== null && nextStart > b.start) {
-              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
-              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
-            } else if (totalDuration !== null) {
-              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
-            }
-          }
-        }
-
         appState.sentenceList.forEach((stn, i) => {
           stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
@@ -1011,17 +1007,21 @@ export class InputView {
         });
       }
 
+      // Enter only commits the field (blur → single 'change' event). Previously Enter AND change both ran the
+      // update, firing duplicate AI requests. isComposing guard keeps Korean IME composition intact.
+      const commitOnEnter = (inputEl) => (e) => {
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          if (typeof inputEl.blur === 'function') inputEl.blur();
+        }
+      };
+
       // 7. Hook up Script Input
       if (scriptInput) {
         scriptInput.addEventListener('change', () => {
           this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
         });
-        scriptInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
-          }
-        });
+        scriptInput.addEventListener('keydown', commitOnEnter(scriptInput));
       }
 
       // 8. Hook up Chunk Text Input (English ||)
@@ -1029,25 +1029,16 @@ export class InputView {
         chunkInput.addEventListener('change', () => {
           this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
         });
-        chunkInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
-          }
-        });
+        chunkInput.addEventListener('keydown', commitOnEnter(chunkInput));
       }
 
       // 9. Hook up Direct Chunk Input (Korean ||)
       if (directInput) {
         directInput.addEventListener('change', () => {
-          this.updateChunksFromDirectInput(stn, directInput.value);
+          const ok = this.updateChunksFromDirectInput(stn, directInput.value);
+          if (!ok) directInput.value = this.getDirectChunkString(stn.result?.chunks);
         });
-        directInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            this.updateChunksFromDirectInput(stn, directInput.value);
-          }
-        });
+        directInput.addEventListener('keydown', commitOnEnter(directInput));
       }
 
       // 10. Hook up Natural Korean Input
@@ -1164,12 +1155,19 @@ export class InputView {
         dividerSlot.textContent = isBoundary ? '||' : '+';
 
         dividerSlot.addEventListener('click', async () => {
+          // Ignore clicks while this sentence's chunk translation is still in flight (prevents out-of-order overwrite)
+          if (this.busySentences.has(stn)) return;
           if (boundaryWordIndices.has(idx)) {
             boundaryWordIndices.delete(idx);
           } else {
             boundaryWordIndices.add(idx);
           }
-          await this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
+          this.busySentences.add(stn);
+          try {
+            await this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
+          } finally {
+            this.busySentences.delete(stn);
+          }
           if (chunkInput) {
             chunkInput.value = this.getChunkString(stn.result.chunks);
           }
@@ -1224,6 +1222,7 @@ export class InputView {
   async updateChunksFromTextInput(stn, chunkedText, directInput, track) {
     const parts = (chunkedText || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!parts.length) return;
+    if (this.busySentences.has(stn)) return;
 
     const newChunks = parts.map(part => {
       const existing = (stn.result?.chunks || []).find(c => c.en.trim() === part);
@@ -1237,6 +1236,7 @@ export class InputView {
     stn.result.chunks = newChunks;
 
     if (stn.result.natural) {
+      this.busySentences.add(stn);
       try {
         const directKoChunks = await aiService.generateDirectChunks(newChunks, stn.result.natural, stn.text);
         if (directKoChunks && directKoChunks.length === newChunks.length) {
@@ -1248,6 +1248,8 @@ export class InputView {
         }
       } catch (e) {
         this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+      } finally {
+        this.busySentences.delete(stn);
       }
     }
 
@@ -1263,20 +1265,30 @@ export class InputView {
     toast.show('✂️ 청크 구분이 저장되었습니다.');
   }
 
+  /**
+   * Applies the "직독직해" input (ko1 || ko2 || ...) slot-by-slot.
+   * Empty slots are written as DIRECT_EMPTY_PLACEHOLDER by getDirectChunkString(), so positions never shift.
+   * @returns {boolean} false when the slot count does not match the chunk count (nothing is changed)
+   */
   updateChunksFromDirectInput(stn, directStr) {
-    const parts = (directStr || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!stn.result) stn.result = {};
     if (!stn.result.chunks) stn.result.chunks = [];
+    const chunks = stn.result.chunks;
+    const parts = (directStr || '').split('||').map(p => p.trim());
 
-    stn.result.chunks.forEach((chunk, i) => {
-      if (i < parts.length) {
-        chunk.ko = parts[i];
-      }
+    if (parts.length !== chunks.length) {
+      toast.show(`⚠️ 직독직해 칸 수(${parts.length})가 청크 수(${chunks.length})와 다릅니다. '||' 개수를 맞춰주세요.`);
+      return false;
+    }
+
+    chunks.forEach((chunk, i) => {
+      chunk.ko = parts[i] === DIRECT_EMPTY_PLACEHOLDER ? '' : parts[i];
     });
 
-    stn.result.chunk_text = stn.result.chunks.map(c => c.ko).join(' || ');
-    stn.result.direct = stn.result.chunks.map(c => c.ko).join(' / ');
+    stn.result.chunk_text = chunks.map(c => c.ko).join(' || ');
+    stn.result.direct = chunks.map(c => c.ko).join(' / ');
     toast.show('🧩 직독직해 해석이 저장되었습니다.');
+    return true;
   }
 
   async updateSentenceScript(stn, newText, chunkInput, directInput, naturalInput, track) {
@@ -1328,13 +1340,7 @@ export class InputView {
   }
 
   escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    return escapeHtml(str); // delegates to the shared utils/dom.js implementation
   }
 
   getChunkString(chunks) {
@@ -1342,9 +1348,12 @@ export class InputView {
     return chunks.map(c => (c.en || '').trim()).filter(Boolean).join(' || ');
   }
 
+  /** One slot per chunk (empty → placeholder) so updateChunksFromDirectInput() can map slots 1:1. */
   getDirectChunkString(chunks) {
     if (!chunks || !chunks.length) return '';
-    return chunks.map(c => (c.ko || '').trim()).filter(Boolean).join(' || ');
+    const slots = chunks.map(c => (c.ko || '').trim());
+    if (slots.every(s => !s)) return '';
+    return slots.map(s => s || DIRECT_EMPTY_PLACEHOLDER).join(' || ');
   }
 
   playOrSpeakSentence(stn, speakBtn) {
@@ -1356,34 +1365,20 @@ export class InputView {
       }, 1500);
     }
 
-    // 1. If authentic uploaded audio exists, play slice
-    if (appState.uploadedAudioUrl && this.nativeAudioPlayer && !appState.isSynthesizedAudio) {
-      if (!this.nativeAudioPlayer.src || this.nativeAudioPlayer.src !== appState.uploadedAudioUrl) {
-        this.nativeAudioPlayer.src = appState.uploadedAudioUrl;
-      }
-      if (stn.audioStart !== null && stn.audioEnd !== null) {
-        try {
-          this.nativeAudioPlayer.currentTime = stn.audioStart;
-          this.nativeAudioPlayer.play().catch(e => {
+    // 1. If authentic uploaded audio exists, play the slice through the shared playback controller
+    //    (owner 'input' → the Practice looper ignores this playback; segment end is enforced by rAF)
+    if (appState.uploadedAudioUrl && !appState.isSynthesizedAudio &&
+        stn.audioStart !== null && stn.audioEnd !== null) {
+      try {
+        playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+        playbackController.playSegment(stn.audioStart, stn.audioEnd, { owner: 'input' })
+          .catch(e => {
             console.warn('Audio play error, falling back to TTS:', e);
             speakText(stn.text, 'en-US');
           });
-
-          if (this.currentStopHandler) {
-            this.nativeAudioPlayer.removeEventListener('timeupdate', this.currentStopHandler);
-          }
-          this.currentStopHandler = () => {
-            if (this.nativeAudioPlayer.currentTime >= stn.audioEnd) {
-              this.nativeAudioPlayer.pause();
-              this.nativeAudioPlayer.removeEventListener('timeupdate', this.currentStopHandler);
-              this.currentStopHandler = null;
-            }
-          };
-          this.nativeAudioPlayer.addEventListener('timeupdate', this.currentStopHandler);
-          return;
-        } catch (e) {
-          console.warn('Audio playback error, fallback to TTS:', e);
-        }
+        return;
+      } catch (e) {
+        console.warn('Audio playback error, fallback to TTS:', e);
       }
     }
 
@@ -1444,12 +1439,12 @@ export class InputView {
         const fels = getFelsInfo(w);
         if (fels) {
           if (isTeacher) {
-            return `<span class="handout-fels-blank answer-mode">[ ${w} ]</span>`;
+            return `<span class="handout-fels-blank answer-mode">[ ${escapeHtml(w)} ]</span>`;
           } else {
             return `<span class="handout-fels-blank">[&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]</span>`;
           }
         } else {
-          return `<span>${w}</span>`;
+          return `<span>${escapeHtml(w)}</span>`;
         }
       });
 
@@ -1476,7 +1471,7 @@ export class InputView {
 
       const chunkedKoSegments = chunks.map(c => {
         const koText = (c.ko || '').trim() || (c.en || '').trim();
-        return `<span class="handout-chunk-box">[ ${koText} ]</span>`;
+        return `<span class="handout-chunk-box">[ ${escapeHtml(koText)} ]</span>`;
       });
       const chunkedKoHtml = chunkedKoSegments.join('<span class="handout-chunk-divider"> || </span>');
 
@@ -1486,7 +1481,7 @@ export class InputView {
             <span class="handout-stn-num">[${String(idx + 1).padStart(2, '0')}]</span>
             <div class="handout-direct-ko">${chunkedKoHtml}</div>
           </div>
-          ${isTeacher ? `<div class="handout-teacher-en-ref"><strong>[영문 정답]:</strong> ${stn.text}</div>` : ''}
+          ${isTeacher ? `<div class="handout-teacher-en-ref"><strong>[영문 정답]:</strong> ${escapeHtml(stn.text)}</div>` : ''}
           <div class="handout-speaking-check-row">
             <span class="speaking-check-label">🗣️ 말하기 훈련 체크:</span>
             <span class="check-box-pill">☐ 1차: 청크별 낭독</span>
@@ -1496,6 +1491,8 @@ export class InputView {
         </div>
       `;
     });
+
+    const handoutYear = new Date().getFullYear();
 
     this.printableSheet.innerHTML = `
       <!-- ========================================================================= -->
@@ -1522,7 +1519,7 @@ export class InputView {
               <tr>
                 <td style="width: 55px; height: 22px;"></td>
                 <td style="width: 65px;"></td>
-                <td style="width: 75px; font-size: 8pt;">2026. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
+                <td style="width: 75px; font-size: 8pt;">${handoutYear}. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
                 <td style="width: 60px; font-weight: 700;">&nbsp;&nbsp;&nbsp;&nbsp; / 100</td>
               </tr>
             </table>
@@ -1584,7 +1581,7 @@ export class InputView {
               <tr>
                 <td style="width: 55px; height: 22px;"></td>
                 <td style="width: 65px;"></td>
-                <td style="width: 75px; font-size: 8pt;">2026. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
+                <td style="width: 75px; font-size: 8pt;">${handoutYear}. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
                 <td style="width: 60px; font-weight: 700; font-size: 8pt;">[ &nbsp; 통과 &nbsp; ]</td>
               </tr>
             </table>
@@ -1715,30 +1712,20 @@ export class InputView {
     });
   }
 
+  /**
+   * Toggles the busy state WITHOUT rebuilding the button markup.
+   * (The previous innerHTML rewrite detached this.btnTranslateText, so later setMode() label updates were lost.)
+   */
   setLoading(isLoading) {
     if (!this.btnTranslate) return;
-    if (isLoading) {
-      this.btnTranslate.disabled = true;
-      this.btnTranslate.innerHTML = `
-        <svg class="spin-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
-        </svg>
-        <span>처리 중...</span>
-      `;
-    } else {
-      this.btnTranslate.disabled = false;
-      const mode = appState.currentMode;
-      const btnLabel = mode === 'audio' 
-        ? '🎙️ 음성에서 스크립트 추출 및 3x1 생성' 
-        : (mode === 'both' ? '3x1 생성 및 음성 연동' : '3x1 해석 및 FELS 생성');
-      this.btnTranslate.innerHTML = `
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 12h14"></path>
-          <path d="m12 5 7 7-7 7"></path>
-        </svg>
-        <span id="btnTranslateText">${btnLabel}</span>
-        <kbd class="btn-kbd">Ctrl+↵</kbd>
-      `;
+    this.btnTranslate.disabled = !!isLoading;
+    if (this.btnTranslateText) {
+      this.btnTranslateText.textContent = isLoading ? '처리 중...' : this.getTranslateButtonLabel(appState.currentMode);
+    }
+    const icon = typeof this.btnTranslate.querySelector === 'function' ? this.btnTranslate.querySelector('svg') : null;
+    if (icon && icon.classList) {
+      if (isLoading) icon.classList.add('spin-icon');
+      else icon.classList.remove('spin-icon');
     }
   }
 

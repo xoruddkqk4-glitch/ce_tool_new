@@ -14,9 +14,9 @@ import { appState } from '../core/app-state.js';
 import { getFelsInfo } from '../config/fels-dict.js';
 import { RuleChunkEngine } from '../core/rule-chunk-engine.js';
 import { aiService } from '../services/ai-service.js';
-import { calculateUniformBlankWidth } from '../core/fels-engine.js';
 import { WaveformRenderer } from '../audio/waveform-renderer.js';
 import { LooperEngine, formatPreciseTime, formatTime } from '../audio/looper-engine.js';
+import { playbackController } from '../audio/playback-controller.js';
 import { speakText } from '../audio/tts-synthesizer.js';
 import { toast } from '../ui/toast-manager.js';
 import { splitIntoSentences, distributeChunksSequentially } from '../core/text-splitter.js';
@@ -86,8 +86,9 @@ export class PracticeView {
     this.currentMouseX = null;
     this.draggingDividerIndex = null;
     this.selectedDividerForMove = null;
-    this.stabilizedWidths = [];
     this.felsBlanks = [];
+    // Last AppState.dataVersion seen by onActivated (fresh data → FELS mode default)
+    this.lastSeenDataVersion = -1;
 
     this.initLooperCallbacks();
     this.initEvents();
@@ -117,8 +118,25 @@ export class PracticeView {
       },
       onPlayStateChange: (isPlaying) => {
         this.updatePlayPauseIcon(isPlaying);
+      },
+      onLoopRestart: () => {
+        // Synthesized sessions play a silent WAV; re-speak the sentence on every loop repeat
+        if (appState.isSynthesizedAudio) {
+          const activeStn = appState.getActiveSentence();
+          if (activeStn) speakText(activeStn.text);
+        }
       }
     });
+  }
+
+  /**
+   * Page 2 looper/sentence-boundary enforcement is only valid while Page 2 is visible AND
+   * Page 2 started the current playback. Prevents pausing Page 1 / Page 3 segment playback.
+   */
+  isLooperActive() {
+    const onPracticePage = !this.router || typeof this.router.getCurrentPage !== 'function'
+      || this.router.getCurrentPage() === 'practice';
+    return onPracticePage && playbackController.isOwnedBy('practice');
   }
 
   initEvents() {
@@ -130,7 +148,7 @@ export class PracticeView {
 
       this.nativeAudioPlayer.addEventListener('timeupdate', () => {
         this.updateAudioProgress();
-        this.looperEngine.checkBoundary();
+        if (this.isLooperActive()) this.looperEngine.checkBoundary();
         this.drawWaveform();
       });
 
@@ -225,14 +243,7 @@ export class PracticeView {
       toggleRowNaturalBtn.addEventListener('click', () => this.toggleRowNaturalVisibility());
     }
 
-    // Copy & Speak Row buttons
-    document.querySelectorAll('.copy-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const target = btn.getAttribute('data-target');
-        this.copyResult(target, btn);
-      });
-    });
-
+    // Speak Row buttons
     document.querySelectorAll('.speak-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const target = btn.getAttribute('data-target');
@@ -281,16 +292,24 @@ export class PracticeView {
     if (!this.waveformCanvas) return;
     const canvas = this.waveformCanvas;
 
-    canvas.addEventListener('mousedown', (e) => {
+    // Pointer Events: one code path for mouse, touch (tablets / interactive whiteboards) and pen.
+    // setPointerCapture keeps move/up events on the canvas even when the pointer leaves it.
+    canvas.addEventListener('pointerdown', (e) => {
       if (!this.nativeAudioPlayer.src) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       const rect = canvas.getBoundingClientRect();
       this.isCanvasMouseDown = true;
       this.dragStartX = e.clientX - rect.left;
       this.currentMouseX = this.dragStartX;
       this.isRangeDragging = false;
+      if (typeof canvas.setPointerCapture === 'function') {
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch (err) {}
+      }
     });
 
-    window.addEventListener('mousemove', (e) => {
+    canvas.addEventListener('pointermove', (e) => {
       if (!this.isCanvasMouseDown || !this.waveformCanvas) return;
       const rect = this.waveformCanvas.getBoundingClientRect();
       this.currentMouseX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
@@ -300,7 +319,15 @@ export class PracticeView {
       }
     });
 
-    window.addEventListener('mouseup', (e) => {
+    canvas.addEventListener('pointercancel', () => {
+      this.isCanvasMouseDown = false;
+      this.isRangeDragging = false;
+      this.dragStartX = null;
+      this.currentMouseX = null;
+      this.drawWaveform();
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
       if (!this.isCanvasMouseDown) return;
       const rect = this.waveformCanvas.getBoundingClientRect();
       const curX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
@@ -390,10 +417,9 @@ export class PracticeView {
       targetStn.cachedPeaks = WaveformRenderer.extractSentencePeaks(appState.audioBuffer, targetStn);
     }
 
-    // Synchronize Audio Player Source
-    if (appState.uploadedAudioUrl && (!this.nativeAudioPlayer.src || this.nativeAudioPlayer.src !== appState.uploadedAudioUrl)) {
-      this.nativeAudioPlayer.src = appState.uploadedAudioUrl;
-      this.nativeAudioPlayer.muted = appState.isSynthesizedAudio;
+    // Synchronize Audio Player Source (muted flag is ALWAYS re-applied → no silent real MP3)
+    if (appState.uploadedAudioUrl) {
+      playbackController.setSource(appState.uploadedAudioUrl, { muted: appState.isSynthesizedAudio });
     }
 
     // Update Natural Korean Text (Keep hidden by default)
@@ -575,23 +601,6 @@ export class PracticeView {
     }, 50);
   }
 
-  translateCustomChunk(chunkEn, originalChunks = []) {
-    const cleanEn = chunkEn.trim();
-    if (!cleanEn) return '';
-    const existing = (originalChunks || []).find(c => c.en && c.en.trim().toLowerCase() === cleanEn.toLowerCase());
-    if (existing && existing.ko) return existing.ko;
-
-    try {
-      const parsed = this.ruleEngine.process(cleanEn);
-      if (parsed && parsed.chunks && parsed.chunks.length > 0) {
-        return parsed.chunks.map(c => c.ko).join(' ');
-      }
-      if (parsed && parsed.natural) return parsed.natural;
-    } catch (e) {}
-
-    return this.ruleEngine.translatePhrase(cleanEn) || cleanEn;
-  }
-
   findNextBlank(currentInput) {
     const idx = this.felsBlanks.findIndex(b => b.inputEl === currentInput);
     if (idx !== -1 && idx + 1 < this.felsBlanks.length) {
@@ -603,8 +612,6 @@ export class PracticeView {
   computeAndApplyStabilizedWidths() {
     const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
     if (!cards.length) return;
-
-    this.stabilizedWidths = [];
 
     cards.forEach((card) => {
       const felsWrap = card.querySelector('.chunk-tokens-fels');
@@ -658,6 +665,7 @@ export class PracticeView {
     }
 
     if (this.nativeAudioPlayer.paused) {
+      playbackController.claim('practice');
       const activeStn = appState.getActiveSentence();
       const stnStart = (activeStn && activeStn.audioStart !== null) ? activeStn.audioStart : 0;
       const stnEnd = (activeStn && activeStn.audioEnd !== null) ? activeStn.audioEnd : this.nativeAudioPlayer.duration;
@@ -746,6 +754,7 @@ export class PracticeView {
     appState.setLoopRange(start, end);
     this.updateLoopBadge();
 
+    playbackController.claim('practice');
     this.nativeAudioPlayer.currentTime = appState.loopStart;
     this.nativeAudioPlayer.play().then(() => {
       this.updatePlayPauseIcon(true);
@@ -779,6 +788,7 @@ export class PracticeView {
       this.looperEngine.reset();
       this.updateLoopBadge();
 
+      playbackController.claim('practice');
       this.nativeAudioPlayer.currentTime = appState.loopStart;
       this.nativeAudioPlayer.play().then(() => {
         this.updatePlayPauseIcon(true);
@@ -823,7 +833,7 @@ export class PracticeView {
     this.updateFelsModeButtonUI();
 
     const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
-    cards.forEach((card, idx) => {
+    cards.forEach((card) => {
       const felsWrap = card.querySelector('.chunk-tokens-fels');
       const origWrap = card.querySelector('.chunk-tokens-original');
 
@@ -839,10 +849,6 @@ export class PracticeView {
           origWrap.classList.remove('hidden');
           origWrap.style.display = 'inline-flex';
         }
-      }
-
-      if (this.stabilizedWidths[idx]) {
-        card.style.width = `${this.stabilizedWidths[idx]}px`;
       }
     });
 
@@ -1124,7 +1130,7 @@ export class PracticeView {
     const loop = () => {
       if (!this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
         this.updateAudioProgress();
-        this.looperEngine.checkBoundary();
+        if (this.isLooperActive()) this.looperEngine.checkBoundary();
         this.drawWaveform();
         requestAnimationFrame(loop);
       } else {
@@ -1158,28 +1164,6 @@ export class PracticeView {
     });
   }
 
-  copyResult(target, btn) {
-    const activeStn = appState.getActiveSentence();
-    if (!activeStn) return;
-
-    let text = '';
-    if (target === 'en') {
-      text = activeStn.text || '';
-    } else if (target === 'chunk') {
-      text = activeStn.result?.chunks ? activeStn.result.chunks.map(c => c.ko).join(' || ') : '';
-    } else if (target === 'natural') {
-      text = activeStn.result?.natural || '';
-    }
-
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      const orig = btn.innerHTML;
-      btn.innerHTML = '<span>복사됨!</span>';
-      setTimeout(() => { btn.innerHTML = orig; }, 1500);
-      toast.show('📋 클립보드에 복사되었습니다.');
-    });
-  }
-
   speakResult(target) {
     const activeStn = appState.getActiveSentence();
     if (!activeStn) return;
@@ -1197,6 +1181,8 @@ export class PracticeView {
   }
 
   onActivated() {
+    playbackController.claim('practice');
+
     // 1. If sentenceList is empty, seed with default sample sentence
     if (!appState.sentenceList || appState.sentenceList.length === 0) {
       const defaultScript = "I went to school yesterday. She bought a new book at the bookstore.";
@@ -1212,14 +1198,23 @@ export class PracticeView {
       appState.setSentenceList(list);
     }
 
-    // 2. Default state: Sentence 1 + FELS Weak-Form mode
-    appState.activeSentenceIndex = 0;
-    appState.isFelsMode = true;
+    // 2. Default state policy:
+    //    - Fresh data (new sentence list since the last visit) → FELS Weak-Form mode.
+    //      (AppState.setSentenceList() already reset activeSentenceIndex to S1.)
+    //    - Revisit (e.g. Page 3 "S3 ↗" jump, returning from Page 3) → keep the current sentence.
+    const isFreshData = this.lastSeenDataVersion !== appState.dataVersion;
+    this.lastSeenDataVersion = appState.dataVersion;
+    if (isFreshData) {
+      appState.isFelsMode = true;
+    }
+    const lastIdx = appState.sentenceList.length - 1;
+    const startIdx = Math.min(Math.max(0, appState.activeSentenceIndex || 0), lastIdx);
+    appState.activeSentenceIndex = startIdx;
     this.updateFelsModeButtonUI();
 
-    // 3. Render sentence navigator & load sentence 1
+    // 3. Render sentence navigator & load the active sentence
     this.renderSentenceNavigator();
-    this.loadSentence(0);
+    this.loadSentence(startIdx);
 
     // 4. Ensure Waveform Canvas is drawn with proper visible dimensions
     this.drawWaveform();

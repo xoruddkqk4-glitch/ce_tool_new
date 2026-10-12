@@ -13,7 +13,9 @@
 import { appState } from '../core/app-state.js';
 import { RuleChunkEngine } from '../core/rule-chunk-engine.js';
 import { speakText } from '../audio/tts-synthesizer.js';
+import { playbackController } from '../audio/playback-controller.js';
 import { toast } from '../ui/toast-manager.js';
+import { escapeHtml } from '../utils/dom.js';
 
 export class MemorizeView {
   constructor(router) {
@@ -37,18 +39,13 @@ export class MemorizeView {
     this.classroomModal = document.getElementById('classroomModal');
     this.classroomStnBadge = document.getElementById('classroomStnBadge');
     this.classroomStnCounter = document.getElementById('classroomStnCounter');
-    this.classroomFullText = document.getElementById('classroomFullText');
     this.classroomChunksContainer = document.getElementById('classroomChunksContainer');
-    this.classroomNaturalSection = document.getElementById('classroomNaturalSection');
-    this.classroomNaturalText = document.getElementById('classroomNaturalText');
-    this.btnToggleClassroomNatural = document.getElementById('btnToggleClassroomNatural');
     this.btnClassroomPlay = document.getElementById('btnClassroomPlay');
     this.btnClassroomFlipAll = document.getElementById('btnClassroomFlipAll');
     this.btnClassroomPrev = document.getElementById('btnClassroomPrev');
     this.btnClassroomNext = document.getElementById('btnClassroomNext');
     this.btnCloseClassroomModal = document.getElementById('btnCloseClassroomModal');
     this.classroomIndex = 0;
-    this.isClassroomNaturalHidden = false;
     this.areClassroomCardsFlipped = false;
     this.boundClassroomKeyHandler = this.handleClassroomKeyDown.bind(this);
 
@@ -103,9 +100,6 @@ export class MemorizeView {
     }
     if (this.btnClassroomFlipAll) {
       this.btnClassroomFlipAll.addEventListener('click', () => this.flipAllClassroomCards());
-    }
-    if (this.btnToggleClassroomNatural) {
-      this.btnToggleClassroomNatural.addEventListener('click', () => this.toggleClassroomNatural());
     }
   }
 
@@ -178,7 +172,7 @@ export class MemorizeView {
           <span>S${sIdx + 1}</span>
           <span class="jump-icon">↗</span>
         </button>
-        <span class="memorize-stn-preview" title="클릭하여 교실 대형 화면으로 보기">${stn.text}</span>
+        <span class="memorize-stn-preview" title="클릭하여 교실 대형 화면으로 보기">${escapeHtml(stn.text)}</span>
         <button class="memorize-stn-expand-btn" title="교실 대형 화면으로 크게 보기 (모달)">🔍 크게 보기</button>
         <button class="memorize-stn-play" title="이 문장 듣기">▶</button>
       `;
@@ -248,10 +242,10 @@ export class MemorizeView {
           <div class="memorize-card-inner">
             ${keyBadge}
             <div class="memorize-face memorize-face-en">
-              <span class="chunk-en-text">${chunk.en}</span>
+              <span class="chunk-en-text">${escapeHtml(chunk.en)}</span>
             </div>
             <div class="memorize-face memorize-face-ko">
-              <span class="chunk-ko-text">${chunk.ko}</span>
+              <span class="chunk-ko-text">${escapeHtml(chunk.ko)}</span>
             </div>
           </div>
         `;
@@ -340,9 +334,7 @@ export class MemorizeView {
   stopPlayAllScript() {
     this.isPlayingAll = false;
     this.updatePlayAllButtonUI(false);
-    if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused) {
-      this.nativeAudioPlayer.pause();
-    }
+    playbackController.stop();
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -386,26 +378,24 @@ export class MemorizeView {
 
     const targetStn = list[idx];
 
-    // Real audio play
-    if (appState.uploadedAudioFile && this.nativeAudioPlayer && this.nativeAudioPlayer.src && !appState.isSynthesizedAudio) {
+    // Real audio play (owner 'memorize' → the Practice looper no longer pauses it at S1's boundary)
+    if (this.canPlayUploadedAudio()) {
       const stnStart = targetStn.audioStart !== null ? targetStn.audioStart : 0;
-      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : this.nativeAudioPlayer.duration;
+      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : null; // null → play to media end
 
-      this.nativeAudioPlayer.currentTime = stnStart;
-      this.nativeAudioPlayer.play().catch(e => console.error(e));
-
-      const checkEnd = () => {
-        if (!this.isPlayingAll) return;
-        if (this.nativeAudioPlayer.currentTime >= stnEnd || this.nativeAudioPlayer.ended) {
+      playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+      playbackController.playSegment(stnStart, stnEnd, {
+        owner: 'memorize',
+        onEnd: () => {
           // 0.4s pause between sentences
           setTimeout(() => {
             if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
           }, 400);
-        } else {
-          requestAnimationFrame(checkEnd);
         }
-      };
-      requestAnimationFrame(checkEnd);
+      }).catch(e => {
+        console.error(e);
+        if (this.isPlayingAll) this.stopPlayAllScript();
+      });
     } else {
       // Speech Synthesis
       if ('speechSynthesis' in window) {
@@ -426,6 +416,11 @@ export class MemorizeView {
     }
   }
 
+  /** Real uploaded audio (not the silent synthesized WAV) is available for segment playback. */
+  canPlayUploadedAudio() {
+    return !!appState.uploadedAudioUrl && !appState.isSynthesizedAudio;
+  }
+
   playSingleSentence(idx) {
     const list = appState.sentenceList;
     if (!list || idx < 0 || idx >= list.length) return;
@@ -433,21 +428,16 @@ export class MemorizeView {
     this.highlightActiveSentenceRow(idx);
     const targetStn = list[idx];
 
-    if (appState.uploadedAudioFile && this.nativeAudioPlayer && this.nativeAudioPlayer.src && !appState.isSynthesizedAudio) {
+    if (this.canPlayUploadedAudio()) {
       const stnStart = targetStn.audioStart !== null ? targetStn.audioStart : 0;
-      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : this.nativeAudioPlayer.duration;
+      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : null;
 
-      this.nativeAudioPlayer.currentTime = stnStart;
-      this.nativeAudioPlayer.play().catch(e => console.error(e));
-
-      const checkEnd = () => {
-        if (this.nativeAudioPlayer.currentTime >= stnEnd || this.nativeAudioPlayer.ended) {
-          this.nativeAudioPlayer.pause();
-        } else {
-          requestAnimationFrame(checkEnd);
-        }
-      };
-      requestAnimationFrame(checkEnd);
+      playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+      playbackController.playSegment(stnStart, stnEnd, { owner: 'memorize' })
+        .catch(e => {
+          console.error(e);
+          speakText(targetStn.text, 'en-US');
+        });
     } else {
       speakText(targetStn.text, 'en-US');
     }
@@ -506,7 +496,6 @@ export class MemorizeView {
     if (!list || sIdx < 0 || sIdx >= list.length) return;
 
     this.classroomIndex = sIdx;
-    this.isClassroomNaturalHidden = false;
     this.areClassroomCardsFlipped = false;
 
     this.renderClassroomModal();
@@ -553,14 +542,6 @@ export class MemorizeView {
       card.classList.toggle('flipped', this.areClassroomCardsFlipped);
     });
     toast.show(this.areClassroomCardsFlipped ? '🔄 모든 청크 뒷면(해석)으로 뒤집기' : '🔄 모든 청크 앞면(영어)으로 뒤집기');
-  }
-
-  toggleClassroomNatural() {
-    this.isClassroomNaturalHidden = !this.isClassroomNaturalHidden;
-    if (this.classroomNaturalSection) {
-      this.classroomNaturalSection.classList.toggle('masked', this.isClassroomNaturalHidden);
-    }
-    toast.show(this.isClassroomNaturalHidden ? '우리말 해석 가림' : '우리말 해석 표시');
   }
 
   flipClassroomCardByIndex(cIdx) {
@@ -610,13 +591,6 @@ export class MemorizeView {
       return;
     }
 
-    if (e.key === 't' || e.key === 'T') {
-      e.preventDefault();
-      e.stopPropagation();
-      this.toggleClassroomNatural();
-      return;
-    }
-
     // Number keys 1~9
     let num = null;
     if (e.code && /^Digit([1-9])$/.test(e.code)) {
@@ -652,17 +626,6 @@ export class MemorizeView {
       this.btnClassroomNext.disabled = (this.classroomIndex >= list.length - 1);
     }
 
-    if (this.classroomFullText) {
-      this.classroomFullText.textContent = stn.text || '';
-    }
-
-    if (this.classroomNaturalText) {
-      this.classroomNaturalText.textContent = stn.result?.natural || '';
-    }
-    if (this.classroomNaturalSection) {
-      this.classroomNaturalSection.classList.toggle('masked', this.isClassroomNaturalHidden);
-    }
-
     if (this.classroomChunksContainer) {
       this.classroomChunksContainer.innerHTML = '';
       const chunks = stn.result?.chunks || [{ en: stn.text, ko: stn.result?.natural || '' }];
@@ -691,13 +654,13 @@ export class MemorizeView {
 
         card.innerHTML = `
           <div class="classroom-card-inner">
-            <div class="classroom-card-sizer" aria-hidden="true">${longestText}</div>
+            <div class="classroom-card-sizer" aria-hidden="true">${escapeHtml(longestText)}</div>
             ${keyBadge}
             <div class="classroom-face classroom-face-en">
-              <span class="classroom-chunk-text">${enText}</span>
+              <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
             </div>
             <div class="classroom-face classroom-face-ko">
-              <span class="classroom-chunk-text">${koText}</span>
+              <span class="classroom-chunk-text">${escapeHtml(koText)}</span>
             </div>
           </div>
         `;

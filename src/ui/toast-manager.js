@@ -6,6 +6,7 @@ export class ToastManager {
   constructor(toastElement) {
     this.toastEl = toastElement || document.getElementById('toast');
     this.timer = null;
+    this.hideTimer = null; // inner 300ms fade-out timer (must also be cleared, or a new toast gets hidden)
   }
 
   setElement(el) {
@@ -18,14 +19,16 @@ export class ToastManager {
     }
     if (!this.toastEl) return;
 
+    clearTimeout(this.timer);
+    clearTimeout(this.hideTimer);
+
     this.toastEl.textContent = message;
     this.toastEl.classList.remove('hidden');
     this.toastEl.classList.add('show');
 
-    clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.toastEl.classList.remove('show');
-      setTimeout(() => {
+      this.hideTimer = setTimeout(() => {
         this.toastEl.classList.add('hidden');
       }, 300);
     }, durationMs);

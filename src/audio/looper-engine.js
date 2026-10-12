@@ -30,7 +30,8 @@ export class LooperEngine {
       onLoopComplete: () => {},
       onShadowingWait: () => {},
       onAutoAdvance: () => {},
-      onPlayStateChange: () => {}
+      onPlayStateChange: () => {},
+      onLoopRestart: () => {}
     };
   }
 
@@ -77,6 +78,8 @@ export class LooperEngine {
               player.currentTime = this.appState.loopStart;
               player.play().then(() => {
                 this.callbacks.onPlayStateChange(true);
+                // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
+                this.callbacks.onLoopRestart();
               }).catch(e => console.error(e));
             }
           }, CONSTANTS.SHADOWING_PAUSE_MS);

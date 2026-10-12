@@ -134,6 +134,7 @@
   min-height: 100px;
   display: block;
   cursor: crosshair;
+  touch-action: none; /* pointer drag on touch screens must not scroll the page */
 }
 
 .waveform-loading {

@@ -36,6 +36,14 @@ export class SettingsModal {
     if (this.btnSaveSettings) {
       this.btnSaveSettings.addEventListener('click', () => this.save());
     }
+    // Escape closes the modal
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && this.modal && !this.modal.classList.contains('hidden')) {
+          this.close();
+        }
+      });
+    }
   }
 
   open() {
@@ -75,7 +83,8 @@ export class SettingsModal {
     const provider = aiService.provider;
     const hasKey = aiService.hasKey();
     if (hasKey) {
-      this.engineBadge.textContent = provider === 'gemini' ? '✨ Gemini AI' : '🟢 OpenAI GPT-4o';
+      // callOpenAI() uses gpt-4o-mini, so the badge must not claim GPT-4o
+      this.engineBadge.textContent = provider === 'gemini' ? '✨ Gemini AI' : '🟢 OpenAI GPT-4o mini';
       this.engineBadge.className = 'engine-badge ai-active';
     } else {
       this.engineBadge.textContent = '⚙️ 로컬 규칙 엔진';

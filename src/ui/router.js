@@ -1,13 +1,16 @@
 /**
- * SPA Page Router for ChunkLingo
+ * SPA Page Router for CE Tool
  * Switches between 3 views (Input, Practice, Memorize) without browser reload,
  * preserving Web Audio API Context, PCM audio buffers, and sentence states.
  */
+
+import { playbackController } from '../audio/playback-controller.js';
 
 export class AppRouter {
   constructor(views = {}) {
     this.views = views; // { input: View, practice: View, memorize: View }
     this.currentPage = 'input';
+    this.hasNavigated = false;
     this.initEvents();
   }
 
@@ -37,13 +40,19 @@ export class AppRouter {
 
   navigateTo(pageId, updateHash = true) {
     if (!this.views[pageId] && !document.getElementById(`view-${pageId}`)) return;
+    // Re-selecting the current tab must not reset the view state (e.g. Page 2 sentence position)
+    if (this.hasNavigated && pageId === this.currentPage) return;
 
     const prevPage = this.currentPage;
     if (this.views[prevPage] && typeof this.views[prevPage].onDeactivated === 'function') {
       this.views[prevPage].onDeactivated();
     }
 
+    // Any page-owned segment playback must stop when leaving the page
+    playbackController.stop();
+
     this.currentPage = pageId;
+    this.hasNavigated = true;
 
     // 1. Update navigation tab buttons
     document.querySelectorAll('.nav-tab-btn').forEach(btn => {

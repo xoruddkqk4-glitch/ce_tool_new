@@ -27,25 +27,13 @@ const CONSTANTS = {
   SPEECH_WORD_DURATION_SEC: 0.40,
   SPEECH_BOUNDARY_MARGIN_SEC: 0.60,
   
-  // Storage keys
-  STORAGE_KEYS: {
-    API_CONFIG: 'ce_tool_api_config',
-    THEME: 'ce_tool_theme',
-    CUSTOM_PROMPT: 'ce_tool_custom_prompt'
-  },
-  
   // Supported Gemini candidate models in priority order
+  // (gemini-1.5-* removed: retired models only added 404 round-trips to the fallback loop)
   GEMINI_CANDIDATE_MODELS: [
     'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-2.0-flash-exp',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash-002',
-    'gemini-1.5-flash-001',
-    'gemini-1.5-flash',
-    'gemini-2.5-pro',
-    'gemini-1.5-pro-latest',
-    'gemini-1.5-pro'
+    'gemini-2.5-pro'
   ]
 };
 
@@ -367,6 +355,30 @@ const PRESETS = {
 
 
   // =========================================================================
+  // Module: src/utils/dom.js
+  // =========================================================================
+
+/**
+ * DOM Utility Helpers (shared across views)
+ * NOTE: The standalone bundler strips imports, so never import this with an alias (`as`).
+ */
+
+/**
+ * Escapes a value for safe interpolation into innerHTML / attribute strings.
+ * null/undefined → '' (prevents literal "undefined" from leaking into the UI).
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+
+  // =========================================================================
   // Module: src/core/text-splitter.js
   // =========================================================================
 
@@ -398,7 +410,9 @@ function cleanPracticeSentence(text) {
   // Strip speaker indicators like 'M: ', 'W: ', 'Man: ', 'Woman: ', 'Boy: ', 'Girl: ', 'Speaker 1: ', 'A: ', 'B: ', '남: ', '여: '
   let cleaned = text.replace(/^((M(an)?|W(oman)?|Boy|Girl|Speaker\s*\d+|[AB남여])\s*:\s*)/i, '').trim();
   // Strip leading question/speaker indicators like '1번. 남:', '여:', 'W:', 'M:', '[남]'
-  cleaned = cleaned.replace(/^[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/i, '').trim();
+  // Only when the prefix actually contains Hangul or a bracket — otherwise '20 minutes later' / '3D printers' / '1990 was'
+  // lost their leading numbers.
+  cleaned = cleaned.replace(/^(?=[^A-Za-z]*[가-힣\[(])[0-9가-힣\s.:,·()\[\]\-]+(?=[A-Za-z])/, '').trim();
   // Strip inline Korean parentheticals e.g. '(해설)', '[안내]'
   cleaned = cleaned.replace(/\([가-힣\s,.:~]+\)/g, '');
   cleaned = cleaned.replace(/\[[가-힣\s,.:~]+\]/g, '');
@@ -412,14 +426,16 @@ function cleanPracticeSentence(text) {
 function splitIntoSentences(text, options = {}) {
   if (!text) return [];
   const filterKorean = options.filterKorean !== false;
-  const abbreviations = ['mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'vs', 'etc', 'eg', 'ie', 'u.s', 'e.g', 'i.e'];
+  const abbreviations = ['mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'vs', 'etc', 'eg', 'ie', 'u.s', 'e.g', 'i.e', 'a.m', 'p.m', 'st', 'mt', 'approx'];
   let processed = text.replace(/\.{2,}/g, '__ELLIPSIS__');
   processed = processed.replace(/(\d+)\.(\d+)/g, '$1__DECIMAL_DOT__$2');
   abbreviations.forEach(abbr => {
-    const re = new RegExp('\\b' + abbr.replace('.', '\\.') + '\\.', 'gi');
+    // Escape EVERY dot (previously only the first one was escaped)
+    const re = new RegExp('\\b' + abbr.replace(/\./g, '\\.') + '\\.', 'gi');
     processed = processed.replace(re, match => match.slice(0, -1) + '__ABBR_DOT__');
   });
-  const parts = processed.split(/(?<=[.?!])\s+|\n+/);
+  // Also split after a closing quote/paren that follows the terminator: `He said, "Hi." Then...`
+  const parts = processed.split(/(?<=[.?!]["'”’)]?)\s+|\n+/);
   return parts
     .map(p => p.replace(/__ELLIPSIS__/g, '...').replace(/__DECIMAL_DOT__/g, '.').replace(/__ABBR_DOT__/g, '.').trim())
     .map(p => cleanPracticeSentence(p))
@@ -1086,6 +1102,8 @@ class AppState {
     this.scriptText = '';
     this.sentenceList = [];
     this.activeSentenceIndex = 0;
+    // Incremented whenever a NEW sentence list is loaded (lets views tell fresh data from revisits)
+    this.dataVersion = 0;
 
     // A-B Looper & Shadowing
     this.loopStart = null;
@@ -1140,6 +1158,7 @@ class AppState {
   setSentenceList(list) {
     this.sentenceList = list || [];
     this.activeSentenceIndex = 0;
+    this.dataVersion++;
     this.clearLoop();
     this.emit('sentencesLoaded', this.sentenceList);
   }
@@ -1187,6 +1206,7 @@ class AppState {
     this.scriptText = '';
     this.sentenceList = [];
     this.activeSentenceIndex = 0;
+    this.dataVersion++;
     this.clearLoop();
     this.emit('reset');
   }
@@ -1226,36 +1246,43 @@ function safeSet(key, val) {
   memStorage[key] = String(val);
 }
 
+/**
+ * Reads `key`; falls back to the legacy ChunkLingo key ONLY when `key` was never written.
+ * (Legacy keys are no longer written, so an intentionally cleared value must not resurrect the old one.)
+ */
+function safeGetWithLegacy(key, legacyKey, def = '') {
+  const v = safeGet(key, null);
+  if (v !== null) return v || def;
+  return safeGet(legacyKey, null) || def;
+}
+
 class StorageService {
   static getProvider() {
-    return safeGet('ce_tool_provider') || safeGet('chunklingo_provider') || 'gemini';
+    return safeGetWithLegacy('ce_tool_provider', 'chunklingo_provider', 'gemini');
   }
 
   static getApiKey() {
-    return safeGet('ce_tool_api_key') || safeGet('chunklingo_api_key') || '';
+    return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
   }
 
   static getCustomPrompt() {
-    return safeGet('ce_tool_prompt') || safeGet('chunklingo_prompt') || '';
+    return safeGetWithLegacy('ce_tool_prompt', 'chunklingo_prompt', '');
   }
 
   static saveApiSettings(provider, apiKey, customPrompt) {
     safeSet('ce_tool_provider', provider);
     safeSet('ce_tool_api_key', apiKey);
     safeSet('ce_tool_prompt', customPrompt);
-    // Backward compatibility
-    safeSet('chunklingo_provider', provider);
-    safeSet('chunklingo_api_key', apiKey);
-    safeSet('chunklingo_prompt', customPrompt);
+    // Legacy chunklingo_* keys are intentionally NOT written anymore (and not deleted:
+    // file:// pages share one localStorage origin, so another app may still own them).
   }
 
   static getTheme() {
-    return safeGet('ce_tool_theme') || safeGet('chunklingo_theme') || 'dark';
+    return safeGetWithLegacy('ce_tool_theme', 'chunklingo_theme', 'dark');
   }
 
   static saveTheme(theme) {
     safeSet('ce_tool_theme', theme);
-    safeSet('chunklingo_theme', theme);
   }
 }
 
@@ -1266,12 +1293,79 @@ class StorageService {
 
 /**
  * AI Engine Service (Gemini & OpenAI API Provider + Audio Multimodal)
- * Resilient multi-model auto-fallback for Gemini (2.5-flash, 2.0-flash, 1.5-flash-latest, etc.)
+ * Resilient multi-model auto-fallback for Gemini (2.5-flash, 2.0-flash, 2.5-pro, etc.)
  */
 
 
 
 
+
+const AI_REQUEST_TIMEOUT_MS = 30000;   // text requests
+const AI_AUDIO_TIMEOUT_MS = 120000;    // inline-audio requests (STT / alignment)
+const FREE_TRANSLATE_TIMEOUT_MS = 10000;
+const FREE_TRANSLATE_MAX_CONCURRENCY = 4; // avoid bursting the unofficial endpoint (HTTP 429)
+
+let freeTranslateActive = 0;
+const freeTranslateQueue = [];
+
+/**
+ * fetch() with an AbortController timeout. Falls back to plain fetch when AbortController is unavailable
+ * (e.g. the vm sandbox used by scratch tests).
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+  if (typeof AbortController !== 'function' || typeof setTimeout !== 'function') {
+    return fetch(url, options);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error(`AI 요청 시간이 초과되었습니다 (${Math.round(timeoutMs / 1000)}초). 네트워크 상태를 확인하고 다시 시도하세요.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** JSON.parse that tolerates ```json fences / leading prose around the JSON object. */
+function parseJsonLoose(content) {
+  const text = String(content || '').trim();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const unfenced = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    try {
+      return JSON.parse(unfenced);
+    } catch (e2) {
+      const start = unfenced.indexOf('{');
+      const end = unfenced.lastIndexOf('}');
+      if (start !== -1 && end > start) return JSON.parse(unfenced.slice(start, end + 1));
+      throw e;
+    }
+  }
+}
+
+/** Runs `task` when a free-translate slot is available (max FREE_TRANSLATE_MAX_CONCURRENCY in flight). */
+function runWithFreeTranslateLimit(task) {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      freeTranslateActive++;
+      Promise.resolve()
+        .then(task)
+        .then(resolve, reject)
+        .finally(() => {
+          freeTranslateActive--;
+          const next = freeTranslateQueue.shift();
+          if (next) next();
+        });
+    };
+    if (freeTranslateActive < FREE_TRANSLATE_MAX_CONCURRENCY) run();
+    else freeTranslateQueue.push(run);
+  });
+}
 
 class AIService {
   constructor() {
@@ -1304,8 +1398,9 @@ class AIService {
     const priorityOrder = CONSTANTS.GEMINI_CANDIDATE_MODELS;
 
     try {
-      const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}`;
-      const res = await fetch(listUrl);
+      // API key goes in the x-goog-api-key header (not the URL) so it never lands in logs / history
+      const listUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+      const res = await fetchWithTimeout(listUrl, { headers: { 'x-goog-api-key': this.apiKey } });
       if (res.ok) {
         const data = await res.json();
         const available = (data.models || [])
@@ -1341,7 +1436,7 @@ class AIService {
   /**
    * Resilient POST to Gemini API with automatic candidate model fallback on 404/retirement
    */
-  async postToGemini(payload) {
+  async postToGemini(payload, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
     const preferred = await this.resolveGeminiModel();
     const candidateList = [
       preferred,
@@ -1352,20 +1447,20 @@ class AIService {
     let lastError = null;
 
     for (const model of uniqueCandidates) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
       try {
-        const response = await fetch(url, {
+        const response = await fetchWithTimeout(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
           body: JSON.stringify(payload)
-        });
+        }, timeoutMs);
 
         if (response.ok) {
           this.activeGeminiModel = model; // Cache working model
           const data = await response.json();
           const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!content) throw new Error('Gemini 응답 내용이 비어 있습니다.');
-          return JSON.parse(content);
+          return parseJsonLoose(content);
         }
 
         const err = await response.json().catch(() => ({}));
@@ -1434,21 +1529,32 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
       }
     }
 
-    // Free high-quality Google Translate endpoint
+    // Free high-quality Google Translate endpoint (concurrency-limited, 10s timeout)
     try {
-      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(text.trim())}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && Array.isArray(data[0])) {
-          return data[0].map(item => item[0]).join('').trim();
-        }
-      }
+      const translated = await this.fetchFreeTranslation(text.trim());
+      if (translated) return translated;
     } catch (e) {
       console.warn('Public translation endpoint error:', e);
     }
 
     return null;
+  }
+
+  /**
+   * Unofficial translate.googleapis.com call shared by translateNatural() and generateDirectChunks().
+   * @returns {Promise<string>} '' when the endpoint returns nothing usable
+   */
+  fetchFreeTranslation(text) {
+    return runWithFreeTranslateLimit(async () => {
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(text)}`;
+      const res = await fetchWithTimeout(url, {}, FREE_TRANSLATE_TIMEOUT_MS);
+      if (!res.ok) return '';
+      const data = await res.json();
+      if (Array.isArray(data) && Array.isArray(data[0])) {
+        return data[0].map(item => item[0]).join('').trim();
+      }
+      return '';
+    });
   }
 
   /**
@@ -1514,15 +1620,7 @@ CRITICAL RULES:
           if (!cText) return '';
           const cleanText = cText.replace(/^[,.!?–—;:]+|[,.!?–—;:]+$/g, '').trim();
           if (!cleanText) return '';
-          const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(cleanText)}`;
-          const res = await fetch(url);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && Array.isArray(data[0])) {
-              return data[0].map(item => item[0]).join('').trim();
-            }
-          }
-          return '';
+          return this.fetchFreeTranslation(cleanText);
         })
       );
 
@@ -1744,26 +1842,15 @@ Respond ONLY with valid JSON:
         }
       };
 
-      const result = await this.postToGemini(payload);
+      const result = await this.postToGemini(payload, AI_AUDIO_TIMEOUT_MS);
       if (result && Array.isArray(result.alignments)) {
-        // Post-process alignments to guarantee no sentence-end truncation
-        const processed = result.alignments.map((a, i) => {
-          const nextStart = (i + 1 < result.alignments.length) ? Number(result.alignments[i + 1].start) : null;
-          let end = Number(a.end) || 0;
-          const start = Number(a.start) || 0;
-          if (nextStart !== null && nextStart > start) {
-            const safeMax = Math.max(start + 0.5, nextStart - 0.15);
-            end = Math.min(safeMax, Math.round((end + 0.6) * 10) / 10);
-          } else {
-            end = Math.round((end + 0.8) * 10) / 10;
-          }
-          return {
-            sentence_index: a.sentence_index ?? i,
-            start,
-            end
-          };
-        });
-        return processed;
+        // Raw timestamps only — end padding is applied ONCE in audio/boundary-utils.js
+        // (previously padded here AND again in InputView, i.e. +1.5s on every sentence end)
+        return result.alignments.map((a, i) => ({
+          sentence_index: a.sentence_index ?? i,
+          start: Number(a.start) || 0,
+          end: Number(a.end) || 0
+        }));
       }
     } catch (err) {
       console.warn('Gemini audio-script alignment failed:', err);
@@ -1828,7 +1915,7 @@ Respond ONLY with valid JSON:
         }
       };
 
-      return await this.postToGemini(payload);
+      return await this.postToGemini(payload, AI_AUDIO_TIMEOUT_MS);
     } else {
       throw new Error('OpenAI 모드에서는 Gemini API 키를 권장합니다. (Gemini는 오디오 멀티모달 네이티브 지원)');
     }
@@ -1863,7 +1950,7 @@ Respond ONLY with valid JSON:
       response_format: { type: 'json_object' }
     };
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1881,7 +1968,7 @@ Respond ONLY with valid JSON:
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error('OpenAI 응답 내용이 비어 있습니다.');
 
-    return JSON.parse(content);
+    return parseJsonLoose(content);
   }
 }
 
@@ -2375,6 +2462,87 @@ function proportionalSentenceBoundaries(sentences, totalDuration, expectedEnglis
 
 
   // =========================================================================
+  // Module: src/audio/boundary-utils.js
+  // =========================================================================
+
+/**
+ * Sentence Boundary Resolver
+ * Single place for: AI alignment (optional) → PCM VAD fallback → Korean intro cross-check → end padding.
+ * Previously duplicated in InputView.handleTranslate() and InputView.autoSyncAudioScript().
+ *
+ * NOTE: The standalone bundler strips imports, so never import this with an alias (`as`).
+ */
+
+
+
+const BOUNDARY_END_PADDING_SEC = 0.9;       // headroom after a sentence end (never cut the last word)
+const BOUNDARY_LAST_END_PADDING_SEC = 1.0;  // headroom for the last sentence (bounded by file length)
+const BOUNDARY_NEXT_GAP_SEC = 0.15;         // stop this far before the next sentence starts
+const BOUNDARY_MIN_SEGMENT_SEC = 0.4;       // never shrink a segment below this
+const BOUNDARY_INTRO_MIN_SEC = 2.0;         // only trust Korean intro detection above this length
+const BOUNDARY_INTRO_TOLERANCE_SEC = 0.5;
+
+/**
+ * Mutates `boundaries` in place: extends each end by the padding policy, bounded by the next start.
+ * Same arithmetic as the previous inline loop in input-view.js (entries with end === null/undefined are skipped).
+ */
+function applyBoundaryEndPadding(boundaries, totalDuration = null) {
+  if (!Array.isArray(boundaries)) return boundaries;
+  for (let i = 0; i < boundaries.length; i++) {
+    const b = boundaries[i];
+    if (!b || b.end === null || b.end === undefined) continue;
+    const nextStart = (i + 1 < boundaries.length && boundaries[i + 1] && boundaries[i + 1].start !== null)
+      ? boundaries[i + 1].start
+      : totalDuration;
+    if (nextStart !== null && nextStart !== undefined && nextStart > b.start) {
+      const maxSafeEnd = Math.max(b.start + BOUNDARY_MIN_SEGMENT_SEC, nextStart - BOUNDARY_NEXT_GAP_SEC);
+      b.end = Math.min(maxSafeEnd, Math.round((b.end + BOUNDARY_END_PADDING_SEC) * 10) / 10);
+    } else if (totalDuration !== null && totalDuration !== undefined) {
+      b.end = Math.min(totalDuration, Math.round((b.end + BOUNDARY_LAST_END_PADDING_SEC) * 10) / 10);
+    }
+  }
+  return boundaries;
+}
+
+/**
+ * @param {Object} params
+ * @param {AudioBuffer|null} params.audioBuffer
+ * @param {string[]} params.sentences
+ * @param {Function|null} params.aiAlign  async () => [{ start, end }] | null  (optional)
+ * @returns {Promise<Array<{start:number|null,end:number|null}>>}
+ */
+async function resolveSentenceBoundaries({ audioBuffer = null, sentences = [], aiAlign = null } = {}) {
+  let boundaries = null;
+
+  if (typeof aiAlign === 'function') {
+    try {
+      const alignments = await aiAlign();
+      if (alignments && alignments.length === sentences.length) {
+        boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
+      }
+    } catch (err) {
+      console.warn('AI audio alignment fallback:', err);
+    }
+  }
+
+  if (!boundaries) {
+    boundaries = detectAudioSentenceBoundaries(audioBuffer, sentences);
+  } else if (audioBuffer && boundaries.length > 0) {
+    // Cross-verify with PCM VAD to guarantee the Korean intro announcement is skipped
+    const introSec = detectKoreanIntroDuration(audioBuffer, sentences);
+    if (introSec > BOUNDARY_INTRO_MIN_SEC && boundaries[0].start !== null && boundaries[0].start < introSec - BOUNDARY_INTRO_TOLERANCE_SEC) {
+      boundaries[0].start = introSec;
+    }
+  }
+
+  if (boundaries && boundaries.length === sentences.length) {
+    applyBoundaryEndPadding(boundaries, audioBuffer ? audioBuffer.duration : null);
+  }
+  return boundaries || [];
+}
+
+
+  // =========================================================================
   // Module: src/audio/tts-synthesizer.js
   // =========================================================================
 
@@ -2842,7 +3010,8 @@ class LooperEngine {
       onLoopComplete: () => {},
       onShadowingWait: () => {},
       onAutoAdvance: () => {},
-      onPlayStateChange: () => {}
+      onPlayStateChange: () => {},
+      onLoopRestart: () => {}
     };
   }
 
@@ -2889,6 +3058,8 @@ class LooperEngine {
               player.currentTime = this.appState.loopStart;
               player.play().then(() => {
                 this.callbacks.onPlayStateChange(true);
+                // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
+                this.callbacks.onLoopRestart();
               }).catch(e => console.error(e));
             }
           }, CONSTANTS.SHADOWING_PAUSE_MS);
@@ -2920,6 +3091,136 @@ class LooperEngine {
 
 
   // =========================================================================
+  // Module: src/audio/playback-controller.js
+  // =========================================================================
+
+/**
+ * Playback Controller — single owner of the shared <audio id="nativeAudioPlayer">.
+ *
+ * Why: Page 1 (Input), Page 2 (Practice) and Page 3 (Memorize) share one audio element.
+ * Previously Page 2's looper enforced *its* sentence boundary on every timeupdate regardless of
+ * which page started playback, which instantly paused Page 1 "문장 듣기" (S2+) and stalled Page 3
+ * "전체 스크립트 연속 재생". This controller tracks the current owner and cancels stale segment
+ * watchers with a token so only one segment is ever enforced.
+ *
+ * NOTE: The standalone bundler strips imports, so never import this with an alias (`as`).
+ */
+
+function scheduleFrame(fn) {
+  if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(fn);
+  return setTimeout(fn, 16);
+}
+
+function cancelFrame(id) {
+  if (id === null || id === undefined) return;
+  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
+  else clearTimeout(id);
+}
+
+class PlaybackController {
+  constructor() {
+    this.player = null;
+    this.owner = null; // 'input' | 'practice' | 'memorize' | null
+    this.segmentToken = 0;
+    this.segmentFrame = null;
+  }
+
+  getPlayer() {
+    if (!this.player && typeof document !== 'undefined' && document.getElementById) {
+      this.player = document.getElementById('nativeAudioPlayer');
+    }
+    return this.player;
+  }
+
+  /**
+   * Sets the audio source (only when changed) and ALWAYS re-applies the muted flag,
+   * so a previous synthesized (muted) session never silences a real MP3.
+   */
+  setSource(url, { muted = false } = {}) {
+    const player = this.getPlayer();
+    if (!player) return;
+    if (url && player.src !== url) {
+      player.src = url;
+    }
+    player.muted = !!muted;
+  }
+
+  /** Marks `owner` as the active playback owner. Cancels any segment watcher of a previous owner. */
+  claim(owner) {
+    if (this.owner !== owner) {
+      this.cancelSegment();
+      this.owner = owner || null;
+    }
+  }
+
+  isOwnedBy(owner) {
+    return this.owner === owner;
+  }
+
+  cancelSegment() {
+    this.segmentToken++;
+    cancelFrame(this.segmentFrame);
+    this.segmentFrame = null;
+  }
+
+  /**
+   * Plays [start, end) and pauses at `end`. A newer playSegment()/stop()/claim() call invalidates
+   * this watcher. If `end` is null/NaN the segment plays until the media ends.
+   * onEnd fires only when the segment finishes naturally (not when cancelled or paused externally).
+   * @returns {Promise<boolean>} resolves true when playback started for this (still-valid) segment
+   */
+  playSegment(start, end, { owner = null, onEnd = null } = {}) {
+    const player = this.getPlayer();
+    if (!player || typeof player.play !== 'function') return Promise.resolve(false);
+
+    this.claim(owner);
+    this.cancelSegment();
+    const token = this.segmentToken;
+
+    try {
+      player.currentTime = Math.max(0, Number(start) || 0);
+    } catch (e) {
+      // currentTime may throw before metadata is loaded; play() will still start from 0
+    }
+
+    const hasEnd = typeof end === 'number' && isFinite(end);
+    const watch = () => {
+      if (token !== this.segmentToken) return;
+      if ((hasEnd && player.currentTime >= end) || player.ended) {
+        if (typeof player.pause === 'function') player.pause();
+        this.segmentFrame = null;
+        if (typeof onEnd === 'function') onEnd();
+        return;
+      }
+      if (player.paused) {
+        // Paused by the user or another control: stop watching silently (no onEnd)
+        this.segmentFrame = null;
+        return;
+      }
+      this.segmentFrame = scheduleFrame(watch);
+    };
+
+    return Promise.resolve(player.play()).then(() => {
+      if (token !== this.segmentToken) return false;
+      this.segmentFrame = scheduleFrame(watch);
+      return true;
+    });
+  }
+
+  /** Cancels the active segment watcher and pauses playback. */
+  stop() {
+    this.cancelSegment();
+    const player = this.getPlayer();
+    if (player && !player.paused && typeof player.pause === 'function') {
+      player.pause();
+    }
+  }
+}
+
+const playbackController = new PlaybackController();
+
+
+  // =========================================================================
   // Module: src/ui/toast-manager.js
   // =========================================================================
 
@@ -2931,6 +3232,7 @@ class ToastManager {
   constructor(toastElement) {
     this.toastEl = toastElement || document.getElementById('toast');
     this.timer = null;
+    this.hideTimer = null; // inner 300ms fade-out timer (must also be cleared, or a new toast gets hidden)
   }
 
   setElement(el) {
@@ -2943,14 +3245,16 @@ class ToastManager {
     }
     if (!this.toastEl) return;
 
+    clearTimeout(this.timer);
+    clearTimeout(this.hideTimer);
+
     this.toastEl.textContent = message;
     this.toastEl.classList.remove('hidden');
     this.toastEl.classList.add('show');
 
-    clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.toastEl.classList.remove('show');
-      setTimeout(() => {
+      this.hideTimer = setTimeout(() => {
         this.toastEl.classList.add('hidden');
       }, 300);
     }, durationMs);
@@ -3002,6 +3306,14 @@ class SettingsModal {
     if (this.btnSaveSettings) {
       this.btnSaveSettings.addEventListener('click', () => this.save());
     }
+    // Escape closes the modal
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && this.modal && !this.modal.classList.contains('hidden')) {
+          this.close();
+        }
+      });
+    }
   }
 
   open() {
@@ -3041,7 +3353,8 @@ class SettingsModal {
     const provider = aiService.provider;
     const hasKey = aiService.hasKey();
     if (hasKey) {
-      this.engineBadge.textContent = provider === 'gemini' ? '✨ Gemini AI' : '🟢 OpenAI GPT-4o';
+      // callOpenAI() uses gpt-4o-mini, so the badge must not claim GPT-4o
+      this.engineBadge.textContent = provider === 'gemini' ? '✨ Gemini AI' : '🟢 OpenAI GPT-4o mini';
       this.engineBadge.className = 'engine-badge ai-active';
     } else {
       this.engineBadge.textContent = '⚙️ 로컬 규칙 엔진';
@@ -3056,15 +3369,18 @@ class SettingsModal {
   // =========================================================================
 
 /**
- * SPA Page Router for ChunkLingo
+ * SPA Page Router for CE Tool
  * Switches between 3 views (Input, Practice, Memorize) without browser reload,
  * preserving Web Audio API Context, PCM audio buffers, and sentence states.
  */
+
+
 
 class AppRouter {
   constructor(views = {}) {
     this.views = views; // { input: View, practice: View, memorize: View }
     this.currentPage = 'input';
+    this.hasNavigated = false;
     this.initEvents();
   }
 
@@ -3094,13 +3410,19 @@ class AppRouter {
 
   navigateTo(pageId, updateHash = true) {
     if (!this.views[pageId] && !document.getElementById(`view-${pageId}`)) return;
+    // Re-selecting the current tab must not reset the view state (e.g. Page 2 sentence position)
+    if (this.hasNavigated && pageId === this.currentPage) return;
 
     const prevPage = this.currentPage;
     if (this.views[prevPage] && typeof this.views[prevPage].onDeactivated === 'function') {
       this.views[prevPage].onDeactivated();
     }
 
+    // Any page-owned segment playback must stop when leaving the page
+    playbackController.stop();
+
     this.currentPage = pageId;
+    this.hasNavigated = true;
 
     // 1. Update navigation tab buttons
     document.querySelectorAll('.nav-tab-btn').forEach(btn => {
@@ -3160,7 +3482,17 @@ class ShortcutManager {
     window.removeEventListener('keydown', this.boundKeyHandler);
   }
 
+  /** True while a modal dialog is visible — global shortcuts must not drive the player behind it. */
+  isModalOpen() {
+    if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return false;
+    return ['settingsModal', 'handoutModal', 'classroomModal'].some(id => {
+      const el = document.getElementById(id);
+      return !!(el && el.classList && typeof el.classList.contains === 'function' && !el.classList.contains('hidden'));
+    });
+  }
+
   handleKeyDown(e) {
+    if (this.isModalOpen()) return;
     const target = e.target;
     const isTyping = target && (
       target.tagName === 'INPUT' ||
@@ -3350,11 +3682,24 @@ class ShortcutManager {
 
 
 
+
+
+
+// Placeholder kept in the 직독직해 slash string for empty chunks so slot positions never shift
+const DIRECT_EMPTY_PLACEHOLDER = '—';
+// Inline base64 audio requests above this size are rejected by Gemini (≈20MB request limit)
+const MAX_AI_INLINE_AUDIO_BYTES = 15 * 1024 * 1024;
+// Some OSes report an empty MIME type on drag & drop, so also accept by extension
+const AUDIO_FILE_EXT_RE = /\.(mp3|wav|m4a|ogg|aac|flac|webm)$/i;
+
 class InputView {
   constructor(router) {
     this.router = router;
     this.ruleEngine = new RuleChunkEngine();
     this.handoutMode = 'student'; // 'student' | 'teacher'
+    this.isStartingPractice = false;     // re-entrancy guard for the 3 "start practice" buttons
+    this.busySentences = new WeakSet();   // sentences with an in-flight chunk re-translation
+    this.cachedBase64 = null;             // { file, base64 } — avoid re-encoding the same upload
 
     // DOM Elements - Input Form
     this.container = document.getElementById('view-input');
@@ -3423,8 +3768,9 @@ class InputView {
 
       this.dropArea.addEventListener('drop', (e) => {
         const files = e.dataTransfer.files;
-        if (files.length > 0 && files[0].type.startsWith('audio/')) {
-          this.handleAudioFile(files[0]);
+        const f = files.length > 0 ? files[0] : null;
+        if (f && ((f.type || '').startsWith('audio/') || AUDIO_FILE_EXT_RE.test(f.name || ''))) {
+          this.handleAudioFile(f);
         } else {
           toast.show('⚠️ 오디오 파일(.mp3, .wav 등)만 업로드 가능합니다.');
         }
@@ -3507,13 +3853,21 @@ class InputView {
     }
 
     // Transition to Page 2
-    const startPracticeHandler = () => {
-      if (!appState.sentenceList || appState.sentenceList.length === 0) {
-        if (this.inputEnglish && this.inputEnglish.value.trim()) {
-          this.handleTranslate();
+    // Waits for the translation to finish before navigating (previously raced: Page 2 opened with stale/demo data)
+    const startPracticeHandler = async () => {
+      if (this.isStartingPractice) return;
+      this.isStartingPractice = true;
+      try {
+        if (!appState.sentenceList || appState.sentenceList.length === 0) {
+          if (this.inputEnglish && this.inputEnglish.value.trim()) {
+            const ok = await this.handleTranslate();
+            if (!ok) return;
+          }
         }
+        this.router.navigateTo('practice');
+      } finally {
+        this.isStartingPractice = false;
       }
-      this.router.navigateTo('practice');
     };
     if (this.btnStartPractice) {
       this.btnStartPractice.addEventListener('click', startPracticeHandler);
@@ -3549,6 +3903,15 @@ class InputView {
     if (this.btnHandoutTypeTeacher) {
       this.btnHandoutTypeTeacher.addEventListener('click', () => this.openHandoutModal('teacher'));
     }
+
+    // Escape closes the handout modal (settings modal handles its own Escape)
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && this.handoutModal && !this.handoutModal.classList.contains('hidden')) {
+          this.closeHandoutModal();
+        }
+      });
+    }
   }
 
   setMode(mode) {
@@ -3563,17 +3926,49 @@ class InputView {
     if (mode === 'both') {
       if (this.audioUploadSection) this.audioUploadSection.classList.remove('hidden');
       if (scriptInputSection) scriptInputSection.classList.remove('hidden');
-      if (this.btnTranslateText) this.btnTranslateText.textContent = '3x1 생성 및 음성 연동';
     } else if (mode === 'audio') {
       if (this.audioUploadSection) this.audioUploadSection.classList.remove('hidden');
       if (scriptInputSection) scriptInputSection.classList.add('hidden');
-      if (this.btnTranslateText) this.btnTranslateText.textContent = '🎙️ 음성에서 스크립트 추출 및 3x1 생성';
     } else {
       // text only
       if (this.audioUploadSection) this.audioUploadSection.classList.add('hidden');
       if (scriptInputSection) scriptInputSection.classList.remove('hidden');
-      if (this.btnTranslateText) this.btnTranslateText.textContent = '3x1 해석 및 FELS 생성';
     }
+    if (this.btnTranslateText) this.btnTranslateText.textContent = this.getTranslateButtonLabel(mode);
+  }
+
+  getTranslateButtonLabel(mode = appState.currentMode) {
+    if (mode === 'both') return '3x1 생성 및 음성 연동';
+    if (mode === 'audio') return '🎙️ 음성에서 스크립트 추출 및 3x1 생성';
+    return '3x1 해석 및 FELS 생성';
+  }
+
+  /** Gemini inline audio is only attempted for real uploads within the size limit. */
+  canSendAudioToAI(file) {
+    return !!file && typeof file.size === 'number' && file.size <= MAX_AI_INLINE_AUDIO_BYTES;
+  }
+
+  shouldUseAiAlignment() {
+    const file = appState.uploadedAudioFile;
+    return !!file && !appState.isSynthesizedAudio && aiService.hasKey() &&
+      aiService.provider === 'gemini' && this.canSendAudioToAI(file);
+  }
+
+  /** Base64-encodes the upload once and reuses it for STT / alignment / re-sync. */
+  async getAudioBase64(file) {
+    if (this.cachedBase64 && this.cachedBase64.file === file) return this.cachedBase64.base64;
+    const base64 = await this.readFileAsBase64(file);
+    this.cachedBase64 = { file, base64 };
+    return base64;
+  }
+
+  /** Shared boundary resolution for handleTranslate() and autoSyncAudioScript(). */
+  async computeSentenceBoundaries(rawSentences) {
+    const file = appState.uploadedAudioFile;
+    const aiAlign = this.shouldUseAiAlignment()
+      ? async () => aiService.alignAudioWithScript(await this.getAudioBase64(file), file.type || 'audio/mp3', rawSentences)
+      : null;
+    return resolveSentenceBoundaries({ audioBuffer: appState.audioBuffer, sentences: rawSentences, aiAlign });
   }
 
   async handleAudioFile(file) {
@@ -3605,8 +4000,8 @@ class InputView {
       <div class="audio-file-info">
         <div class="audio-file-icon">🎵</div>
         <div class="audio-file-details">
-          <div class="audio-file-name">${file.name}</div>
-          <div class="audio-file-meta">${formatSize(file.size)} • ${file.type || 'audio/mp3'}</div>
+          <div class="audio-file-name">${escapeHtml(file.name)}</div>
+          <div class="audio-file-meta">${formatSize(file.size)} • ${escapeHtml(file.type || 'audio/mp3')}</div>
         </div>
         <button id="btnRemoveAudio" class="icon-btn remove-btn" title="오디오 삭제">✕</button>
       </div>
@@ -3641,25 +4036,35 @@ class InputView {
     toast.show('오디오 파일이 제거되었습니다.');
   }
 
+  /**
+   * @returns {Promise<boolean>} true when appState.sentenceList was (re)built successfully
+   */
   async handleTranslate() {
+    // Ctrl+Enter / preset chips can fire while a request is already running (button is disabled then)
+    if (this.btnTranslate && this.btnTranslate.disabled === true) return false;
     const mode = appState.currentMode;
 
     // Mode 2: Audio Only (STT)
     if (mode === 'audio') {
       if (!appState.uploadedAudioFile) {
         toast.show('⚠️ 먼저 MP3 음성 파일을 선택 또는 드래그하여 업로드하세요.');
-        return;
+        return false;
       }
       if (!aiService.hasKey()) {
         toast.show('⚠️ 음성 인식(STT)을 위해 우측 상단 설정에서 AI API 키를 입력하세요.');
         const btnSettings = document.getElementById('btnSettings');
         if (btnSettings) btnSettings.click();
-        return;
+        return false;
+      }
+      if (!this.canSendAudioToAI(appState.uploadedAudioFile)) {
+        toast.show('⚠️ 15MB를 초과하는 음성 파일은 AI 음성 인식을 지원하지 않습니다. 파일을 나눠 업로드하거나 스크립트를 직접 입력하세요.');
+        return false;
       }
 
+      let success = false;
       this.setLoading(true);
       try {
-        const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
+        const base64Audio = await this.getAudioBase64(appState.uploadedAudioFile);
         const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
         const aiResult = await aiService.transcribeAndTranslateAudio(base64Audio, mimeType);
 
@@ -3709,6 +4114,7 @@ class InputView {
 
         appState.scriptText = scriptText;
         appState.setSentenceList(sentenceList);
+        success = true; // data is ready even if a later UI render step fails
 
         // Render Results Panel on Page 1
         this.renderParsedResults({ scrollToSection: true });
@@ -3719,7 +4125,7 @@ class InputView {
       } finally {
         this.setLoading(false);
       }
-      return;
+      return success;
     }
 
     // Mode 1 (Both) or Mode 3 (Text)
@@ -3727,9 +4133,10 @@ class InputView {
     if (!text) {
       toast.show('⚠️ 해석할 영어 스크립트를 먼저 입력하거나 붙여넣으세요.');
       if (this.inputEnglish) this.inputEnglish.focus();
-      return;
+      return false;
     }
 
+    let success = false;
     this.setLoading(true);
 
     try {
@@ -3756,50 +4163,8 @@ class InputView {
       let rawSentences = splitIntoSentences(text, { filterKorean: true });
       if (rawSentences.length === 0) rawSentences.push(cleanPracticeSentence(text) || text);
 
-      let boundaries = null;
-      // If authentic MP3 uploaded and Gemini key available, attempt AI audio-script alignment
-      if (appState.uploadedAudioFile && !appState.isSynthesizedAudio && aiService.hasKey() && aiService.provider === 'gemini') {
-        try {
-          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
-          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
-          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
-          if (alignments && alignments.length === rawSentences.length) {
-            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
-          }
-        } catch (alignErr) {
-          console.warn('AI audio alignment fallback:', alignErr);
-        }
-      }
-
-      if (!boundaries) {
-        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
-      } else if (appState.audioBuffer && boundaries.length > 0) {
-        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
-        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
-        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
-          boundaries[0].start = introSec;
-        }
-      }
-
-      // Safety extension: ensure each sentence end has generous headroom (+0.9s ~ +1.0s)
-      // and is NEVER cut off prematurely by 1 second
-      if (boundaries && boundaries.length === rawSentences.length) {
-        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
-        for (let i = 0; i < boundaries.length; i++) {
-          const b = boundaries[i];
-          if (b.end !== null) {
-            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
-              ? boundaries[i + 1].start
-              : totalDuration;
-            if (nextStart !== null && nextStart > b.start) {
-              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
-              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
-            } else if (totalDuration !== null) {
-              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
-            }
-          }
-        }
-      }
+      // AI alignment (optional) → VAD fallback → Korean intro check → end padding (see audio/boundary-utils.js)
+      const boundaries = await this.computeSentenceBoundaries(rawSentences);
 
       // Parallel fetch natural Korean translation for all sentences
       const naturalTranslations = await Promise.all(
@@ -3847,6 +4212,7 @@ class InputView {
 
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
+      success = true; // data is ready even if a later UI render step fails
 
       // Render Results Panel on Page 1
       this.renderParsedResults({ scrollToSection: true });
@@ -3857,6 +4223,7 @@ class InputView {
     } finally {
       this.setLoading(false);
     }
+    return success;
   }
 
   /**
@@ -3871,48 +4238,9 @@ class InputView {
     toast.show('⚡ 음성과 스크립트 자동 Sync 계산 중...');
     try {
       const rawSentences = appState.sentenceList.map(s => s.text);
-      let boundaries = null;
-
-      if (aiService.hasKey() && aiService.provider === 'gemini' && !appState.isSynthesizedAudio) {
-        try {
-          const base64Audio = await this.readFileAsBase64(appState.uploadedAudioFile);
-          const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
-          const alignments = await aiService.alignAudioWithScript(base64Audio, mimeType, rawSentences);
-          if (alignments && alignments.length === rawSentences.length) {
-            boundaries = alignments.map(a => ({ start: a.start, end: a.end }));
-          }
-        } catch (aiErr) {
-          console.warn('AI audio alignment fallback:', aiErr);
-        }
-      }
-
-      if (!boundaries) {
-        boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
-      } else if (appState.audioBuffer && boundaries.length > 0) {
-        // Cross-verify with PCM VAD to guarantee Korean intro announcement is skipped
-        const introSec = detectKoreanIntroDuration(appState.audioBuffer, rawSentences);
-        if (introSec > 2.0 && boundaries[0].start !== null && boundaries[0].start < introSec - 0.5) {
-          boundaries[0].start = introSec;
-        }
-      }
+      const boundaries = await this.computeSentenceBoundaries(rawSentences);
 
       if (boundaries && boundaries.length === appState.sentenceList.length) {
-        const totalDuration = appState.audioBuffer ? appState.audioBuffer.duration : null;
-        for (let i = 0; i < boundaries.length; i++) {
-          const b = boundaries[i];
-          if (b.end !== null) {
-            const nextStart = (i + 1 < boundaries.length && boundaries[i + 1].start !== null)
-              ? boundaries[i + 1].start
-              : totalDuration;
-            if (nextStart !== null && nextStart > b.start) {
-              const maxSafeEnd = Math.max(b.start + 0.4, nextStart - 0.15);
-              b.end = Math.min(maxSafeEnd, Math.round((b.end + 0.9) * 10) / 10);
-            } else if (totalDuration !== null) {
-              b.end = Math.min(totalDuration, Math.round((b.end + 1.0) * 10) / 10);
-            }
-          }
-        }
-
         appState.sentenceList.forEach((stn, i) => {
           stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
@@ -4340,17 +4668,21 @@ class InputView {
         });
       }
 
+      // Enter only commits the field (blur → single 'change' event). Previously Enter AND change both ran the
+      // update, firing duplicate AI requests. isComposing guard keeps Korean IME composition intact.
+      const commitOnEnter = (inputEl) => (e) => {
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          if (typeof inputEl.blur === 'function') inputEl.blur();
+        }
+      };
+
       // 7. Hook up Script Input
       if (scriptInput) {
         scriptInput.addEventListener('change', () => {
           this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
         });
-        scriptInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            this.updateSentenceScript(stn, scriptInput.value, chunkInput, directInput, naturalInput, track);
-          }
-        });
+        scriptInput.addEventListener('keydown', commitOnEnter(scriptInput));
       }
 
       // 8. Hook up Chunk Text Input (English ||)
@@ -4358,25 +4690,16 @@ class InputView {
         chunkInput.addEventListener('change', () => {
           this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
         });
-        chunkInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            this.updateChunksFromTextInput(stn, chunkInput.value, directInput, track);
-          }
-        });
+        chunkInput.addEventListener('keydown', commitOnEnter(chunkInput));
       }
 
       // 9. Hook up Direct Chunk Input (Korean ||)
       if (directInput) {
         directInput.addEventListener('change', () => {
-          this.updateChunksFromDirectInput(stn, directInput.value);
+          const ok = this.updateChunksFromDirectInput(stn, directInput.value);
+          if (!ok) directInput.value = this.getDirectChunkString(stn.result?.chunks);
         });
-        directInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            this.updateChunksFromDirectInput(stn, directInput.value);
-          }
-        });
+        directInput.addEventListener('keydown', commitOnEnter(directInput));
       }
 
       // 10. Hook up Natural Korean Input
@@ -4493,12 +4816,19 @@ class InputView {
         dividerSlot.textContent = isBoundary ? '||' : '+';
 
         dividerSlot.addEventListener('click', async () => {
+          // Ignore clicks while this sentence's chunk translation is still in flight (prevents out-of-order overwrite)
+          if (this.busySentences.has(stn)) return;
           if (boundaryWordIndices.has(idx)) {
             boundaryWordIndices.delete(idx);
           } else {
             boundaryWordIndices.add(idx);
           }
-          await this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
+          this.busySentences.add(stn);
+          try {
+            await this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
+          } finally {
+            this.busySentences.delete(stn);
+          }
           if (chunkInput) {
             chunkInput.value = this.getChunkString(stn.result.chunks);
           }
@@ -4553,6 +4883,7 @@ class InputView {
   async updateChunksFromTextInput(stn, chunkedText, directInput, track) {
     const parts = (chunkedText || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!parts.length) return;
+    if (this.busySentences.has(stn)) return;
 
     const newChunks = parts.map(part => {
       const existing = (stn.result?.chunks || []).find(c => c.en.trim() === part);
@@ -4566,6 +4897,7 @@ class InputView {
     stn.result.chunks = newChunks;
 
     if (stn.result.natural) {
+      this.busySentences.add(stn);
       try {
         const directKoChunks = await aiService.generateDirectChunks(newChunks, stn.result.natural, stn.text);
         if (directKoChunks && directKoChunks.length === newChunks.length) {
@@ -4577,6 +4909,8 @@ class InputView {
         }
       } catch (e) {
         this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
+      } finally {
+        this.busySentences.delete(stn);
       }
     }
 
@@ -4592,20 +4926,30 @@ class InputView {
     toast.show('✂️ 청크 구분이 저장되었습니다.');
   }
 
+  /**
+   * Applies the "직독직해" input (ko1 || ko2 || ...) slot-by-slot.
+   * Empty slots are written as DIRECT_EMPTY_PLACEHOLDER by getDirectChunkString(), so positions never shift.
+   * @returns {boolean} false when the slot count does not match the chunk count (nothing is changed)
+   */
   updateChunksFromDirectInput(stn, directStr) {
-    const parts = (directStr || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!stn.result) stn.result = {};
     if (!stn.result.chunks) stn.result.chunks = [];
+    const chunks = stn.result.chunks;
+    const parts = (directStr || '').split('||').map(p => p.trim());
 
-    stn.result.chunks.forEach((chunk, i) => {
-      if (i < parts.length) {
-        chunk.ko = parts[i];
-      }
+    if (parts.length !== chunks.length) {
+      toast.show(`⚠️ 직독직해 칸 수(${parts.length})가 청크 수(${chunks.length})와 다릅니다. '||' 개수를 맞춰주세요.`);
+      return false;
+    }
+
+    chunks.forEach((chunk, i) => {
+      chunk.ko = parts[i] === DIRECT_EMPTY_PLACEHOLDER ? '' : parts[i];
     });
 
-    stn.result.chunk_text = stn.result.chunks.map(c => c.ko).join(' || ');
-    stn.result.direct = stn.result.chunks.map(c => c.ko).join(' / ');
+    stn.result.chunk_text = chunks.map(c => c.ko).join(' || ');
+    stn.result.direct = chunks.map(c => c.ko).join(' / ');
     toast.show('🧩 직독직해 해석이 저장되었습니다.');
+    return true;
   }
 
   async updateSentenceScript(stn, newText, chunkInput, directInput, naturalInput, track) {
@@ -4657,13 +5001,7 @@ class InputView {
   }
 
   escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    return escapeHtml(str); // delegates to the shared utils/dom.js implementation
   }
 
   getChunkString(chunks) {
@@ -4671,9 +5009,12 @@ class InputView {
     return chunks.map(c => (c.en || '').trim()).filter(Boolean).join(' || ');
   }
 
+  /** One slot per chunk (empty → placeholder) so updateChunksFromDirectInput() can map slots 1:1. */
   getDirectChunkString(chunks) {
     if (!chunks || !chunks.length) return '';
-    return chunks.map(c => (c.ko || '').trim()).filter(Boolean).join(' || ');
+    const slots = chunks.map(c => (c.ko || '').trim());
+    if (slots.every(s => !s)) return '';
+    return slots.map(s => s || DIRECT_EMPTY_PLACEHOLDER).join(' || ');
   }
 
   playOrSpeakSentence(stn, speakBtn) {
@@ -4685,34 +5026,20 @@ class InputView {
       }, 1500);
     }
 
-    // 1. If authentic uploaded audio exists, play slice
-    if (appState.uploadedAudioUrl && this.nativeAudioPlayer && !appState.isSynthesizedAudio) {
-      if (!this.nativeAudioPlayer.src || this.nativeAudioPlayer.src !== appState.uploadedAudioUrl) {
-        this.nativeAudioPlayer.src = appState.uploadedAudioUrl;
-      }
-      if (stn.audioStart !== null && stn.audioEnd !== null) {
-        try {
-          this.nativeAudioPlayer.currentTime = stn.audioStart;
-          this.nativeAudioPlayer.play().catch(e => {
+    // 1. If authentic uploaded audio exists, play the slice through the shared playback controller
+    //    (owner 'input' → the Practice looper ignores this playback; segment end is enforced by rAF)
+    if (appState.uploadedAudioUrl && !appState.isSynthesizedAudio &&
+        stn.audioStart !== null && stn.audioEnd !== null) {
+      try {
+        playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+        playbackController.playSegment(stn.audioStart, stn.audioEnd, { owner: 'input' })
+          .catch(e => {
             console.warn('Audio play error, falling back to TTS:', e);
             speakText(stn.text, 'en-US');
           });
-
-          if (this.currentStopHandler) {
-            this.nativeAudioPlayer.removeEventListener('timeupdate', this.currentStopHandler);
-          }
-          this.currentStopHandler = () => {
-            if (this.nativeAudioPlayer.currentTime >= stn.audioEnd) {
-              this.nativeAudioPlayer.pause();
-              this.nativeAudioPlayer.removeEventListener('timeupdate', this.currentStopHandler);
-              this.currentStopHandler = null;
-            }
-          };
-          this.nativeAudioPlayer.addEventListener('timeupdate', this.currentStopHandler);
-          return;
-        } catch (e) {
-          console.warn('Audio playback error, fallback to TTS:', e);
-        }
+        return;
+      } catch (e) {
+        console.warn('Audio playback error, fallback to TTS:', e);
       }
     }
 
@@ -4773,12 +5100,12 @@ class InputView {
         const fels = getFelsInfo(w);
         if (fels) {
           if (isTeacher) {
-            return `<span class="handout-fels-blank answer-mode">[ ${w} ]</span>`;
+            return `<span class="handout-fels-blank answer-mode">[ ${escapeHtml(w)} ]</span>`;
           } else {
             return `<span class="handout-fels-blank">[&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]</span>`;
           }
         } else {
-          return `<span>${w}</span>`;
+          return `<span>${escapeHtml(w)}</span>`;
         }
       });
 
@@ -4805,7 +5132,7 @@ class InputView {
 
       const chunkedKoSegments = chunks.map(c => {
         const koText = (c.ko || '').trim() || (c.en || '').trim();
-        return `<span class="handout-chunk-box">[ ${koText} ]</span>`;
+        return `<span class="handout-chunk-box">[ ${escapeHtml(koText)} ]</span>`;
       });
       const chunkedKoHtml = chunkedKoSegments.join('<span class="handout-chunk-divider"> || </span>');
 
@@ -4815,7 +5142,7 @@ class InputView {
             <span class="handout-stn-num">[${String(idx + 1).padStart(2, '0')}]</span>
             <div class="handout-direct-ko">${chunkedKoHtml}</div>
           </div>
-          ${isTeacher ? `<div class="handout-teacher-en-ref"><strong>[영문 정답]:</strong> ${stn.text}</div>` : ''}
+          ${isTeacher ? `<div class="handout-teacher-en-ref"><strong>[영문 정답]:</strong> ${escapeHtml(stn.text)}</div>` : ''}
           <div class="handout-speaking-check-row">
             <span class="speaking-check-label">🗣️ 말하기 훈련 체크:</span>
             <span class="check-box-pill">☐ 1차: 청크별 낭독</span>
@@ -4825,6 +5152,8 @@ class InputView {
         </div>
       `;
     });
+
+    const handoutYear = new Date().getFullYear();
 
     this.printableSheet.innerHTML = `
       <!-- ========================================================================= -->
@@ -4851,7 +5180,7 @@ class InputView {
               <tr>
                 <td style="width: 55px; height: 22px;"></td>
                 <td style="width: 65px;"></td>
-                <td style="width: 75px; font-size: 8pt;">2026. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
+                <td style="width: 75px; font-size: 8pt;">${handoutYear}. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
                 <td style="width: 60px; font-weight: 700;">&nbsp;&nbsp;&nbsp;&nbsp; / 100</td>
               </tr>
             </table>
@@ -4913,7 +5242,7 @@ class InputView {
               <tr>
                 <td style="width: 55px; height: 22px;"></td>
                 <td style="width: 65px;"></td>
-                <td style="width: 75px; font-size: 8pt;">2026. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
+                <td style="width: 75px; font-size: 8pt;">${handoutYear}. &nbsp;&nbsp;. &nbsp;&nbsp;.</td>
                 <td style="width: 60px; font-weight: 700; font-size: 8pt;">[ &nbsp; 통과 &nbsp; ]</td>
               </tr>
             </table>
@@ -5044,30 +5373,20 @@ class InputView {
     });
   }
 
+  /**
+   * Toggles the busy state WITHOUT rebuilding the button markup.
+   * (The previous innerHTML rewrite detached this.btnTranslateText, so later setMode() label updates were lost.)
+   */
   setLoading(isLoading) {
     if (!this.btnTranslate) return;
-    if (isLoading) {
-      this.btnTranslate.disabled = true;
-      this.btnTranslate.innerHTML = `
-        <svg class="spin-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
-        </svg>
-        <span>처리 중...</span>
-      `;
-    } else {
-      this.btnTranslate.disabled = false;
-      const mode = appState.currentMode;
-      const btnLabel = mode === 'audio' 
-        ? '🎙️ 음성에서 스크립트 추출 및 3x1 생성' 
-        : (mode === 'both' ? '3x1 생성 및 음성 연동' : '3x1 해석 및 FELS 생성');
-      this.btnTranslate.innerHTML = `
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 12h14"></path>
-          <path d="m12 5 7 7-7 7"></path>
-        </svg>
-        <span id="btnTranslateText">${btnLabel}</span>
-        <kbd class="btn-kbd">Ctrl+↵</kbd>
-      `;
+    this.btnTranslate.disabled = !!isLoading;
+    if (this.btnTranslateText) {
+      this.btnTranslateText.textContent = isLoading ? '처리 중...' : this.getTranslateButtonLabel(appState.currentMode);
+    }
+    const icon = typeof this.btnTranslate.querySelector === 'function' ? this.btnTranslate.querySelector('svg') : null;
+    if (icon && icon.classList) {
+      if (isLoading) icon.classList.add('spin-icon');
+      else icon.classList.remove('spin-icon');
     }
   }
 
@@ -5177,8 +5496,9 @@ class PracticeView {
     this.currentMouseX = null;
     this.draggingDividerIndex = null;
     this.selectedDividerForMove = null;
-    this.stabilizedWidths = [];
     this.felsBlanks = [];
+    // Last AppState.dataVersion seen by onActivated (fresh data → FELS mode default)
+    this.lastSeenDataVersion = -1;
 
     this.initLooperCallbacks();
     this.initEvents();
@@ -5208,8 +5528,25 @@ class PracticeView {
       },
       onPlayStateChange: (isPlaying) => {
         this.updatePlayPauseIcon(isPlaying);
+      },
+      onLoopRestart: () => {
+        // Synthesized sessions play a silent WAV; re-speak the sentence on every loop repeat
+        if (appState.isSynthesizedAudio) {
+          const activeStn = appState.getActiveSentence();
+          if (activeStn) speakText(activeStn.text);
+        }
       }
     });
+  }
+
+  /**
+   * Page 2 looper/sentence-boundary enforcement is only valid while Page 2 is visible AND
+   * Page 2 started the current playback. Prevents pausing Page 1 / Page 3 segment playback.
+   */
+  isLooperActive() {
+    const onPracticePage = !this.router || typeof this.router.getCurrentPage !== 'function'
+      || this.router.getCurrentPage() === 'practice';
+    return onPracticePage && playbackController.isOwnedBy('practice');
   }
 
   initEvents() {
@@ -5221,7 +5558,7 @@ class PracticeView {
 
       this.nativeAudioPlayer.addEventListener('timeupdate', () => {
         this.updateAudioProgress();
-        this.looperEngine.checkBoundary();
+        if (this.isLooperActive()) this.looperEngine.checkBoundary();
         this.drawWaveform();
       });
 
@@ -5316,14 +5653,7 @@ class PracticeView {
       toggleRowNaturalBtn.addEventListener('click', () => this.toggleRowNaturalVisibility());
     }
 
-    // Copy & Speak Row buttons
-    document.querySelectorAll('.copy-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const target = btn.getAttribute('data-target');
-        this.copyResult(target, btn);
-      });
-    });
-
+    // Speak Row buttons
     document.querySelectorAll('.speak-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const target = btn.getAttribute('data-target');
@@ -5372,16 +5702,24 @@ class PracticeView {
     if (!this.waveformCanvas) return;
     const canvas = this.waveformCanvas;
 
-    canvas.addEventListener('mousedown', (e) => {
+    // Pointer Events: one code path for mouse, touch (tablets / interactive whiteboards) and pen.
+    // setPointerCapture keeps move/up events on the canvas even when the pointer leaves it.
+    canvas.addEventListener('pointerdown', (e) => {
       if (!this.nativeAudioPlayer.src) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       const rect = canvas.getBoundingClientRect();
       this.isCanvasMouseDown = true;
       this.dragStartX = e.clientX - rect.left;
       this.currentMouseX = this.dragStartX;
       this.isRangeDragging = false;
+      if (typeof canvas.setPointerCapture === 'function') {
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch (err) {}
+      }
     });
 
-    window.addEventListener('mousemove', (e) => {
+    canvas.addEventListener('pointermove', (e) => {
       if (!this.isCanvasMouseDown || !this.waveformCanvas) return;
       const rect = this.waveformCanvas.getBoundingClientRect();
       this.currentMouseX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
@@ -5391,7 +5729,15 @@ class PracticeView {
       }
     });
 
-    window.addEventListener('mouseup', (e) => {
+    canvas.addEventListener('pointercancel', () => {
+      this.isCanvasMouseDown = false;
+      this.isRangeDragging = false;
+      this.dragStartX = null;
+      this.currentMouseX = null;
+      this.drawWaveform();
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
       if (!this.isCanvasMouseDown) return;
       const rect = this.waveformCanvas.getBoundingClientRect();
       const curX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
@@ -5481,10 +5827,9 @@ class PracticeView {
       targetStn.cachedPeaks = WaveformRenderer.extractSentencePeaks(appState.audioBuffer, targetStn);
     }
 
-    // Synchronize Audio Player Source
-    if (appState.uploadedAudioUrl && (!this.nativeAudioPlayer.src || this.nativeAudioPlayer.src !== appState.uploadedAudioUrl)) {
-      this.nativeAudioPlayer.src = appState.uploadedAudioUrl;
-      this.nativeAudioPlayer.muted = appState.isSynthesizedAudio;
+    // Synchronize Audio Player Source (muted flag is ALWAYS re-applied → no silent real MP3)
+    if (appState.uploadedAudioUrl) {
+      playbackController.setSource(appState.uploadedAudioUrl, { muted: appState.isSynthesizedAudio });
     }
 
     // Update Natural Korean Text (Keep hidden by default)
@@ -5666,23 +6011,6 @@ class PracticeView {
     }, 50);
   }
 
-  translateCustomChunk(chunkEn, originalChunks = []) {
-    const cleanEn = chunkEn.trim();
-    if (!cleanEn) return '';
-    const existing = (originalChunks || []).find(c => c.en && c.en.trim().toLowerCase() === cleanEn.toLowerCase());
-    if (existing && existing.ko) return existing.ko;
-
-    try {
-      const parsed = this.ruleEngine.process(cleanEn);
-      if (parsed && parsed.chunks && parsed.chunks.length > 0) {
-        return parsed.chunks.map(c => c.ko).join(' ');
-      }
-      if (parsed && parsed.natural) return parsed.natural;
-    } catch (e) {}
-
-    return this.ruleEngine.translatePhrase(cleanEn) || cleanEn;
-  }
-
   findNextBlank(currentInput) {
     const idx = this.felsBlanks.findIndex(b => b.inputEl === currentInput);
     if (idx !== -1 && idx + 1 < this.felsBlanks.length) {
@@ -5694,8 +6022,6 @@ class PracticeView {
   computeAndApplyStabilizedWidths() {
     const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
     if (!cards.length) return;
-
-    this.stabilizedWidths = [];
 
     cards.forEach((card) => {
       const felsWrap = card.querySelector('.chunk-tokens-fels');
@@ -5749,6 +6075,7 @@ class PracticeView {
     }
 
     if (this.nativeAudioPlayer.paused) {
+      playbackController.claim('practice');
       const activeStn = appState.getActiveSentence();
       const stnStart = (activeStn && activeStn.audioStart !== null) ? activeStn.audioStart : 0;
       const stnEnd = (activeStn && activeStn.audioEnd !== null) ? activeStn.audioEnd : this.nativeAudioPlayer.duration;
@@ -5837,6 +6164,7 @@ class PracticeView {
     appState.setLoopRange(start, end);
     this.updateLoopBadge();
 
+    playbackController.claim('practice');
     this.nativeAudioPlayer.currentTime = appState.loopStart;
     this.nativeAudioPlayer.play().then(() => {
       this.updatePlayPauseIcon(true);
@@ -5870,6 +6198,7 @@ class PracticeView {
       this.looperEngine.reset();
       this.updateLoopBadge();
 
+      playbackController.claim('practice');
       this.nativeAudioPlayer.currentTime = appState.loopStart;
       this.nativeAudioPlayer.play().then(() => {
         this.updatePlayPauseIcon(true);
@@ -5914,7 +6243,7 @@ class PracticeView {
     this.updateFelsModeButtonUI();
 
     const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
-    cards.forEach((card, idx) => {
+    cards.forEach((card) => {
       const felsWrap = card.querySelector('.chunk-tokens-fels');
       const origWrap = card.querySelector('.chunk-tokens-original');
 
@@ -5930,10 +6259,6 @@ class PracticeView {
           origWrap.classList.remove('hidden');
           origWrap.style.display = 'inline-flex';
         }
-      }
-
-      if (this.stabilizedWidths[idx]) {
-        card.style.width = `${this.stabilizedWidths[idx]}px`;
       }
     });
 
@@ -6215,7 +6540,7 @@ class PracticeView {
     const loop = () => {
       if (!this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
         this.updateAudioProgress();
-        this.looperEngine.checkBoundary();
+        if (this.isLooperActive()) this.looperEngine.checkBoundary();
         this.drawWaveform();
         requestAnimationFrame(loop);
       } else {
@@ -6249,28 +6574,6 @@ class PracticeView {
     });
   }
 
-  copyResult(target, btn) {
-    const activeStn = appState.getActiveSentence();
-    if (!activeStn) return;
-
-    let text = '';
-    if (target === 'en') {
-      text = activeStn.text || '';
-    } else if (target === 'chunk') {
-      text = activeStn.result?.chunks ? activeStn.result.chunks.map(c => c.ko).join(' || ') : '';
-    } else if (target === 'natural') {
-      text = activeStn.result?.natural || '';
-    }
-
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      const orig = btn.innerHTML;
-      btn.innerHTML = '<span>복사됨!</span>';
-      setTimeout(() => { btn.innerHTML = orig; }, 1500);
-      toast.show('📋 클립보드에 복사되었습니다.');
-    });
-  }
-
   speakResult(target) {
     const activeStn = appState.getActiveSentence();
     if (!activeStn) return;
@@ -6288,6 +6591,8 @@ class PracticeView {
   }
 
   onActivated() {
+    playbackController.claim('practice');
+
     // 1. If sentenceList is empty, seed with default sample sentence
     if (!appState.sentenceList || appState.sentenceList.length === 0) {
       const defaultScript = "I went to school yesterday. She bought a new book at the bookstore.";
@@ -6303,14 +6608,23 @@ class PracticeView {
       appState.setSentenceList(list);
     }
 
-    // 2. Default state: Sentence 1 + FELS Weak-Form mode
-    appState.activeSentenceIndex = 0;
-    appState.isFelsMode = true;
+    // 2. Default state policy:
+    //    - Fresh data (new sentence list since the last visit) → FELS Weak-Form mode.
+    //      (AppState.setSentenceList() already reset activeSentenceIndex to S1.)
+    //    - Revisit (e.g. Page 3 "S3 ↗" jump, returning from Page 3) → keep the current sentence.
+    const isFreshData = this.lastSeenDataVersion !== appState.dataVersion;
+    this.lastSeenDataVersion = appState.dataVersion;
+    if (isFreshData) {
+      appState.isFelsMode = true;
+    }
+    const lastIdx = appState.sentenceList.length - 1;
+    const startIdx = Math.min(Math.max(0, appState.activeSentenceIndex || 0), lastIdx);
+    appState.activeSentenceIndex = startIdx;
     this.updateFelsModeButtonUI();
 
-    // 3. Render sentence navigator & load sentence 1
+    // 3. Render sentence navigator & load the active sentence
     this.renderSentenceNavigator();
-    this.loadSentence(0);
+    this.loadSentence(startIdx);
 
     // 4. Ensure Waveform Canvas is drawn with proper visible dimensions
     this.drawWaveform();
@@ -6364,6 +6678,8 @@ class PracticeView {
 
 
 
+
+
 class MemorizeView {
   constructor(router) {
     this.router = router;
@@ -6386,18 +6702,13 @@ class MemorizeView {
     this.classroomModal = document.getElementById('classroomModal');
     this.classroomStnBadge = document.getElementById('classroomStnBadge');
     this.classroomStnCounter = document.getElementById('classroomStnCounter');
-    this.classroomFullText = document.getElementById('classroomFullText');
     this.classroomChunksContainer = document.getElementById('classroomChunksContainer');
-    this.classroomNaturalSection = document.getElementById('classroomNaturalSection');
-    this.classroomNaturalText = document.getElementById('classroomNaturalText');
-    this.btnToggleClassroomNatural = document.getElementById('btnToggleClassroomNatural');
     this.btnClassroomPlay = document.getElementById('btnClassroomPlay');
     this.btnClassroomFlipAll = document.getElementById('btnClassroomFlipAll');
     this.btnClassroomPrev = document.getElementById('btnClassroomPrev');
     this.btnClassroomNext = document.getElementById('btnClassroomNext');
     this.btnCloseClassroomModal = document.getElementById('btnCloseClassroomModal');
     this.classroomIndex = 0;
-    this.isClassroomNaturalHidden = false;
     this.areClassroomCardsFlipped = false;
     this.boundClassroomKeyHandler = this.handleClassroomKeyDown.bind(this);
 
@@ -6452,9 +6763,6 @@ class MemorizeView {
     }
     if (this.btnClassroomFlipAll) {
       this.btnClassroomFlipAll.addEventListener('click', () => this.flipAllClassroomCards());
-    }
-    if (this.btnToggleClassroomNatural) {
-      this.btnToggleClassroomNatural.addEventListener('click', () => this.toggleClassroomNatural());
     }
   }
 
@@ -6527,7 +6835,7 @@ class MemorizeView {
           <span>S${sIdx + 1}</span>
           <span class="jump-icon">↗</span>
         </button>
-        <span class="memorize-stn-preview" title="클릭하여 교실 대형 화면으로 보기">${stn.text}</span>
+        <span class="memorize-stn-preview" title="클릭하여 교실 대형 화면으로 보기">${escapeHtml(stn.text)}</span>
         <button class="memorize-stn-expand-btn" title="교실 대형 화면으로 크게 보기 (모달)">🔍 크게 보기</button>
         <button class="memorize-stn-play" title="이 문장 듣기">▶</button>
       `;
@@ -6597,10 +6905,10 @@ class MemorizeView {
           <div class="memorize-card-inner">
             ${keyBadge}
             <div class="memorize-face memorize-face-en">
-              <span class="chunk-en-text">${chunk.en}</span>
+              <span class="chunk-en-text">${escapeHtml(chunk.en)}</span>
             </div>
             <div class="memorize-face memorize-face-ko">
-              <span class="chunk-ko-text">${chunk.ko}</span>
+              <span class="chunk-ko-text">${escapeHtml(chunk.ko)}</span>
             </div>
           </div>
         `;
@@ -6689,9 +6997,7 @@ class MemorizeView {
   stopPlayAllScript() {
     this.isPlayingAll = false;
     this.updatePlayAllButtonUI(false);
-    if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused) {
-      this.nativeAudioPlayer.pause();
-    }
+    playbackController.stop();
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -6735,26 +7041,24 @@ class MemorizeView {
 
     const targetStn = list[idx];
 
-    // Real audio play
-    if (appState.uploadedAudioFile && this.nativeAudioPlayer && this.nativeAudioPlayer.src && !appState.isSynthesizedAudio) {
+    // Real audio play (owner 'memorize' → the Practice looper no longer pauses it at S1's boundary)
+    if (this.canPlayUploadedAudio()) {
       const stnStart = targetStn.audioStart !== null ? targetStn.audioStart : 0;
-      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : this.nativeAudioPlayer.duration;
+      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : null; // null → play to media end
 
-      this.nativeAudioPlayer.currentTime = stnStart;
-      this.nativeAudioPlayer.play().catch(e => console.error(e));
-
-      const checkEnd = () => {
-        if (!this.isPlayingAll) return;
-        if (this.nativeAudioPlayer.currentTime >= stnEnd || this.nativeAudioPlayer.ended) {
+      playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+      playbackController.playSegment(stnStart, stnEnd, {
+        owner: 'memorize',
+        onEnd: () => {
           // 0.4s pause between sentences
           setTimeout(() => {
             if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
           }, 400);
-        } else {
-          requestAnimationFrame(checkEnd);
         }
-      };
-      requestAnimationFrame(checkEnd);
+      }).catch(e => {
+        console.error(e);
+        if (this.isPlayingAll) this.stopPlayAllScript();
+      });
     } else {
       // Speech Synthesis
       if ('speechSynthesis' in window) {
@@ -6775,6 +7079,11 @@ class MemorizeView {
     }
   }
 
+  /** Real uploaded audio (not the silent synthesized WAV) is available for segment playback. */
+  canPlayUploadedAudio() {
+    return !!appState.uploadedAudioUrl && !appState.isSynthesizedAudio;
+  }
+
   playSingleSentence(idx) {
     const list = appState.sentenceList;
     if (!list || idx < 0 || idx >= list.length) return;
@@ -6782,21 +7091,16 @@ class MemorizeView {
     this.highlightActiveSentenceRow(idx);
     const targetStn = list[idx];
 
-    if (appState.uploadedAudioFile && this.nativeAudioPlayer && this.nativeAudioPlayer.src && !appState.isSynthesizedAudio) {
+    if (this.canPlayUploadedAudio()) {
       const stnStart = targetStn.audioStart !== null ? targetStn.audioStart : 0;
-      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : this.nativeAudioPlayer.duration;
+      const stnEnd = targetStn.audioEnd !== null ? targetStn.audioEnd : null;
 
-      this.nativeAudioPlayer.currentTime = stnStart;
-      this.nativeAudioPlayer.play().catch(e => console.error(e));
-
-      const checkEnd = () => {
-        if (this.nativeAudioPlayer.currentTime >= stnEnd || this.nativeAudioPlayer.ended) {
-          this.nativeAudioPlayer.pause();
-        } else {
-          requestAnimationFrame(checkEnd);
-        }
-      };
-      requestAnimationFrame(checkEnd);
+      playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+      playbackController.playSegment(stnStart, stnEnd, { owner: 'memorize' })
+        .catch(e => {
+          console.error(e);
+          speakText(targetStn.text, 'en-US');
+        });
     } else {
       speakText(targetStn.text, 'en-US');
     }
@@ -6855,7 +7159,6 @@ class MemorizeView {
     if (!list || sIdx < 0 || sIdx >= list.length) return;
 
     this.classroomIndex = sIdx;
-    this.isClassroomNaturalHidden = false;
     this.areClassroomCardsFlipped = false;
 
     this.renderClassroomModal();
@@ -6902,14 +7205,6 @@ class MemorizeView {
       card.classList.toggle('flipped', this.areClassroomCardsFlipped);
     });
     toast.show(this.areClassroomCardsFlipped ? '🔄 모든 청크 뒷면(해석)으로 뒤집기' : '🔄 모든 청크 앞면(영어)으로 뒤집기');
-  }
-
-  toggleClassroomNatural() {
-    this.isClassroomNaturalHidden = !this.isClassroomNaturalHidden;
-    if (this.classroomNaturalSection) {
-      this.classroomNaturalSection.classList.toggle('masked', this.isClassroomNaturalHidden);
-    }
-    toast.show(this.isClassroomNaturalHidden ? '우리말 해석 가림' : '우리말 해석 표시');
   }
 
   flipClassroomCardByIndex(cIdx) {
@@ -6959,13 +7254,6 @@ class MemorizeView {
       return;
     }
 
-    if (e.key === 't' || e.key === 'T') {
-      e.preventDefault();
-      e.stopPropagation();
-      this.toggleClassroomNatural();
-      return;
-    }
-
     // Number keys 1~9
     let num = null;
     if (e.code && /^Digit([1-9])$/.test(e.code)) {
@@ -7001,17 +7289,6 @@ class MemorizeView {
       this.btnClassroomNext.disabled = (this.classroomIndex >= list.length - 1);
     }
 
-    if (this.classroomFullText) {
-      this.classroomFullText.textContent = stn.text || '';
-    }
-
-    if (this.classroomNaturalText) {
-      this.classroomNaturalText.textContent = stn.result?.natural || '';
-    }
-    if (this.classroomNaturalSection) {
-      this.classroomNaturalSection.classList.toggle('masked', this.isClassroomNaturalHidden);
-    }
-
     if (this.classroomChunksContainer) {
       this.classroomChunksContainer.innerHTML = '';
       const chunks = stn.result?.chunks || [{ en: stn.text, ko: stn.result?.natural || '' }];
@@ -7040,13 +7317,13 @@ class MemorizeView {
 
         card.innerHTML = `
           <div class="classroom-card-inner">
-            <div class="classroom-card-sizer" aria-hidden="true">${longestText}</div>
+            <div class="classroom-card-sizer" aria-hidden="true">${escapeHtml(longestText)}</div>
             ${keyBadge}
             <div class="classroom-face classroom-face-en">
-              <span class="classroom-chunk-text">${enText}</span>
+              <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
             </div>
             <div class="classroom-face classroom-face-ko">
-              <span class="classroom-chunk-text">${koText}</span>
+              <span class="classroom-chunk-text">${escapeHtml(koText)}</span>
             </div>
           </div>
         `;

@@ -22,7 +22,17 @@ export class ShortcutManager {
     window.removeEventListener('keydown', this.boundKeyHandler);
   }
 
+  /** True while a modal dialog is visible — global shortcuts must not drive the player behind it. */
+  isModalOpen() {
+    if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return false;
+    return ['settingsModal', 'handoutModal', 'classroomModal'].some(id => {
+      const el = document.getElementById(id);
+      return !!(el && el.classList && typeof el.classList.contains === 'function' && !el.classList.contains('hidden'));
+    });
+  }
+
   handleKeyDown(e) {
+    if (this.isModalOpen()) return;
     const target = e.target;
     const isTyping = target && (
       target.tagName === 'INPUT' ||

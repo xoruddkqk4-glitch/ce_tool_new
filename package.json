@@ -1,0 +1,12 @@
+{
+  "name": "ce-tool",
+  "version": "1.1.0",
+  "private": true,
+  "description": "CE Tool - 3-Page Chunk & FELS Weak-Form Listening Trainer (standalone, zero dependencies)",
+  "scripts": {
+    "build": "node tools/build-standalone.js",
+    "watch": "node tools/build-standalone.js --watch",
+    "check": "node tools/check-syntax.js",
+    "test": "node tools/run-tests.js"
+  }
+}

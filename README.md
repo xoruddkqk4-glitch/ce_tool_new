@@ -78,73 +78,47 @@ Page 2 약형 연습 화면에서 고속 훈련을 위한 9대 전역 단축키�
 ## 📁 디렉토리 구조 (Directory Structure)
 
 ```text
-c:\Users\user\Desktop\local\09ce_tool_new\
-├── index.html                           # SPA 단일 진입 마크업 (3개 뷰 컨테이너)
-├── styles.css                           # 컴파일/통합 메인 스타일시트
-├── app.js                               # 단독 번들링 스크립트 (모듈 비의존성 보장)
+09ce_tool_new/
+├── index.html                           # SPA 단일 진입 마크업 (3개 뷰 컨테이너) — app.js / styles.css만 로드
+├── app.js                               # [빌드 산출물] src/ 단독 번들 (file:// 호환, 직접 수정 금지)
+├── styles.css                           # [빌드 산출물] styles/ 통합 스타일시트 (직접 수정 금지)
+├── package.json                         # npm 스크립트 (build / watch / check / test) — 외부 의존성 없음
 ├── AGENTS.md                            # 에이전트 실행 규칙 및 커밋/검증 정책
-├── .gitignore                           # Git 형상관리 제외 설정
 │
-├── src/                                 # 모듈화된 ES6+ 소스 코드 루트
-│   ├── main.js                          # 앱 진입점 및 3개 뷰 라우팅 조율기
-│   ├── core/                            # 전역 상태 관리 및 설정
-│   │   ├── app-state.js                 # 중앙 집중식 상태 관리 (AppState)
-│   │   └── config.js                    # 상수 및 프리셋 문장 정의
-│   ├── views/                           # 3개 전용 페이지 뷰
-│   │   ├── input-view.js                # Page 1: 데이터 입력, 스크립트/청크 편집, A4 유인물 모달
-│   │   ├── practice-view.js             # Page 2: 문장별 약형 연습, 파형, 카드, 단축키
-│   │   └── memorize-view.js             # Page 3: 전체 스크립트 암기 캔버스
-│   ├── engine/                          # 비즈니스 핵심 로직
-│   │   ├── chunk-parser.js              # 청크 분할 및 어휘/문법 규칙 파서
-│   │   ├── fels-engine.js               # FELS 7대 약형 기능어 탐지 및 블랭크 처리
-│   │   ├── api-client.js                # AI 모델(Gemini / OpenAI) 연동 클라이언트
-│   │   └── prompt-templates.js          # 프롬프트 템플릿
-│   ├── audio/                           # 오디오 프로세싱 파이프라인
-│   │   ├── audio-manager.js             # Web Audio API, PCM 버퍼 디코딩, A-B Looper
-│   │   ├── waveform-visualizer.js       # HTML5 Canvas 파형 시각화
-│   │   └── tts-synthesizer.js           # Web Speech API 음성 합성
-│   └── ui/                              # 재사용 UI 컴포넌트
-│       ├── router.js                    # SPA 해시/탭 라우터
-│       ├── shortcut-manager.js          # 전역 키보드 단축키 관리자
-│       └── theme-manager.js             # 다크/라이트 테마 제어
+├── src/                                 # ES Module 소스 (번들 시 import 제거 → import 별칭(as) 사용 금지)
+│   ├── main.js                          # 앱 진입점 (뷰/라우터/단축키 조립)
+│   ├── config/                          # constants.js, fels-dict.js (FELS 사전)
+│   ├── core/                            # app-state.js, text-splitter.js, rule-chunk-engine.js, fels-engine.js
+│   ├── services/                        # ai-service.js (Gemini/OpenAI/무료 번역), storage-service.js
+│   ├── audio/                           # audio-context, silence-detector(VAD), boundary-utils, waveform-renderer,
+│   │                                    # looper-engine, playback-controller(공유 <audio> 소유권), tts-synthesizer
+│   ├── ui/                              # router, shortcut-manager, settings-modal, toast-manager
+│   ├── utils/                           # dom.js (escapeHtml)
+│   └── views/                           # input-view (Page 1), practice-view (Page 2), memorize-view (Page 3)
 │
-├── styles/                              # 모듈화된 CSS 스타일시트 루트
-│   ├── base/                            # CSS 변수 및 리셋
-│   ├── layout/                          # 공통 레이아웃 및 탭 네비게이션
-│   ├── components/                      # 카드, 파형, 모달 등 개별 컴포넌트
-│   └── views/                           # 3개 뷰별 전용 스타일
-│
-├── docs/                                # 기술 문서 및 재구조화 계획서
-│   └── refactoring/
-│       ├── package_restructuring_plan_20261011_1411.md
-│       └── package_restructuring_plan_20261011_1417.md
-│
-└── scratch/                             # 자동화 정적/동적 검증 테스트 스위트
-    ├── test_user_requirements.js        # 7대 핵심 사용자 요구사항 자동 검증
-    ├── test_all_interactions.js         # 3개 페이지 전체 인터액션 통합 테스트
-    ├── test_page1_editor_and_handout.js # 스크립트 편집 및 A4 유인물 테스트
-    ├── test_shortcut_manager.js         # 9대 단축키 및 타이핑 보호 테스트
-    └── build_standalone.js              # app.js / styles.css 빌더
+├── styles/                              # base / layout / components / views CSS 모듈
+├── tools/                               # build-standalone.js, check-syntax.js, run-tests.js
+├── docs/                                # PRD / 구현 계획서 / 리팩터링 문서
+├── legacy_backup/                       # 이전 버전 백업 (빌드/런타임 미사용)
+└── scratch/                             # 터미널 검증 테스트 (test_*.js) + build_standalone.js(호환 래퍼)
 ```
 
 ---
 
 ## 🧪 검증 및 테스트 가이드 (Testing & Verification)
 
-본 프로젝트는 브라우저를 띄우지 않고도 터미널 환경에서 모든 핵심 로직, 이벤트, DOM 인터액션을 정밀 검증할 수 있는 테스트 스위트를 포함하고 있습니다.
+본 프로젝트는 브라우저를 띄우지 않고도 터미널 환경에서 핵심 로직, 이벤트, DOM 인터액션을 검증할 수 있는 테스트 스위트를 포함하고 있습니다. (Node.js 22.12+ 권장, 외부 패키지 설치 불필요)
 
 ```bash
-# 1. 자바스크립트 구문 오류 검사
-node -c app.js
+# 1. src/ → app.js, styles/ → styles.css 번들 (src 수정 후 항상 실행)
+npm run build          # = node tools/build-standalone.js
+npm run watch          # 파일 변경 시 자동 재빌드
 
-# 2. 7대 사용자 핵심 요구사항 검증
-node scratch/test_user_requirements.js
+# 2. 구문 검사 (src/**/*.js + app.js)
+npm run check          # = node tools/check-syntax.js
 
-# 3. 3개 페이지 전체 인터액션 및 9대 단축키 통합 검증
-node scratch/test_all_interactions.js
-
-# 4. Page 1 스크립트/청크 에디터 및 A4 유인물 모달 검증
-node scratch/test_page1_editor_and_handout.js
+# 3. scratch/test_*.js 전체 실행 (파일명 필터: node tools/run-tests.js splitter)
+npm test               # = node tools/run-tests.js
 ```
 
 ---
@@ -370,6 +344,47 @@ node scratch/test_page1_editor_and_handout.js
   - `scratch/test_user_chunk_verification.js`: 사용자 제보 문장 청크 1:1 의미 매핑 100% 통과.
   - `scratch/test_user_requirements_v10.js` & `test_page1_button_clicks.js`: 전원 100% 통과.
   - `node -c app.js`: 정적 구문 오류 0건 통과.
+
+## [2026-10-12 21:05] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **무의존성(Zero-dependency) 번들러 및 CLI 검증 툴체인 구축**:
+     - `package.json`에 `build`, `watch`, `check`, `test` CLI 스크립트 구성.
+     - `tools/build-standalone.js`에 모듈 의존성 순서(`jsFiles`), import alias 정적 검출, 파일 감시(`--watch`) 모드 추가.
+     - `tools/check-syntax.js`를 통해 25개 전 소스 파일 `node --check` 고속 정적 구문 검사 지원.
+     - `tools/run-tests.js`를 통해 23개 Node VM 기반 테스트 스위트 일괄 실행 및 필터링 지원.
+     - `scratch/build_standalone.js`를 `tools/build-standalone.js` 호출 래퍼로 교체하여 하위 호환성 유지.
+  2. **오디오 재생 다중 소유자 조정 컨트롤러(`PlaybackController`) 및 바운더리 유틸 통합**:
+     - `<audio id="nativeAudioPlayer">` 단일 인스턴스에 대한 다중 소유자(`input` | `practice` | `memorize`) 상태 조정 엔진(`src/audio/playback-controller.js`) 신규 구현.
+     - 1페이지 문장 재생 및 3페이지 암기 연속 재생 시 2페이지 루퍼 바운더리 타임업데이트 간섭 완전 차단.
+     - AI 오디오 정렬, PCM VAD, 안전 헤드룸(+0.8s) 및 인트로 감지 교차 검증 로직을 `src/audio/boundary-utils.js`로 단일화.
+  3. **라우터 전환 및 상태 동기화 안정화**:
+     - 페이지 탭 전환 시 오디오 자동 정지 및 동일 탭 재클릭 시 렌더링 중복 초기화 방지 가드 추가.
+     - `appState.dataVersion` 카운터를 도입하여 새 스크립트 로드와 탭 재진입 상태를 명확히 분리.
+  4. **약형 연습(Practice View) 및 루퍼 엔진 결함 수정**:
+     - `LooperEngine`에 `onLoopRestart` 콜백을 지원하여 Web Speech TTS 루프 반복 시 음성 재발화 보장.
+     - 2페이지 비활성화 시 타임업데이트 간섭 방지(`isLooperActive`), 3페이지 점프 시 `activeSentenceIndex` 보존, `muted` 고착 해결.
+     - 음파 캔버스 Pointer Events(`setPointerCapture`, `touch-action: none`) 전환으로 터치/모바일 반응성 개선.
+  5. **입력 편집기(Input View) 안정성 강화 & 직독직해 슬롯 정렬**:
+     - `btnStartPractice` 비동기 파싱 경쟁 상태 해결 (`async startPracticeHandler`).
+     - 영어 청크 개수와 한국어 직독직해 슬롯 불일치 시 `—` 플레이스홀더로 보충하여 슬롯 밀림 현상 방지.
+     - Enter 키와 change 이벤트 중복 AI 번역 호출 방지, Base64 오디오 인메모리 캐싱 및 15MB 초과 요청 방어.
+     - 사용자 입력 텍스트 `escapeHtml` XSS 방어 적용 및 ESC 키 모달 닫기 지원.
+  6. **암기 모드(Memorize View) 연속 재생 및 텍스트 분할기(TextSplitter) 개선**:
+     - 3페이지 `playbackController` 연동으로 첫 문장(S1)에서 정지하던 결함 해소 및 전 문장 연속 재생 완결.
+     - `TextSplitter`에서 숫자 시작 문장(`20 minutes later`, `3D printers`, `1990 was`) 분할 보존, 약어(`a.m.`, `p.m.`, `st.`, `mt.`, `approx.`) 보호, 따옴표 종결 문장(`."`, `?"`) 분할 지원.
+  7. **AI 서비스 보안 강화 & 모델/스토리지 정리**:
+     - Gemini API 키를 URL 쿼리 파라미터 대신 `x-goog-api-key` HTTP 헤더로 전송.
+     - `AbortController` 네트워크 타임아웃 추가, 유연한 JSON 파서(`parseJsonLoose`) 적용, 무료 번역 동시 요청 4건 제한.
+     - 레거시 `chunklingo_*` 로컬 스토리지 키 쓰기 중단 (읽기 폴백 보존), 단종된 `gemini-1.5-*` 모델 정리.
+  8. **UI 접근성 및 회귀 테스트 스위트 확장**:
+     - `ToastManager` 연속 알림 시 조기 은닉 버그 수정, 모달 오픈 시 단축키 비활성화 가드, Pretendard 경량 서브셋 웹폰트 적용.
+     - 신규 회귀 테스트 5종 추가 (`test_text_splitter.js`, `test_playback_controller.js`, `test_escape_html.js`, `test_boundary_utils.js`, `test_direct_chunk_slots.js`).
+     - `app.js` (269.2 KB), `styles.css` (69.5 KB) 단독 배포 번들 최신화.
+- **검증 결과**:
+  - `npm run check`: 25개 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 23개 테스트 파일 전체 통과 (23/23 passed, 100%).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검증 통과).
+
 
 
 

@@ -1,11 +1,78 @@
 /**
  * AI Engine Service (Gemini & OpenAI API Provider + Audio Multimodal)
- * Resilient multi-model auto-fallback for Gemini (2.5-flash, 2.0-flash, 1.5-flash-latest, etc.)
+ * Resilient multi-model auto-fallback for Gemini (2.5-flash, 2.0-flash, 2.5-pro, etc.)
  */
 
 import { StorageService } from './storage-service.js';
 import { CONSTANTS } from '../config/constants.js';
 import { DICTIONARY, VERB_MAP, PRONOUNS, ADVERBS } from '../config/fels-dict.js';
+
+const AI_REQUEST_TIMEOUT_MS = 30000;   // text requests
+const AI_AUDIO_TIMEOUT_MS = 120000;    // inline-audio requests (STT / alignment)
+const FREE_TRANSLATE_TIMEOUT_MS = 10000;
+const FREE_TRANSLATE_MAX_CONCURRENCY = 4; // avoid bursting the unofficial endpoint (HTTP 429)
+
+let freeTranslateActive = 0;
+const freeTranslateQueue = [];
+
+/**
+ * fetch() with an AbortController timeout. Falls back to plain fetch when AbortController is unavailable
+ * (e.g. the vm sandbox used by scratch tests).
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+  if (typeof AbortController !== 'function' || typeof setTimeout !== 'function') {
+    return fetch(url, options);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error(`AI 요청 시간이 초과되었습니다 (${Math.round(timeoutMs / 1000)}초). 네트워크 상태를 확인하고 다시 시도하세요.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** JSON.parse that tolerates ```json fences / leading prose around the JSON object. */
+function parseJsonLoose(content) {
+  const text = String(content || '').trim();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const unfenced = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    try {
+      return JSON.parse(unfenced);
+    } catch (e2) {
+      const start = unfenced.indexOf('{');
+      const end = unfenced.lastIndexOf('}');
+      if (start !== -1 && end > start) return JSON.parse(unfenced.slice(start, end + 1));
+      throw e;
+    }
+  }
+}
+
+/** Runs `task` when a free-translate slot is available (max FREE_TRANSLATE_MAX_CONCURRENCY in flight). */
+function runWithFreeTranslateLimit(task) {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      freeTranslateActive++;
+      Promise.resolve()
+        .then(task)
+        .then(resolve, reject)
+        .finally(() => {
+          freeTranslateActive--;
+          const next = freeTranslateQueue.shift();
+          if (next) next();
+        });
+    };
+    if (freeTranslateActive < FREE_TRANSLATE_MAX_CONCURRENCY) run();
+    else freeTranslateQueue.push(run);
+  });
+}
 
 export class AIService {
   constructor() {
@@ -38,8 +105,9 @@ export class AIService {
     const priorityOrder = CONSTANTS.GEMINI_CANDIDATE_MODELS;
 
     try {
-      const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}`;
-      const res = await fetch(listUrl);
+      // API key goes in the x-goog-api-key header (not the URL) so it never lands in logs / history
+      const listUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+      const res = await fetchWithTimeout(listUrl, { headers: { 'x-goog-api-key': this.apiKey } });
       if (res.ok) {
         const data = await res.json();
         const available = (data.models || [])
@@ -75,7 +143,7 @@ export class AIService {
   /**
    * Resilient POST to Gemini API with automatic candidate model fallback on 404/retirement
    */
-  async postToGemini(payload) {
+  async postToGemini(payload, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
     const preferred = await this.resolveGeminiModel();
     const candidateList = [
       preferred,
@@ -86,20 +154,20 @@ export class AIService {
     let lastError = null;
 
     for (const model of uniqueCandidates) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
       try {
-        const response = await fetch(url, {
+        const response = await fetchWithTimeout(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
           body: JSON.stringify(payload)
-        });
+        }, timeoutMs);
 
         if (response.ok) {
           this.activeGeminiModel = model; // Cache working model
           const data = await response.json();
           const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!content) throw new Error('Gemini 응답 내용이 비어 있습니다.');
-          return JSON.parse(content);
+          return parseJsonLoose(content);
         }
 
         const err = await response.json().catch(() => ({}));
@@ -168,21 +236,32 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
       }
     }
 
-    // Free high-quality Google Translate endpoint
+    // Free high-quality Google Translate endpoint (concurrency-limited, 10s timeout)
     try {
-      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(text.trim())}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && Array.isArray(data[0])) {
-          return data[0].map(item => item[0]).join('').trim();
-        }
-      }
+      const translated = await this.fetchFreeTranslation(text.trim());
+      if (translated) return translated;
     } catch (e) {
       console.warn('Public translation endpoint error:', e);
     }
 
     return null;
+  }
+
+  /**
+   * Unofficial translate.googleapis.com call shared by translateNatural() and generateDirectChunks().
+   * @returns {Promise<string>} '' when the endpoint returns nothing usable
+   */
+  fetchFreeTranslation(text) {
+    return runWithFreeTranslateLimit(async () => {
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(text)}`;
+      const res = await fetchWithTimeout(url, {}, FREE_TRANSLATE_TIMEOUT_MS);
+      if (!res.ok) return '';
+      const data = await res.json();
+      if (Array.isArray(data) && Array.isArray(data[0])) {
+        return data[0].map(item => item[0]).join('').trim();
+      }
+      return '';
+    });
   }
 
   /**
@@ -248,15 +327,7 @@ CRITICAL RULES:
           if (!cText) return '';
           const cleanText = cText.replace(/^[,.!?–—;:]+|[,.!?–—;:]+$/g, '').trim();
           if (!cleanText) return '';
-          const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${encodeURIComponent(cleanText)}`;
-          const res = await fetch(url);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && Array.isArray(data[0])) {
-              return data[0].map(item => item[0]).join('').trim();
-            }
-          }
-          return '';
+          return this.fetchFreeTranslation(cleanText);
         })
       );
 
@@ -478,26 +549,15 @@ Respond ONLY with valid JSON:
         }
       };
 
-      const result = await this.postToGemini(payload);
+      const result = await this.postToGemini(payload, AI_AUDIO_TIMEOUT_MS);
       if (result && Array.isArray(result.alignments)) {
-        // Post-process alignments to guarantee no sentence-end truncation
-        const processed = result.alignments.map((a, i) => {
-          const nextStart = (i + 1 < result.alignments.length) ? Number(result.alignments[i + 1].start) : null;
-          let end = Number(a.end) || 0;
-          const start = Number(a.start) || 0;
-          if (nextStart !== null && nextStart > start) {
-            const safeMax = Math.max(start + 0.5, nextStart - 0.15);
-            end = Math.min(safeMax, Math.round((end + 0.6) * 10) / 10);
-          } else {
-            end = Math.round((end + 0.8) * 10) / 10;
-          }
-          return {
-            sentence_index: a.sentence_index ?? i,
-            start,
-            end
-          };
-        });
-        return processed;
+        // Raw timestamps only — end padding is applied ONCE in audio/boundary-utils.js
+        // (previously padded here AND again in InputView, i.e. +1.5s on every sentence end)
+        return result.alignments.map((a, i) => ({
+          sentence_index: a.sentence_index ?? i,
+          start: Number(a.start) || 0,
+          end: Number(a.end) || 0
+        }));
       }
     } catch (err) {
       console.warn('Gemini audio-script alignment failed:', err);
@@ -562,7 +622,7 @@ Respond ONLY with valid JSON:
         }
       };
 
-      return await this.postToGemini(payload);
+      return await this.postToGemini(payload, AI_AUDIO_TIMEOUT_MS);
     } else {
       throw new Error('OpenAI 모드에서는 Gemini API 키를 권장합니다. (Gemini는 오디오 멀티모달 네이티브 지원)');
     }
@@ -597,7 +657,7 @@ Respond ONLY with valid JSON:
       response_format: { type: 'json_object' }
     };
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -615,7 +675,7 @@ Respond ONLY with valid JSON:
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error('OpenAI 응답 내용이 비어 있습니다.');
 
-    return JSON.parse(content);
+    return parseJsonLoose(content);
   }
 }
 

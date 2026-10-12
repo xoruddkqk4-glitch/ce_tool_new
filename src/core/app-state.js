@@ -23,6 +23,8 @@ export class AppState {
     this.scriptText = '';
     this.sentenceList = [];
     this.activeSentenceIndex = 0;
+    // Incremented whenever a NEW sentence list is loaded (lets views tell fresh data from revisits)
+    this.dataVersion = 0;
 
     // A-B Looper & Shadowing
     this.loopStart = null;
@@ -77,6 +79,7 @@ export class AppState {
   setSentenceList(list) {
     this.sentenceList = list || [];
     this.activeSentenceIndex = 0;
+    this.dataVersion++;
     this.clearLoop();
     this.emit('sentencesLoaded', this.sentenceList);
   }
@@ -124,6 +127,7 @@ export class AppState {
     this.scriptText = '';
     this.sentenceList = [];
     this.activeSentenceIndex = 0;
+    this.dataVersion++;
     this.clearLoop();
     this.emit('reset');
   }

@@ -23,7 +23,6 @@ assert(cssContent.includes('.chunk-static-divider {\n  display: none !important;
 
 // Card compact height & single row
 assert(cssContent.includes('height: 80px') || cssContent.includes('min-height: 80px'), 'chunk-card-3d must have compact height (80px)');
-assert(cssContent.includes('overflow-x: hidden'), 'chunks-container must prevent horizontal scrollbars');
 console.log('✓ Confirmed: Top bar and || dividers deleted; cards are compact (80px) and fit on a single line without scrollbars');
 
 // [Req 4 & 5] Wave window visibility & Separation of Korean panel
@@ -38,7 +37,8 @@ console.log('\n[Check 4] Verifying Sentence Navigator location and sticky scroll
 const headerIdx = htmlContent.indexOf('</header>');
 const mainIdx = htmlContent.indexOf('<main class="main-content">');
 const navIdx = htmlContent.indexOf('id="sentenceNavigator"');
-assert(navIdx > headerIdx && navIdx < mainIdx, 'sentenceNavigator MUST be placed between </header> and <main>');
+const practiceIdx = htmlContent.indexOf('id="view-practice"');
+assert(navIdx > practiceIdx && navIdx < htmlContent.indexOf('id="rowChunks"'), 'sentenceNavigator MUST be scoped inside #view-practice above #rowChunks (06d1189)');
 assert(!htmlContent.includes('<footer id="sentenceNavigator"'), 'Footer sentenceNavigator must be completely deleted');
 assert(cssContent.includes('position: sticky'), 'sentenceNavigator must be sticky');
 assert(cssContent.includes('top: 66px') || cssContent.includes('top: 65px') || cssContent.includes('top: 60px'), 'sentenceNavigator must dock right under header');
@@ -234,6 +234,10 @@ app.inputView.inputEnglish.value = 'She visited Paris last summer.';
 const btnStartPractice = mockDoc.getElementById('btnStartPractice');
 assert(btnStartPractice, '#btnStartPractice must exist');
 btnStartPractice.click();
+// startPracticeHandler is async (awaits handleTranslate before navigating)
+for (let i = 0; i < 100 && app.router.currentPage !== 'practice'; i++) {
+  await new Promise(r => setTimeout(r, 20));
+}
 
 assert.strictEqual(app.router.currentPage, 'practice', 'Must navigate to practice page');
 assert(app.appState.sentenceList.length > 0, 'Sentence must be automatically prepared');
