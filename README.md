@@ -447,7 +447,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 신규 프로젝트 테스트 포함 27/27개 전체 테스트 스위트 100% Pass (16.0초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
-## [2026-10-12 22:25] 업데이트 이력 (Commit ID: <커밋 후 업데이트>)
+## [2026-10-12 22:25] 업데이트 이력 (Commit ID: 5377c90)
 - **수정 내용**:
   1. **헤더 좌측 프로젝트 툴바 2x2 컴팩트 그리드 재배치 (`styles/components/project-toolbar.css`)**:
      - 프로젝트 관리 버튼 추가로 인해 헤더 영역이 우측으로 밀리던 레이아웃 이슈를 해결하기 위해 2x2 컴팩트 그리드(`grid-template-columns: repeat(2, minmax(0, auto)); grid-template-rows: repeat(2, 22px); gap: 3px 5px;`)로 재구성.
