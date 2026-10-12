@@ -90,7 +90,7 @@
   min-height: 62px;
   flex: 0 0 auto !important;
   width: max-content;
-  min-width: 36px;
+  min-width: 56px;
   cursor: pointer;
   user-select: none;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
@@ -152,6 +152,7 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   box-sizing: border-box;
   overflow: visible;
+  min-width: 100%;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -235,7 +236,7 @@
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   flex-wrap: nowrap !important;
   white-space: nowrap !important;
   max-width: none;
@@ -244,6 +245,7 @@
   padding: 0;
   box-sizing: border-box;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .chunk-tokens-wrap.hidden,
@@ -370,6 +372,7 @@
   margin: auto 0;
   padding: 4px 6px;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 /* Static '||' Chunk Divider (Removed as requested) */

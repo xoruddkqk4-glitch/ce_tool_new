@@ -1047,30 +1047,18 @@ export class InputView {
           if (!stn.result) stn.result = {};
           stn.result.natural = naturalInput.value;
         });
-        naturalInput.addEventListener('change', async () => {
+        naturalInput.addEventListener('change', () => {
           if (!stn.result) stn.result = {};
           stn.result.natural = naturalInput.value;
-          // Synchronize 직독직해 when natural interpretation is edited by user
+          // Synchronize 직독직해 instantly when natural interpretation is edited by user
           if (stn.result.chunks && stn.result.chunks.length > 0) {
-            try {
-              const directKoChunks = await aiService.generateDirectChunks(
-                stn.result.chunks,
-                stn.result.natural,
-                stn.text
-              );
-              if (directKoChunks && directKoChunks.length === stn.result.chunks.length) {
-                directKoChunks.forEach((ko, i) => {
-                  stn.result.chunks[i].ko = ko;
-                });
-                stn.result.chunk_text = directKoChunks.join(' || ');
-                stn.result.direct = directKoChunks.join(' / ');
-                if (directInput) {
-                  directInput.value = this.getDirectChunkString(stn.result.chunks);
-                }
-              }
-            } catch (chunkErr) {
-              console.warn('Sync chunk direct error:', chunkErr);
+            this.ruleEngine.alignNaturalToChunks(stn.result.chunks, stn.result.natural);
+            stn.result.chunk_text = stn.result.chunks.map(c => c.ko).join(' || ');
+            stn.result.direct = stn.result.chunks.map(c => c.ko).join(' / ');
+            if (directInput && document.activeElement !== directInput) {
+              directInput.value = this.getDirectChunkString(stn.result.chunks);
             }
+            this.scheduleDirectChunkAiRefinement(stn, directInput);
           }
         });
       }
@@ -1125,6 +1113,10 @@ export class InputView {
     if (!track) return;
     track.innerHTML = '';
 
+    const itemCard = track.closest && typeof track.closest === 'function' ? track.closest('.parsed-sentence-item') : null;
+    const resolvedChunkInput = chunkInput || (itemCard && itemCard.querySelector ? itemCard.querySelector('.chunk-text-input') : null);
+    const resolvedDirectInput = directInput || (itemCard && itemCard.querySelector ? itemCard.querySelector('.chunk-direct-input') : null);
+
     const words = (stn.text || '').trim().split(/\s+/).filter(Boolean);
     if (!words.length) return;
 
@@ -1154,28 +1146,30 @@ export class InputView {
         dividerSlot.title = isBoundary ? "클릭하여 청크 합치기" : "클릭하여 청크 분리하기 (|| 추가)";
         dividerSlot.textContent = isBoundary ? '||' : '+';
 
-        dividerSlot.addEventListener('click', async () => {
-          // Ignore clicks while this sentence's chunk translation is still in flight (prevents out-of-order overwrite)
-          if (this.busySentences.has(stn)) return;
+        dividerSlot.addEventListener('click', (e) => {
+          if (e && typeof e.preventDefault === 'function') e.preventDefault();
           if (boundaryWordIndices.has(idx)) {
             boundaryWordIndices.delete(idx);
           } else {
             boundaryWordIndices.add(idx);
           }
-          this.busySentences.add(stn);
-          try {
-            await this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
-          } finally {
-            this.busySentences.delete(stn);
+
+          // Instant in-memory chunk rebuilding & local rule semantic alignment (< 1ms)
+          this.rebuildChunksFromBoundaries(stn, words, boundaryWordIndices);
+
+          if (resolvedChunkInput) {
+            resolvedChunkInput.value = this.getChunkString(stn.result.chunks);
           }
-          if (chunkInput) {
-            chunkInput.value = this.getChunkString(stn.result.chunks);
+          if (resolvedDirectInput && document.activeElement !== resolvedDirectInput) {
+            resolvedDirectInput.value = this.getDirectChunkString(stn.result.chunks);
           }
-          if (directInput) {
-            directInput.value = this.getDirectChunkString(stn.result.chunks);
-          }
-          this.renderWordDividerTrack(track, stn, chunkInput, directInput);
+
+          // Instantly refresh the track
+          this.renderWordDividerTrack(track, stn, resolvedChunkInput, resolvedDirectInput);
           toast.show('✂️ 청크 구분이 업데이트되었습니다.');
+
+          // Non-blocking debounced AI refinement in the background (if AI configured)
+          this.scheduleDirectChunkAiRefinement(stn, resolvedDirectInput);
         });
 
         track.appendChild(dividerSlot);
@@ -1183,7 +1177,7 @@ export class InputView {
     });
   }
 
-  async rebuildChunksFromBoundaries(stn, words, boundaryWordIndices) {
+  rebuildChunksFromBoundaries(stn, words, boundaryWordIndices) {
     const newChunks = [];
     let curWords = [];
 
@@ -1201,28 +1195,18 @@ export class InputView {
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
 
+    // Instant synchronous semantic alignment using RuleChunkEngine (< 1ms)
     if (stn.result.natural) {
       this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
-      try {
-        const directKoChunks = await aiService.generateDirectChunks(newChunks, stn.result.natural, stn.text);
-        if (directKoChunks && directKoChunks.length === newChunks.length && directKoChunks.every(Boolean)) {
-          directKoChunks.forEach((ko, i) => {
-            newChunks[i].ko = ko;
-          });
-        }
-      } catch (e) {
-        console.warn('Direct chunk generation error in rebuild:', e);
-      }
     }
 
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
   }
 
-  async updateChunksFromTextInput(stn, chunkedText, directInput, track) {
+  updateChunksFromTextInput(stn, chunkedText, directInput, track) {
     const parts = (chunkedText || '').split('||').map(p => p.trim()).filter(Boolean);
     if (!parts.length) return;
-    if (this.busySentences.has(stn)) return;
 
     const newChunks = parts.map(part => {
       const existing = (stn.result?.chunks || []).find(c => c.en.trim() === part);
@@ -1235,34 +1219,80 @@ export class InputView {
     if (!stn.result) stn.result = {};
     stn.result.chunks = newChunks;
 
+    // Instant synchronous semantic alignment using RuleChunkEngine (< 1ms)
     if (stn.result.natural) {
-      this.busySentences.add(stn);
-      try {
-        const directKoChunks = await aiService.generateDirectChunks(newChunks, stn.result.natural, stn.text);
-        if (directKoChunks && directKoChunks.length === newChunks.length) {
-          directKoChunks.forEach((ko, i) => {
-            newChunks[i].ko = ko;
-          });
-        } else {
-          this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
-        }
-      } catch (e) {
-        this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
-      } finally {
-        this.busySentences.delete(stn);
-      }
+      this.ruleEngine.alignNaturalToChunks(newChunks, stn.result.natural);
     }
 
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
 
-    if (directInput) {
+    if (directInput && document.activeElement !== directInput) {
       directInput.value = this.getDirectChunkString(newChunks);
     }
     if (track) {
       this.renderWordDividerTrack(track, stn, null, directInput);
     }
     toast.show('✂️ 청크 구분이 저장되었습니다.');
+
+    // Non-blocking debounced AI refinement in the background (if AI configured)
+    this.scheduleDirectChunkAiRefinement(stn, directInput);
+  }
+
+  /**
+   * Debounced, non-blocking background AI refinement for direct chunks.
+   * Never delays or blocks user interactions; silently applies higher quality AI mappings when ready.
+   */
+  scheduleDirectChunkAiRefinement(stn, directInput) {
+    if (!aiService.hasKey() || !stn.result?.natural || !stn.result?.chunks?.length) {
+      return;
+    }
+
+    if (!this.directChunkTimers) {
+      this.directChunkTimers = new Map();
+    }
+
+    if (this.directChunkTimers.has(stn)) {
+      clearTimeout(this.directChunkTimers.get(stn));
+    }
+
+    stn._chunkRevision = (stn._chunkRevision || 0) + 1;
+    const currentRev = stn._chunkRevision;
+    const expectedChunkCount = stn.result.chunks.length;
+
+    const timer = setTimeout(async () => {
+      this.directChunkTimers.delete(stn);
+      if (stn._chunkRevision !== currentRev) return;
+
+      try {
+        const directKoChunks = await aiService.generateDirectChunks(
+          stn.result.chunks,
+          stn.result.natural,
+          stn.text
+        );
+
+        if (stn._chunkRevision === currentRev &&
+            directKoChunks &&
+            directKoChunks.length === expectedChunkCount &&
+            directKoChunks.every(Boolean)) {
+          directKoChunks.forEach((ko, i) => {
+            if (stn.result.chunks[i]) {
+              stn.result.chunks[i].ko = ko;
+            }
+          });
+          stn.result.chunk_text = directKoChunks.join(' || ');
+          stn.result.direct = directKoChunks.join(' / ');
+
+          if (directInput && document.activeElement !== directInput) {
+            directInput.value = this.getDirectChunkString(stn.result.chunks);
+          }
+        }
+      } catch (err) {
+        console.warn('Background AI direct chunk refinement skipped:', err);
+      }
+    }, 700);
+
+    this.directChunkTimers.set(stn, timer);
   }
 
   /**

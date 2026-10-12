@@ -467,6 +467,11 @@ export class PracticeView {
       card.className = 'chunk-card-3d';
       card.setAttribute('data-idx', idx);
 
+      const initialWidth = this.estimateCardWidth(chunk);
+      card.style.flex = '0 0 auto';
+      card.style.width = `${initialWidth}px`;
+      card.style.minWidth = `${initialWidth}px`;
+
       const inner = document.createElement('div');
       inner.className = 'card-inner';
 
@@ -595,10 +600,45 @@ export class PracticeView {
       this.chunksContainer.appendChild(card);
     });
 
-    // Compute locked card widths
+    // Compute locked card widths without visual collapse
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(() => {
+        this.computeAndApplyStabilizedWidths();
+      });
+    }
     setTimeout(() => {
       this.computeAndApplyStabilizedWidths();
     }, 50);
+  }
+
+  estimateCardWidth(chunk) {
+    const enText = (chunk?.en || '').trim();
+    const koText = (chunk?.ko || '').trim();
+    const words = enText ? enText.split(/\s+/).filter(Boolean) : [];
+
+    let felsW = 0;
+    words.forEach(word => {
+      const felsInfo = getFelsInfo(word);
+      if (felsInfo) {
+        const inputW = Math.min(84, Math.max(46, felsInfo.clean.length * 10 + 16));
+        felsW += inputW;
+        const trailingPunct = word.match(/[.,!?;:]+$/);
+        if (trailingPunct) {
+          felsW += trailingPunct[0].length * 10 + 4;
+        }
+      } else {
+        felsW += word.length * 10.5;
+      }
+    });
+    if (words.length > 1) {
+      felsW += (words.length - 1) * 8;
+    }
+
+    const origW = enText.length * 10.5;
+    const koW = koText.length * 16;
+
+    const contentW = Math.max(felsW, origW, koW, 20);
+    return Math.max(56, Math.ceil(contentW + 28));
   }
 
   findNextBlank(currentInput) {
@@ -627,7 +667,21 @@ export class PracticeView {
         felsWrap.classList.remove('hidden');
         const prevDisp = felsWrap.style.display;
         felsWrap.style.display = 'inline-flex';
-        wFels = felsWrap.scrollWidth || 0;
+
+        let childSum = 0;
+        Array.from(felsWrap.children).forEach(ch => {
+          const inp = ch.querySelector ? ch.querySelector('input') : null;
+          if (inp && inp.style && inp.style.width) {
+            childSum += (parseFloat(inp.style.width) || ch.offsetWidth || 0);
+          } else {
+            childSum += (ch.offsetWidth || 0);
+          }
+        });
+        if (felsWrap.children.length > 1) {
+          childSum += (felsWrap.children.length - 1) * 6;
+        }
+
+        wFels = Math.max(felsWrap.scrollWidth || 0, childSum);
         felsWrap.style.display = prevDisp;
         if (wasHidden) felsWrap.classList.add('hidden');
       }
@@ -637,22 +691,35 @@ export class PracticeView {
         origWrap.classList.remove('hidden');
         const prevDisp = origWrap.style.display;
         origWrap.style.display = 'inline-flex';
-        wOrig = origWrap.scrollWidth || 0;
+
+        let origChildSum = 0;
+        Array.from(origWrap.children).forEach(ch => {
+          origChildSum += (ch.offsetWidth || 0);
+        });
+        if (origWrap.children.length > 1) {
+          origChildSum += (origWrap.children.length - 1) * 6;
+        }
+
+        wOrig = Math.max(origWrap.scrollWidth || 0, origChildSum);
         origWrap.style.display = prevDisp;
         if (wasHidden) origWrap.classList.add('hidden');
       }
 
       if (koWrap) {
-        wKo = koWrap.scrollWidth || 0;
+        wKo = Math.max(koWrap.scrollWidth || 0, koWrap.offsetWidth || 0);
       }
 
       // Dynamic width per card based on content length with clean breathing room
       const contentWidth = Math.max(wFels, wOrig, wKo);
-      const finalCardWidth = Math.max(48, Math.ceil(contentWidth + 24));
+      if (contentWidth > 0) {
+        const currentW = parseFloat(card.style.width) || 0;
+        const measuredCardWidth = Math.ceil(contentWidth + 28);
+        const finalCardWidth = Math.max(currentW, 56, measuredCardWidth);
 
-      card.style.flex = '0 0 auto';
-      card.style.width = `${finalCardWidth}px`;
-      card.style.minWidth = `${finalCardWidth}px`;
+        card.style.flex = '0 0 auto';
+        card.style.width = `${finalCardWidth}px`;
+        card.style.minWidth = `${finalCardWidth}px`;
+      }
     });
   }
 

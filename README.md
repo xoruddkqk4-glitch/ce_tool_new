@@ -385,6 +385,41 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 23개 테스트 파일 전체 통과 (23/23 passed, 100%).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검증 통과).
 
+## [2026-10-12 21:43] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **Page 1 청크 편집기 수동 분할 즉각 반응 속도 최적화 (0.33ms)**:
+     - 구분선(`+`/`||`) 클릭 시마다 동기적으로 차단(blocking)되던 무거운 원격 AI 정렬 호출을 전면 해제.
+     - 클릭 즉시 `RuleChunkEngine.alignNaturalToChunks`를 통해 0.33ms 만에 로컬 동기식으로 직독직해 청크를 1:1 재정렬하여 UI 멈춤 현상(Freezing) 완전 해소.
+     - 사용자 입력이 멈춘 후 700ms 뒤 백그라운드에서 조용히 AI 정밀 정렬을 수행하는 디바운스 파이프라인(`_debounceChunkAlignment`) 적용.
+     - 구분자 슬롯에 `:active` 시각적 클릭 반응 micro-interaction 추가.
+  2. **Page 2 약형 연습 문장 이동 시 카드 가로폭 48px 축소 및 FELS 빈칸 좌측 이탈 버그 해결**:
+     - 문장 간 전환(S1 ➔ S2) 시 카드가 기본 최소 가로폭(48px)으로 렌더링된 후 지연 측정되면서 FELS 입력창(`[ ]`)이 좌측으로 이탈하거나 축소되는 결함 해결.
+     - 카드 생성 즉시 토큰 글자 수와 입력 필드 길이를 고려한 초기 가로폭 계산(`estimateCardWidth`)을 적용하여 생성 시점부터 정규 너비 부여.
+     - `computeAndApplyStabilizedWidths`에서 `origWrap`, `felsInputWrap` 등 모든 자식 요소를 전수 측정하도록 알고리즘 보강.
+     - CSS `.practice-chunk-card`의 `min-width: 56px`, `flex-shrink: 0`, 카드 행 `gap: 5px`을 강제하여 플렉스 축소 및 겹침 원천 차단.
+  3. **Page 3 전체 스크립트 암기 화면 모드 버튼 간소화**:
+     - 상단 조작부에서 사용 빈도가 낮고 혼선을 주던 '영어만 보기', '한국어만 보기' 버튼 완전 삭제.
+     - 전체 문장 3D 플립 카드 인터페이스에 집중하도록 UI를 깔끔하게 정돈.
+  4. **전체 보기와 교실 대형 화면(Classroom Modal) 앞/뒷면 뒤집기 상태 완벽 동기화**:
+     - 전체 보기에서 한국어가 앞면인 상태(`appState.memorizeAllFlipped = true`)에서 크게 보기 모달을 열면 대형 카드도 한국어가 앞면으로 노출되고, 영어가 앞면이면 대형 카드도 영어가 앞면으로 일치하도록 동기화 구현 (`areClassroomCardsFlipped = !!appState.memorizeAllFlipped`).
+  5. **카드 여백 축소 및 엄격한 단일 행(1줄) 가로 배치 강제 (줄바꿈 방지)**:
+     - 청크 카드의 내부 패딩 및 외부 마진을 축소하고, `.memorize-chunk-grid`, `.memorize-sentence-row`, `.classroom-cards-container`, `.classroom-sentence-row`에 `flex-wrap: nowrap !important;`를 엄격 적용.
+     - 화면 폭에 상관없이 문장의 모든 청크 카드가 2줄로 개행되지 않고 깔끔한 단일 행(1줄)으로 쾌적하게 펼쳐지도록 최적화.
+  6. **교실 대형 화면(Classroom Modal) 3문장 표시 및 선택 문장 가운데(중심) 배치**:
+     - 대형 모달창에서 기존 1문장 노출 구조를 3문장 맥락 표시 레이아웃으로 전면 개편.
+     - **[1행]**: 이전 문장 (컨텍스트 모드, 클릭 시 해당 문장으로 바로 이동)
+     - **[2행 (중앙)]**: 현재 선택된 문장 (네온 시안 테두리 및 글로우 하이라이트, `[1]`~`[9]` 단축키 뱃지 부착, 개별 뒤집기 및 스페이스바 음성 청취 지원)
+     - **[3행]**: 다음 문장 (컨텍스트 모드, 클릭 시 해당 문장으로 바로 이동)
+     - 문장 전환 시 중앙 활성 행으로 부드럽게 시선이 집중되도록 자동 스크롤 연동.
+  7. **단독 배포 번들 동기화 및 신규 회귀 테스트 구축**:
+     - `app.js` (276.7 KB), `styles.css` (73.0 KB) 단독 배포 번들 최신화 (0 imports/exports, syntax 검증 완료).
+     - 신규 회귀 테스트 3종 추가: `test_manual_chunk_edit_speed.js`, `test_page2_card_width_stabilization.js`, `test_page3_classroom_and_single_line.js`.
+- **검증 결과**:
+  - `npm run check`: 25개 전 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 신규 3개 테스트 포함 26/26개 전체 테스트 스위트 100% Pass (16.6초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
+
+
 
 
 

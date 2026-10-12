@@ -118,8 +118,6 @@ export class MemorizeView {
 
   getModeLabel(mode) {
     switch (mode) {
-      case 'en': return '영어만 보기';
-      case 'ko': return '한국어만 보기';
       case 'cloze': return '청크 가리기(Cloze)';
       default: return '전체 보기';
     }
@@ -233,10 +231,13 @@ export class MemorizeView {
         // Dynamic width per card based on content length with minimal padding
         const enLen = (chunk.en || '').trim().length;
         const koLen = (chunk.ko || '').trim().length;
-        const estContentWidth = Math.max(enLen * 11, koLen * 16);
-        const cardWidth = Math.max(48, Math.round(estContentWidth + 24));
+        const estContentWidth = Math.max(enLen * 10, koLen * 15);
+        const cardWidth = Math.max(38, Math.round(estContentWidth + 16));
         cCard.style.width = `${cardWidth}px`;
         cCard.style.flex = '0 0 auto';
+        if (appState.memorizeAllFlipped) {
+          cCard.classList.add('flipped');
+        }
 
         cCard.innerHTML = `
           <div class="memorize-card-inner">
@@ -279,7 +280,7 @@ export class MemorizeView {
           const wKo = koEl ? koEl.scrollWidth : 0;
           const maxW = Math.max(wEn, wKo);
           if (maxW > 0) {
-            const targetW = Math.max(48, maxW + 24);
+            const targetW = Math.max(38, maxW + 16);
             const currentW = parseFloat(c.style.width || '0');
             if (targetW > currentW) {
               c.style.width = `${targetW}px`;
@@ -496,7 +497,8 @@ export class MemorizeView {
     if (!list || sIdx < 0 || sIdx >= list.length) return;
 
     this.classroomIndex = sIdx;
-    this.areClassroomCardsFlipped = false;
+    // Synchronize flip state: if Korean is on front in Page 3 canvas, show Korean in classroom modal
+    this.areClassroomCardsFlipped = !!appState.memorizeAllFlipped;
 
     this.renderClassroomModal();
     if (this.classroomModal) {
@@ -520,7 +522,6 @@ export class MemorizeView {
   prevClassroomSentence() {
     if (this.classroomIndex > 0) {
       this.classroomIndex--;
-      this.areClassroomCardsFlipped = false;
       this.renderClassroomModal();
     }
   }
@@ -529,7 +530,6 @@ export class MemorizeView {
     const list = appState.sentenceList;
     if (list && this.classroomIndex < list.length - 1) {
       this.classroomIndex++;
-      this.areClassroomCardsFlipped = false;
       this.renderClassroomModal();
     }
   }
@@ -541,15 +541,20 @@ export class MemorizeView {
     cards.forEach(card => {
       card.classList.toggle('flipped', this.areClassroomCardsFlipped);
     });
+    if (this.btnClassroomFlipAll) {
+      this.btnClassroomFlipAll.innerHTML = this.areClassroomCardsFlipped
+        ? '<span>🔤 영어 앞면</span>'
+        : '<span>🔄 전체 뒤집기</span>';
+    }
     toast.show(this.areClassroomCardsFlipped ? '🔄 모든 청크 뒷면(해석)으로 뒤집기' : '🔄 모든 청크 앞면(영어)으로 뒤집기');
   }
 
   flipClassroomCardByIndex(cIdx) {
     if (!this.classroomChunksContainer) return;
-    const card = this.classroomChunksContainer.querySelector(`.classroom-chunk-card[data-c-idx="${cIdx}"]`);
+    const card = this.classroomChunksContainer.querySelector(`.classroom-sentence-row.is-active .classroom-chunk-card[data-c-idx="${cIdx}"]`);
     if (card) {
       card.classList.toggle('flipped');
-      toast.show(`청크 #${cIdx + 1} 뒤집기`);
+      toast.show(`현재 문장 청크 #${cIdx + 1} 뒤집기`);
     }
   }
 
@@ -611,50 +616,143 @@ export class MemorizeView {
   renderClassroomModal() {
     const list = appState.sentenceList;
     if (!list || this.classroomIndex < 0 || this.classroomIndex >= list.length) return;
-    const stn = list[this.classroomIndex];
+    const currentIdx = this.classroomIndex;
 
     if (this.classroomStnBadge) {
-      this.classroomStnBadge.textContent = `S${this.classroomIndex + 1}`;
+      this.classroomStnBadge.textContent = `S${currentIdx + 1}`;
     }
     if (this.classroomStnCounter) {
-      this.classroomStnCounter.textContent = `${this.classroomIndex + 1} / ${list.length} 문장`;
+      this.classroomStnCounter.textContent = `${currentIdx + 1} / ${list.length} 문장 (선택 문장 가운데 표시)`;
     }
     if (this.btnClassroomPrev) {
-      this.btnClassroomPrev.disabled = (this.classroomIndex <= 0);
+      this.btnClassroomPrev.disabled = (currentIdx <= 0);
     }
     if (this.btnClassroomNext) {
-      this.btnClassroomNext.disabled = (this.classroomIndex >= list.length - 1);
+      this.btnClassroomNext.disabled = (currentIdx >= list.length - 1);
+    }
+    if (this.btnClassroomFlipAll) {
+      this.btnClassroomFlipAll.innerHTML = this.areClassroomCardsFlipped
+        ? '<span>🔤 영어 앞면</span>'
+        : '<span>🔄 전체 뒤집기</span>';
     }
 
-    if (this.classroomChunksContainer) {
-      this.classroomChunksContainer.innerHTML = '';
-      const chunks = stn.result?.chunks || [{ en: stn.text, ko: stn.result?.natural || '' }];
+    if (!this.classroomChunksContainer) return;
+    this.classroomChunksContainer.innerHTML = '';
 
+    // Render 3 sentences: Prev (i - 1), Active Center (i), Next (i + 1)
+    const rowsToRender = [
+      { type: 'prev', idx: currentIdx - 1, label: '이전 문장' },
+      { type: 'active', idx: currentIdx, label: '현재 문장 (중심)' },
+      { type: 'next', idx: currentIdx + 1, label: '다음 문장' }
+    ];
+
+    rowsToRender.forEach(rowDef => {
+      const rowEl = document.createElement('div');
+      rowEl.className = `classroom-sentence-row row-${rowDef.type}`;
+
+      if (rowDef.idx < 0) {
+        rowEl.classList.add('is-placeholder');
+        rowEl.innerHTML = `
+          <div class="classroom-row-header placeholder-header">
+            <span class="classroom-row-badge dimmed">S0</span>
+            <span class="classroom-row-preview">시작 문장입니다 (이전 문장 없음)</span>
+          </div>
+        `;
+        this.classroomChunksContainer.appendChild(rowEl);
+        return;
+      }
+
+      if (rowDef.idx >= list.length) {
+        rowEl.classList.add('is-placeholder');
+        rowEl.innerHTML = `
+          <div class="classroom-row-header placeholder-header">
+            <span class="classroom-row-badge dimmed">S${list.length + 1}</span>
+            <span class="classroom-row-preview">마지막 문장입니다 (다음 문장 없음)</span>
+          </div>
+        `;
+        this.classroomChunksContainer.appendChild(rowEl);
+        return;
+      }
+
+      const sIdx = rowDef.idx;
+      const stnData = list[sIdx];
+      const isActive = (rowDef.type === 'active');
+
+      if (isActive) {
+        rowEl.classList.add('is-active');
+      } else {
+        rowEl.classList.add('is-context');
+        rowEl.addEventListener('click', (e) => {
+          if (e.target.closest('.classroom-chunk-card') || e.target.closest('button')) return;
+          this.classroomIndex = sIdx;
+          this.renderClassroomModal();
+        });
+      }
+
+      // Sentence Header inside row
+      const headerEl = document.createElement('div');
+      headerEl.className = 'classroom-row-header';
+
+      const badgeBtn = document.createElement('button');
+      badgeBtn.className = `classroom-row-badge ${isActive ? 'active-badge' : ''}`;
+      badgeBtn.textContent = `S${sIdx + 1}`;
+      badgeBtn.title = isActive ? '현재 선택 문장' : `문장 S${sIdx + 1}로 이동`;
+      if (!isActive) {
+        badgeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.classroomIndex = sIdx;
+          this.renderClassroomModal();
+        });
+      }
+
+      const previewText = document.createElement('span');
+      previewText.className = 'classroom-row-preview';
+      previewText.textContent = stnData.text || '';
+      previewText.title = stnData.result?.natural || '';
+
+      const playBtn = document.createElement('button');
+      playBtn.className = 'classroom-row-mini-play';
+      playBtn.innerHTML = '▶';
+      playBtn.title = `문장 S${sIdx + 1} 듣기`;
+      playBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.playSingleSentence(sIdx);
+      });
+
+      headerEl.appendChild(badgeBtn);
+      headerEl.appendChild(previewText);
+      headerEl.appendChild(playBtn);
+      rowEl.appendChild(headerEl);
+
+      // Chunks container for this sentence (Strict Single-Line)
+      const chunksWrap = document.createElement('div');
+      chunksWrap.className = 'classroom-row-chunks';
+
+      const chunks = stnData.result?.chunks || [{ en: stnData.text, ko: stnData.result?.natural || '' }];
       chunks.forEach((chunk, cIdx) => {
         const card = document.createElement('div');
-        card.className = 'classroom-chunk-card';
+        card.className = `classroom-chunk-card ${isActive ? 'active-card' : 'context-card'}`;
         card.setAttribute('data-c-idx', cIdx);
+        card.setAttribute('data-s-idx', sIdx);
         if (this.areClassroomCardsFlipped) {
           card.classList.add('flipped');
         }
 
         const keyNum = cIdx + 1;
-        const keyBadge = keyNum <= 9 ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
+        // Key badges only on active center row (1~9)
+        const keyBadge = (isActive && keyNum <= 9) ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
+
         const enText = (chunk.en || '').trim();
         const koText = (chunk.ko || '').trim();
-        const longestText = enText.length >= koText.length ? enText : koText;
 
-        // Dynamic initial estimation based on 1.75rem bold font
-        const estEn = enText.length * 20;
-        const estKo = koText.length * 28;
-        const estW = Math.max(estEn, estKo) + 64;
-        const initialWidth = Math.max(90, Math.ceil(estW));
-        card.style.width = `${initialWidth}px`;
+        // Calculate sleek compact width so sentence stays strictly on 1 line
+        const charLen = Math.max(enText.length, Math.ceil(koText.length * 1.4));
+        const estCardW = Math.max(isActive ? 60 : 48, charLen * (isActive ? 13 : 10) + (isActive ? 24 : 16));
+        card.style.width = `${estCardW}px`;
         card.style.flex = '0 0 auto';
 
         card.innerHTML = `
           <div class="classroom-card-inner">
-            <div class="classroom-card-sizer" aria-hidden="true">${escapeHtml(longestText)}</div>
             ${keyBadge}
             <div class="classroom-face classroom-face-en">
               <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
@@ -665,31 +763,40 @@ export class MemorizeView {
           </div>
         `;
 
-        card.addEventListener('click', () => {
+        card.addEventListener('click', (e) => {
+          e.stopPropagation();
           card.classList.toggle('flipped');
         });
 
-        this.classroomChunksContainer.appendChild(card);
+        chunksWrap.appendChild(card);
       });
 
-      // Precise DOM measurement after render to guarantee ZERO overflow/clipping
-      requestAnimationFrame(() => {
-        if (!this.classroomChunksContainer) return;
-        const cards = this.classroomChunksContainer.querySelectorAll('.classroom-chunk-card');
-        cards.forEach(c => {
-          const enEl = c.querySelector('.classroom-face-en .classroom-chunk-text');
-          const koEl = c.querySelector('.classroom-face-ko .classroom-chunk-text');
-          const wEn = enEl ? enEl.scrollWidth : 0;
-          const wKo = koEl ? koEl.scrollWidth : 0;
-          const maxTextW = Math.max(wEn, wKo);
-          if (maxTextW > 0) {
-            const targetW = Math.max(90, maxTextW + 64);
+      rowEl.appendChild(chunksWrap);
+      this.classroomChunksContainer.appendChild(rowEl);
+    });
+
+    // Precise DOM width adjustment after render
+    requestAnimationFrame(() => {
+      if (!this.classroomChunksContainer) return;
+      const cards = this.classroomChunksContainer.querySelectorAll('.classroom-chunk-card');
+      cards.forEach(c => {
+        const enEl = c.querySelector('.classroom-face-en .classroom-chunk-text');
+        const koEl = c.querySelector('.classroom-face-ko .classroom-chunk-text');
+        const wEn = enEl ? enEl.scrollWidth : 0;
+        const wKo = koEl ? koEl.scrollWidth : 0;
+        const maxTextW = Math.max(wEn, wKo);
+        if (maxTextW > 0) {
+          const isAct = c.classList.contains('active-card');
+          const padding = isAct ? 24 : 16;
+          const targetW = Math.max(isAct ? 60 : 48, maxTextW + padding);
+          const curW = parseFloat(c.style.width || '0');
+          if (targetW > curW) {
             c.style.width = `${targetW}px`;
             c.style.minWidth = `${targetW}px`;
           }
-        });
+        }
       });
-    }
+    });
   }
 
   onActivated() {
