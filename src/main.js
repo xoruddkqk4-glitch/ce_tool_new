@@ -11,6 +11,7 @@ import { StorageService } from './services/storage-service.js';
 import { InputView } from './views/input-view.js';
 import { PracticeView } from './views/practice-view.js';
 import { MemorizeView } from './views/memorize-view.js';
+import { projectService } from './services/project-service.js';
 import { toast } from './ui/toast-manager.js';
 
 class CEToolApp {
@@ -21,6 +22,7 @@ class CEToolApp {
     this.memorizeView = null;
     this.shortcutManager = null;
     this.settingsModal = null;
+    this.projectService = projectService;
     this.appState = appState;
   }
 
@@ -45,7 +47,10 @@ class CEToolApp {
     // 4. Initialize Settings Modal
     this.settingsModal = new SettingsModal();
 
-    // 5. Initialize Global Shortcuts (Page 2 & Page 3)
+    // 5. Initialize Project Service & Toolbar UI
+    this.initProjectToolbar();
+
+    // 6. Initialize Global Shortcuts (Page 2, Page 3, and Project File operations)
     this.shortcutManager = new ShortcutManager({
       onPlayPause: () => this.practiceView.togglePlayPause(),
       onSetStart: () => this.practiceView.setRegionStartFromCurrentTime(),
@@ -59,11 +64,14 @@ class CEToolApp {
       onFlipPracticeCard: (num) => this.practiceView.flipCardByIndex(num),
       onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
       onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),
+      onOpenProject: () => this.projectService.openProject(this.inputView),
+      onSaveProject: () => this.projectService.saveProject(this.inputView),
+      onSaveProjectAs: () => this.projectService.saveProjectAs(this.inputView),
       getCurrentPage: () => this.router.getCurrentPage(),
       isShortcutActive: () => ['practice', 'memorize'].includes(this.router.getCurrentPage())
     });
 
-    // 6. Navigate to initial page from URL hash or default to 'input'
+    // 7. Navigate to initial page from URL hash or default to 'input'
     const initialHash = window.location.hash.replace(/^#/, '');
     if (['input', 'practice', 'memorize'].includes(initialHash)) {
       this.router.navigateTo(initialHash);
@@ -72,6 +80,33 @@ class CEToolApp {
     }
 
     console.log('🚀 CE Tool 3-Page Architecture initialized successfully.');
+  }
+
+  initProjectToolbar() {
+    this.projectService.init();
+
+    this.projectService.onStateChange((state) => {
+      const pill = document.getElementById('projectStatusPill');
+      const nameLabel = document.getElementById('projectNameLabel');
+      const statusLabel = document.getElementById('projectSaveStatus');
+      if (nameLabel) nameLabel.textContent = state.projectName;
+      if (statusLabel) {
+        statusLabel.textContent = state.isDirty ? '(수정됨 ●)' : (state.hasHandle ? '(저장됨 ✓)' : '(미저장)');
+      }
+      if (pill) {
+        pill.classList.toggle('is-dirty', state.isDirty);
+        pill.classList.toggle('is-clean', !state.isDirty && state.hasHandle);
+        pill.classList.toggle('empty', !state.hasHandle && !state.isDirty);
+      }
+    });
+
+    const btnOpen = document.getElementById('btnProjectOpen');
+    const btnSave = document.getElementById('btnProjectSave');
+    const btnSaveAs = document.getElementById('btnProjectSaveAs');
+
+    if (btnOpen) btnOpen.addEventListener('click', () => this.projectService.openProject(this.inputView));
+    if (btnSave) btnSave.addEventListener('click', () => this.projectService.saveProject(this.inputView));
+    if (btnSaveAs) btnSaveAs.addEventListener('click', () => this.projectService.saveProjectAs(this.inputView));
   }
 
   initTheme() {

@@ -419,6 +419,35 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 신규 3개 테스트 포함 26/26개 전체 테스트 스위트 100% Pass (16.6초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
+## [2026-10-12 22:04] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **프로젝트 단위 음성·청크 완전 통합 패키징 (`.ceproject` 포맷)**:
+     - MP3/WAV 음성 파일(바이너리 Base64 Data URL)과 전체 스크립트, 청크 2x2 대칭 편집 데이터(원문, 자연스러운 해석, 청크 구분 `||`, 직독직해 순차 해석, 문장별 오디오 타임스탬프)를 하나의 독립된 `.ceproject` 파일로 완전 패키징.
+     - 프로젝트 파일 오픈 시 별도의 오디오 재지정 없이 Web Audio API 파형 디코딩, 오디오 플레이어 로드, 1/2/3단계 뷰 상태가 100% 원클릭 자동 복원.
+  2. **`[불러오기 / 저장하기 / 새 이름으로 저장하기]` 3대 액션 체계 구축**:
+     - **[📂 불러오기 (`Ctrl + O`)]**: `window.showOpenFilePicker`를 통해 `.ceproject` 파일을 열고 작업 환경에 즉시 로드.
+     - **[💾 저장하기 (`Ctrl + S`)]**: 기존에 열려 있거나 저장된 파일 핸들이 있으면 대화상자 없이 파일에 즉시 덮어쓰기(In-place Fast Save) 수행. 미저장 프로젝트는 자동으로 '새 이름으로 저장'으로 안전하게 전환.
+     - **[📑 새 이름으로 저장하기 (`Ctrl + Shift + S`)]**: 항상 저장 대화상자(`showSaveFilePicker`)를 호출하여 원하는 위치와 이름으로 새 프로젝트 파일 저장.
+  3. **'항상 최근 열었던 폴더 자동 유지' 2중 보장 메커니즘**:
+     - **Chromium Native MRU**: `showOpenFilePicker({ id: 'ce-project-folder' })` 및 `showSaveFilePicker({ id: 'ce-project-folder' })`에 고유 ID를 지정하여, 브라우저 엔진이 OS 파일 다이얼로그의 최근 방문 디렉토리를 자동 기억.
+     - **IndexedDB 영속화 (`ce_tool_db` / `project_handles`)**: 최근 작업 파일 핸들 및 부모 디렉토리 핸들을 IndexedDB에 저장하여 브라우저 재시작 후에도 이전 작업명과 폴더 경로 유지.
+     - **무결점 폴백**: File System Access API 미지원 브라우저에서는 표준 `<input type="file">` 및 `<a>` 다운로드 방식으로 자동 폴백.
+  4. **글로벌 헤더 툴바 및 반응형 상태 알약(Status Pill) UI**:
+     - 상단 헤더에 `[📂 불러오기] [💾 저장하기] [📑 새 이름으로]` 버튼 그룹 배치.
+     - 프로젝트 상태 알약: `새 프로젝트 (미저장)`(호박색 점), `파일명 ● (수정됨)`(맥동하는 청록색 점), `파일명 ✓ (저장됨)`(에메랄드 그린 점).
+     - 화면 폭 1024px 이하 시 버튼 텍스트가 아이콘 모드로 자동 축소되는 반응형 디자인 완비.
+  5. **단축키 가로채기 및 실시간 Dirty 상태 추적 연동**:
+     - `src/ui/shortcut-manager.js`에서 텍스트 입력창 포커스 중에도 `Ctrl+O`, `Ctrl+S`, `Ctrl+Shift+S`를 가로채어 브라우저 기본 동작 차단 및 CE Tool 프로젝트 작업 실행.
+     - 텍스트 수정, 청크 분할/결합, 구분선(`+`/`||`) 클릭 시 실시간으로 `(수정됨 ●)`으로 상태 알약 갱신.
+  6. **신규 회귀 테스트 및 단독 배포 번들 최신화**:
+     - `scratch/test_project_service.js` 신규 추가: 직렬화/역직렬화, Base64 오디오 복원, 3대 액션, dirty 상태, 단축키 전원 통과.
+     - `app.js` (295.0 KB), `styles.css` (75.7 KB) 단독 배포 번들 최신화 (0 imports/exports, syntax 검증 완료).
+- **검증 결과**:
+  - `npm run check`: 26개 전 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 신규 프로젝트 테스트 포함 27/27개 전체 테스트 스위트 100% Pass (16.0초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
+
+
 
 
 

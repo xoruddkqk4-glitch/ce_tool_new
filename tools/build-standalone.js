@@ -36,6 +36,7 @@ const jsFiles = [
   'src/audio/looper-engine.js',
   'src/audio/playback-controller.js',
   'src/ui/toast-manager.js',
+  'src/services/project-service.js',
   'src/ui/settings-modal.js',
   'src/ui/router.js',
   'src/ui/shortcut-manager.js',
@@ -54,6 +55,7 @@ const cssFiles = [
   'styles/components/chunk-cards.css',
   'styles/components/sentence-navigator.css',
   'styles/components/modal-toast.css',
+  'styles/components/project-toolbar.css',
   'styles/views/input-view.css',
   'styles/views/practice-view.css',
   'styles/views/memorize-view.css'

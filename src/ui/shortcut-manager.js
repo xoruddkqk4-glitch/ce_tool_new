@@ -33,6 +33,29 @@ export class ShortcutManager {
 
   handleKeyDown(e) {
     if (this.isModalOpen()) return;
+
+    // =========================================================================
+    // GLOBAL: Project File Shortcuts (Ctrl+O, Ctrl+S, Ctrl+Shift+S)
+    // =========================================================================
+    if (e.ctrlKey || e.metaKey) {
+      const key = (e.key || '').toLowerCase();
+      if (key === 'o' && !e.shiftKey) {
+        e.preventDefault();
+        if (this.handlers.onOpenProject) this.handlers.onOpenProject();
+        return;
+      }
+      if (key === 's') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (this.handlers.onSaveProjectAs) this.handlers.onSaveProjectAs();
+        } else {
+          if (this.handlers.onSaveProject) this.handlers.onSaveProject();
+        }
+        return;
+      }
+      return; // Ignore other Ctrl/Cmd shortcuts
+    }
+
     const target = e.target;
     const isTyping = target && (
       target.tagName === 'INPUT' ||
@@ -52,11 +75,6 @@ export class ShortcutManager {
           this.handlers.onNextSentence();
         }
       }
-      return;
-    }
-
-    // Ignore if Ctrl/Cmd is pressed (allow browser shortcuts like Ctrl+R, Ctrl+C)
-    if (e.ctrlKey || e.metaKey) {
       return;
     }
 

@@ -23,6 +23,7 @@ import { synthesizeSilentAudioForScript, speakText } from '../audio/tts-synthesi
 import { getFelsInfo } from '../config/fels-dict.js';
 import { toast } from '../ui/toast-manager.js';
 import { escapeHtml } from '../utils/dom.js';
+import { projectService } from '../services/project-service.js';
 
 // Placeholder kept in the 직독직해 slash string for empty chunks so slot positions never shift
 const DIRECT_EMPTY_PLACEHOLDER = '—';
@@ -134,6 +135,7 @@ export class InputView {
       this.inputEnglish.addEventListener('input', () => {
         const len = this.inputEnglish.value.length;
         if (this.charCount) this.charCount.textContent = `${len}자`;
+        projectService.markDirty();
       });
 
       this.inputEnglish.addEventListener('keydown', (e) => {
@@ -155,6 +157,7 @@ export class InputView {
         if (this.parsedResultsSection) {
           this.parsedResultsSection.classList.add('hidden');
         }
+        projectService.markDirty();
       });
     }
 
@@ -330,6 +333,7 @@ export class InputView {
     }
 
     this.renderDropAreaPreview(file);
+    projectService.markDirty();
   }
 
   renderDropAreaPreview(file) {
@@ -363,6 +367,7 @@ export class InputView {
     appState.uploadedAudioFile = null;
     appState.audioBuffer = null;
     appState.isSynthesizedAudio = false;
+    projectService.markDirty();
 
     if (this.audioFileInput) this.audioFileInput.value = '';
     if (this.dropArea) {
@@ -632,6 +637,7 @@ export class InputView {
     appState.sentenceList.splice(idx, 1);
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+    projectService.markDirty();
 
     this.renderParsedResults({
       targetIdx,
@@ -711,6 +717,7 @@ export class InputView {
     appState.sentenceList.splice(idx, 1, newStn1, newStn2);
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+    projectService.markDirty();
 
     this.renderParsedResults({
       targetIdx: idx,
@@ -1202,6 +1209,7 @@ export class InputView {
 
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
+    projectService.markDirty();
   }
 
   updateChunksFromTextInput(stn, chunkedText, directInput, track) {
@@ -1226,6 +1234,7 @@ export class InputView {
 
     stn.result.chunk_text = newChunks.map(c => c.ko).join(' || ');
     stn.result.direct = newChunks.map(c => c.ko).join(' / ');
+    projectService.markDirty();
 
     if (directInput && document.activeElement !== directInput) {
       directInput.value = this.getDirectChunkString(newChunks);

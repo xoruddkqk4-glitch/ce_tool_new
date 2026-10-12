@@ -27,6 +27,30 @@
         </div>
       </div>
 
+      <!-- Global Project Management Toolbar -->
+      <div class="header-project-toolbar">
+        <button id="btnProjectOpen" class="project-btn" title="프로젝트 불러오기 (Ctrl+O)" type="button">
+          <span class="btn-icon">📂</span>
+          <span class="btn-text">불러오기</span>
+          <kbd class="btn-kbd">Ctrl+O</kbd>
+        </button>
+        <button id="btnProjectSave" class="project-btn" title="프로젝트 저장하기 (Ctrl+S)" type="button">
+          <span class="btn-icon">💾</span>
+          <span class="btn-text">저장하기</span>
+          <kbd class="btn-kbd">Ctrl+S</kbd>
+        </button>
+        <button id="btnProjectSaveAs" class="project-btn" title="새 이름으로 저장하기 (Ctrl+Shift+S)" type="button">
+          <span class="btn-icon">📑</span>
+          <span class="btn-text">새 이름으로</span>
+        </button>
+
+        <div id="projectStatusPill" class="project-status-pill empty" title="현재 프로젝트 상태">
+          <span class="pill-dot"></span>
+          <span id="projectNameLabel" class="pill-name">새 프로젝트</span>
+          <span id="projectSaveStatus" class="pill-status">(미저장)</span>
+        </div>
+      </div>
+
       <!-- 3-Page Navigation Tabs -->
       <nav class="page-nav-tabs" role="tablist">
         <button class="nav-tab-btn active" data-page="input" type="button">
@@ -502,6 +526,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Hidden File Input for Browser Fallback -->
+    <input type="file" id="projectFileInput" accept=".ceproject,.json" class="hidden">
 
     <!-- Floating Toast Notification -->
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
