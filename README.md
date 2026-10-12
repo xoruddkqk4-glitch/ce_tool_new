@@ -345,7 +345,7 @@ npm test               # = node tools/run-tests.js
   - `scratch/test_user_requirements_v10.js` & `test_page1_button_clicks.js`: 전원 100% 통과.
   - `node -c app.js`: 정적 구문 오류 0건 통과.
 
-## [2026-10-12 21:05] 업데이트 이력 (Commit ID: pending)
+## [2026-10-12 21:05] 업데이트 이력 (Commit ID: 434f6c2)
 - **수정 내용**:
   1. **무의존성(Zero-dependency) 번들러 및 CLI 검증 툴체인 구축**:
      - `package.json`에 `build`, `watch`, `check`, `test` CLI 스크립트 구성.
