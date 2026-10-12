@@ -385,7 +385,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 23개 테스트 파일 전체 통과 (23/23 passed, 100%).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검증 통과).
 
-## [2026-10-12 21:43] 업데이트 이력 (Commit ID: pending)
+## [2026-10-12 21:43] 업데이트 이력 (Commit ID: 8bcb279)
 - **수정 내용**:
   1. **Page 1 청크 편집기 수동 분할 즉각 반응 속도 최적화 (0.33ms)**:
      - 구분선(`+`/`||`) 클릭 시마다 동기적으로 차단(blocking)되던 무거운 원격 AI 정렬 호출을 전면 해제.
