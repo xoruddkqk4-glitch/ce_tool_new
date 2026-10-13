@@ -101,6 +101,22 @@ export class MemorizeView {
     if (this.btnClassroomFlipAll) {
       this.btnClassroomFlipAll.addEventListener('click', () => this.flipAllClassroomCards());
     }
+
+    // Auto-fit chunk cards into single lines on window or container resize
+    if (typeof ResizeObserver !== 'undefined' && this.canvasContainer) {
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
+          this.fitAllSentenceRows();
+        }
+      });
+      this.resizeObserver.observe(this.canvasContainer);
+    } else {
+      window.addEventListener('resize', () => {
+        if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
+          this.fitAllSentenceRows();
+        }
+      });
+    }
   }
 
   setMemorizeMode(mode) {
@@ -111,6 +127,9 @@ export class MemorizeView {
 
     if (this.canvasContainer) {
       this.canvasContainer.setAttribute('data-mode', mode);
+      requestAnimationFrame(() => {
+        this.fitAllSentenceRows();
+      });
     }
 
     toast.show(`암기 모드: ${this.getModeLabel(mode)}`);
@@ -223,6 +242,8 @@ export class MemorizeView {
         const cCard = document.createElement('div');
         cCard.className = 'memorize-chunk-card';
         cCard.setAttribute('data-c-idx', cIdx);
+        cCard._chunkEn = chunk.en || '';
+        cCard._chunkKo = chunk.ko || '';
 
         // Shortcut Key Badge (1 to 9)
         const keyNum = cIdx + 1;
@@ -231,8 +252,8 @@ export class MemorizeView {
         // Dynamic width per card based on content length with minimal padding
         const enLen = (chunk.en || '').trim().length;
         const koLen = (chunk.ko || '').trim().length;
-        const estContentWidth = Math.max(enLen * 10, koLen * 15);
-        const cardWidth = Math.max(38, Math.round(estContentWidth + 16));
+        const estContentWidth = Math.max(enLen * 8.5, koLen * 12.5);
+        const cardWidth = Math.max(20, Math.round(estContentWidth + 6));
         cCard.style.width = `${cardWidth}px`;
         cCard.style.flex = '0 0 auto';
         if (appState.memorizeAllFlipped) {
@@ -269,25 +290,134 @@ export class MemorizeView {
     if (this.canvasContainer) {
       this.canvasContainer.setAttribute('data-mode', appState.memorizeMode || 'all');
 
-      // Precise measurement to prevent any text clipping on proportional fonts
+      // Auto-fit all sentence rows to fit strictly in a single line without horizontal scrolling
       requestAnimationFrame(() => {
-        if (!this.canvasContainer) return;
-        const cards = this.canvasContainer.querySelectorAll('.memorize-chunk-card');
-        cards.forEach(c => {
-          const enEl = c.querySelector('.chunk-en-text');
-          const koEl = c.querySelector('.chunk-ko-text');
-          const wEn = enEl ? enEl.scrollWidth : 0;
-          const wKo = koEl ? koEl.scrollWidth : 0;
-          const maxW = Math.max(wEn, wKo);
-          if (maxW > 0) {
-            const targetW = Math.max(38, maxW + 16);
-            const currentW = parseFloat(c.style.width || '0');
-            if (targetW > currentW) {
-              c.style.width = `${targetW}px`;
-              c.style.minWidth = `${targetW}px`;
-            }
+        this.fitAllSentenceRows();
+      });
+    }
+  }
+
+  measureTextWidth(text, isKo = false) {
+    if (!text) return 0;
+    const str = String(text).trim();
+    if (!str) return 0;
+
+    // 1. In browser, try canvas 2D measurement for subpixel font metrics
+    if (typeof document !== 'undefined') {
+      try {
+        if (!this._measureCanvas) {
+          this._measureCanvas = document.createElement('canvas');
+          this._measureCtx = this._measureCanvas.getContext('2d');
+        }
+        if (this._measureCtx && typeof this._measureCtx.measureText === 'function') {
+          const fontSize = isKo ? 13.5 : 14.72;
+          const fontWeight = isKo ? '600' : '700';
+          this._measureCtx.font = `${fontWeight} ${fontSize}px "Pretendard Variable", "Pretendard", "Plus Jakarta Sans", sans-serif`;
+          const metrics = this._measureCtx.measureText(str);
+          if (metrics && metrics.width > 0 && (metrics.width !== 50 || str.length === 5)) {
+            return Math.ceil(metrics.width);
           }
-        });
+        }
+      } catch (e) {
+        // Fallback below
+      }
+    }
+
+    // 2. High-precision character metric fallback
+    let w = 0;
+    for (let i = 0; i < str.length; i++) {
+      const code = str.charCodeAt(i);
+      if (code >= 0xac00 && code <= 0xd7a3) {
+        w += 14.5; // Hangul syllable
+      } else if (code >= 0x1100 && code <= 0x11ff || code >= 0x3130 && code <= 0x318f) {
+        w += 12; // Hangul Jamo
+      } else if (code >= 65 && code <= 90) {
+        w += 10.2; // Uppercase Latin
+      } else if (code >= 97 && code <= 122) {
+        if ('il'.includes(str[i])) w += 4.5;
+        else if ('mw'.includes(str[i])) w += 12.8;
+        else if ('rftj'.includes(str[i])) w += 6.5;
+        else w += 8.5; // Lowercase Latin
+      } else if (code === 32) {
+        w += 4.8; // Space
+      } else if (code >= 48 && code <= 57) {
+        w += 8.8; // Digits
+      } else {
+        w += 6.5; // Symbols/Punctuation
+      }
+    }
+    return Math.ceil(w);
+  }
+
+  fitAllSentenceRows() {
+    if (!this.canvasContainer) return;
+    const grids = this.canvasContainer.querySelectorAll('.memorize-chunk-grid');
+    grids.forEach(grid => this.fitSentenceRow(grid));
+  }
+
+  fitSentenceRow(chunkGrid) {
+    if (!chunkGrid) return;
+    const cards = Array.from(chunkGrid.querySelectorAll('.memorize-chunk-card'));
+    if (!cards.length) return;
+
+    // Available width of the chunk row
+    const gridWidth = chunkGrid.clientWidth;
+    if (!gridWidth || gridWidth <= 0) return;
+
+    const gap = 4; // matches CSS gap: 4px
+    const totalGaps = (cards.length - 1) * gap;
+
+    // Fixed horizontal overhead per card: 4px left + 4px right padding + 2px border + 2px safety buffer = 12px
+    const fixedCardExtra = 12;
+    const totalFixedOverhead = cards.length * fixedCardExtra + totalGaps;
+    const availTextWidth = Math.max(20, gridWidth - totalFixedOverhead - 4);
+
+    // Measure raw unscaled text width of each card at base font size (0.92rem)
+    const rawTextWidths = [];
+    cards.forEach(card => {
+      const enText = card._chunkEn || (card.querySelector('.chunk-en-text')?.textContent || '');
+      const koText = card._chunkKo || (card.querySelector('.chunk-ko-text')?.textContent || '');
+
+      const wEn = this.measureTextWidth(enText, false);
+      const wKo = this.measureTextWidth(koText, true);
+      const maxTextW = Math.max(wEn, wKo, 10);
+      rawTextWidths.push(maxTextW);
+    });
+
+    const totalRawTextWidth = rawTextWidths.reduce((sum, w) => sum + w, 0);
+
+    if (totalRawTextWidth > availTextWidth) {
+      // Must scale down font size so that the text of ALL cards fits without clipping or ellipsis
+      const scale = availTextWidth / totalRawTextWidth;
+      // Allow scaling down smoothly (down to 0.45rem if needed for very long sentences)
+      const scaledFontRem = Math.max(0.45, Math.min(0.92, 0.92 * scale));
+      chunkGrid.style.setProperty('--row-chunk-font-size', `${scaledFontRem.toFixed(3)}rem`);
+
+      // Allocate card widths: exactly textWidth * scale + fixedCardExtra!
+      let remainingTextSpace = availTextWidth;
+      cards.forEach((card, idx) => {
+        let allocatedTextW;
+        if (idx === cards.length - 1) {
+          allocatedTextW = Math.max(10, remainingTextSpace);
+        } else {
+          allocatedTextW = Math.max(10, Math.floor(rawTextWidths[idx] * scale));
+          remainingTextSpace -= allocatedTextW;
+        }
+        const cardW = allocatedTextW + fixedCardExtra;
+        card.style.flex = '0 0 auto';
+        card.style.width = `${cardW}px`;
+        card.style.minWidth = '0px';
+        card.style.maxWidth = 'none'; // NEVER clamp maxWidth so text is never cut off
+      });
+    } else {
+      // Fits comfortably at standard font size
+      chunkGrid.style.setProperty('--row-chunk-font-size', '0.92rem');
+      cards.forEach((card, idx) => {
+        const cardW = rawTextWidths[idx] + fixedCardExtra;
+        card.style.flex = '0 0 auto';
+        card.style.width = `${cardW}px`;
+        card.style.minWidth = '0px';
+        card.style.maxWidth = 'none';
       });
     }
   }
@@ -803,6 +933,9 @@ export class MemorizeView {
     this.activeRowIndex = appState.activeSentenceIndex || 0;
     this.renderFullScriptCanvas();
     this.setActiveRow(this.activeRowIndex);
+    requestAnimationFrame(() => {
+      this.fitAllSentenceRows();
+    });
   }
 
   onDeactivated() {

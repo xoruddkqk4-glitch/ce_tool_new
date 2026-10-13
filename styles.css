@@ -2983,7 +2983,7 @@ input, textarea {
   background: var(--glass-bg);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  padding: 16px;
+  padding: 12px 14px;
   transition: var(--transition);
 }
 
@@ -3051,39 +3051,40 @@ input, textarea {
   transform: scale(1.1);
 }
 
-/* Chunk Grid - Left aligned, minimal gap, strict single-line */
+/* Chunk Grid - Strict single-line, NO horizontal scroll, dynamically auto-scaled */
 .memorize-chunk-grid {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap !important;
   align-items: center;
   justify-content: flex-start;
-  gap: 5px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
-  padding: 2px 0 6px 0;
+  gap: 4px;
+  overflow-x: hidden !important;
+  overflow-y: hidden;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none;
+  padding: 2px 0 4px 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .memorize-chunk-grid::-webkit-scrollbar {
-  height: 4px;
-}
-
-.memorize-chunk-grid::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.25);
-  border-radius: 4px;
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 .memorize-chunk-card {
   perspective: 1000px;
   position: relative;
-  height: 56px;
-  min-height: 56px;
-  flex: 0 0 auto !important;
+  height: 50px;
+  min-height: 50px;
+  flex: 0 0 auto;
   width: max-content;
-  min-width: 36px;
+  min-width: 20px;
   cursor: pointer;
   user-select: none;
+  box-sizing: border-box;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
 }
 
@@ -3110,7 +3111,7 @@ input, textarea {
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   border-radius: var(--radius-md);
-  padding: 4px 8px;
+  padding: 2px 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3119,6 +3120,7 @@ input, textarea {
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .memorize-face-en {
@@ -3132,39 +3134,43 @@ input, textarea {
 }
 
 .chunk-en-text {
-  font-size: 0.95rem;
+  font-size: var(--row-chunk-font-size, 0.92rem);
   font-weight: 700;
   color: #ffffff;
   white-space: nowrap !important;
   word-break: normal !important;
   overflow-wrap: normal !important;
   display: inline-block;
+  line-height: 1.25;
+  text-overflow: clip !important;
 }
 
 .chunk-ko-text {
-  font-size: 0.9rem;
+  font-size: calc(var(--row-chunk-font-size, 0.92rem) * 0.92);
   font-weight: 600;
   color: #a5f3fc;
   white-space: nowrap !important;
   word-break: normal !important;
   overflow-wrap: normal !important;
   display: inline-block;
+  line-height: 1.25;
+  text-overflow: clip !important;
 }
 
 /* Keypad Shortcut Badge (1~9) */
 .memorize-key-badge {
   position: absolute;
-  top: 3px;
-  left: 5px;
-  font-size: 0.65rem;
+  top: 2px;
+  left: 3px;
+  font-size: 0.6rem;
   font-weight: 800;
   font-family: monospace;
   color: rgba(255, 255, 255, 0.45);
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
-  padding: 0 4px;
-  line-height: 1.3;
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 1.2;
   pointer-events: none;
   z-index: 5;
   transition: all 0.2s ease;
@@ -3189,7 +3195,7 @@ input, textarea {
   filter: blur(5px);
   background: rgba(255, 255, 255, 0.1);
   border-radius: 4px;
-  padding: 0 8px;
+  padding: 0 2px;
 }
 
 .memorize-canvas[data-mode="cloze"] .memorize-chunk-card:not(.flipped) .memorize-face-en {

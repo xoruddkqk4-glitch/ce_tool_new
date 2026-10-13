@@ -472,6 +472,34 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 27/27개 전체 테스트 스위트 100% 통과 (16.0초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
+## [2026-10-13 19:38] 업데이트 이력 (Commit ID: <커밋 후 업데이트>)
+- **수정 내용**:
+  1. **Page 3 스크립트 암기 청크 카드 내부 앞뒤 여백 최소화 (`styles/views/memorize-view.css`)**:
+     - `.memorize-face` 내부 좌우 패딩을 기존 `4px 8px`에서 `2px 4px`로 대폭 축소하여 텍스트 앞뒤 불필요한 공백 제거.
+     - `.memorize-chunk-grid` 카드 간격(`gap`)을 `4px`로 최소화하고, 카드 최소 너비 제한을 `38px`에서 `20px`로 낮춰 짧은 단어 카드(`is`, `This` 등)의 불필요한 공간 점유 방지.
+     - 청크 카드 번호 배지(`.memorize-key-badge`)를 `top: 2px; left: 3px; font-size: 0.6rem; padding: 0 3px;`로 컴팩트하게 정돈하여 본문 영역 확보.
+     - 문장 행(`.memorize-sentence-row`) 패딩을 `16px`에서 `12px 14px`로 최적화하여 가로 가용 공간 확장.
+  2. **가로 스크롤바 완전 제거 및 무스크롤 단일행 레이아웃 보장 (`styles/views/memorize-view.css`)**:
+     - `.memorize-chunk-grid`에 `overflow-x: hidden !important`, `overflow-y: hidden`, `scrollbar-width: none !important` 및 `::-webkit-scrollbar { display: none !important; }`를 적용하여 브라우저 가로 스크롤바 노출 원천 차단.
+  3. **청크 카드 내 말줄임표(`...`) 원천 차단 (`styles/views/memorize-view.css`)**:
+     - `.chunk-en-text` 및 `.chunk-ko-text`에서 `overflow: hidden; text-overflow: ellipsis; max-width: 100%;`를 완전히 제거하고 `text-overflow: clip !important;`를 적용하여 브라우저가 임의로 글자를 자르고 말줄임표(`...`)를 붙이던 결함을 원천 해결.
+  4. **문장 행별 동적 폰트 축소 및 고정 패딩 버퍼 기반 1줄 자동 맞춤 알고리즘 구현 (`src/views/memorize-view.js`)**:
+     - **정밀 폭 측정 (`measureTextWidth`)**: Canvas 2D `measureText` 서브픽셀 폰트 메트릭스 및 영문/한글 글자별 정밀 가중치 폴백을 통해 카드 원문 텍스트 길이를 정확히 산출.
+     - **순수 텍스트 vs 고정 패딩 분리**: 카드 1개당 고정 패딩/테두리 여유 공간(`fixedCardExtra = 12px`)을 가용 텍스트 폭과 분리하여, 폰트 축소 시에도 카드 내부 패딩이 줄어들어 글자가 잘리는 현상 방지.
+     - **비례 폰트 스케일링**: 행 내 모든 청크의 최대 텍스트 폭 합이 가용 공간을 초과할 경우, `scale = availTextWidth / totalRawTextWidth`를 계산하여 CSS 변수 `--row-chunk-font-size`로 글자 크기를 부드럽게 비례 축소(`0.92rem` ~ `0.45rem`).
+     - **양면(영문/한글) 최대 폭 기준 계산**: 각 카드는 영문(`chunk.en`)과 한글 해석(`chunk.ko`) 중 더 긴 폭을 기준으로 너비가 할당되어, 카드를 뒤집어도(F/단축키/클릭) 글자 잘림 없이 1줄 유지.
+  5. **반응형 리사이즈 및 뷰 활성화 자동 피팅 연동 (`src/views/memorize-view.js`)**:
+     - `ResizeObserver` 및 윈도우 리사이즈 리스너를 연동하여 브라우저 창 크기 변경 시 모든 문장 행이 즉시 자동 재배치.
+     - `onActivated()` 및 `setMemorizeMode()` 호출 시 `fitAllSentenceRows()`를 자동 실행하여 탭 전환 및 모드 변경 시에도 항상 한 줄로 완벽 정렬.
+  6. **신규 회귀 검증 테스트 추가 및 단독 배포 번들 최신화**:
+     - `scratch/test_no_ellipsis.js` 신규 추가: S4 긴 문장 기준 4개 카드가 가로 850px 컨테이너 안에 말줄임표 없이 100% 온전히 1줄 배치됨을 검증 통과.
+     - `styles.css` (77.2 KB), `app.js` (300.6 KB) standalone 번들 동기화 (0 imports/exports, syntax 검사 통과).
+- **검증 결과**:
+  - `npm run check`: 26개 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 전체 28/28개 테스트 스위트 100% 통과 (14.1초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
+
+
 
 
 
