@@ -47,7 +47,7 @@ export class LooperEngine {
     if (!player || player.paused || player.ended) return;
 
     const cur = player.currentTime;
-    const { loopStart, loopEnd, targetLoopCount, isShadowingWaiting, isAutoAdvance } = this.appState;
+    const { loopStart, loopEnd, targetLoopCount, isShadowingWaiting } = this.appState;
 
     if (isShadowingWaiting) return;
 
@@ -76,12 +76,6 @@ export class LooperEngine {
         const typeStr = hasCustomLoop ? '선택 구간' : `문장 S${this.appState.activeSentenceIndex + 1}`;
         this.callbacks.onLoopComplete(targetLoopCount, typeStr);
         this.callbacks.onPlayStateChange(false);
-
-        if (isAutoAdvance) {
-          setTimeout(() => {
-            this.callbacks.onAutoAdvance();
-          }, 800);
-        }
       } else {
         // 0.5s shadowing pause delay between loop iterations
         this.appState.isShadowingWaiting = true;

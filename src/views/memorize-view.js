@@ -270,8 +270,8 @@ export class MemorizeView {
         }
 
         cCard.innerHTML = `
+          ${keyBadge}
           <div class="memorize-card-inner">
-            ${keyBadge}
             <div class="memorize-face memorize-face-en">
               <span class="chunk-en-text">${escapeHtml(chunk.en)}</span>
             </div>
@@ -902,8 +902,8 @@ export class MemorizeView {
         card.style.flex = '0 1 auto';
 
         card.innerHTML = `
+          ${keyBadge}
           <div class="classroom-card-inner">
-            ${keyBadge}
             <div class="classroom-face classroom-face-en">
               <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
             </div>

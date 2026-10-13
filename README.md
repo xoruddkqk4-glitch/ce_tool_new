@@ -587,6 +587,30 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 35/35개 테스트 스위트 100% 통과 (21.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
+## [2026-10-13 23:45] 업데이트 이력 (Commit ID: Pending)
+- **수정 내용**:
+  1. **2단계 약형드랩 문장 간 이동 시 정답 및 채점 결과 100% 영구 보존 (`src/views/practice-view.js`)**:
+     - `PracticeView`에 `currentRenderedSentenceIndex` 속성을 도입하여 현재 화면에 렌더링된 문장 번호를 엄격하게 추적.
+     - 문장 전환(<kbd>F4</kbd>, <kbd>F5</kbd>, 화살표 키, 하단 문장 칩 클릭 등) 시 이전 문장의 빈칸 입력값이 새 문장에 잘못 저장되거나 빈 문자열로 덮어씌워지던 인덱스 꼬임 결함을 원천 해결.
+     - 다른 문장에 다녀왔을 때 저장된 입력값(`userAnswers`) 복원뿐만 아니라 이미 정답 확인을 완료한 문장(`userChecked === true`)의 맞은 빈칸(초록색 테두리 `is-correct`), 틀린 빈칸(빨간색 테두리 `is-wrong`) 채점 상태가 그대로 복원되도록 처리.
+  2. **3단계 및 2단계 청크 카드 3D 뒤집기 시 숫자 배지 반전/미러링 결함 해결 (`src/views/memorize-view.js`, `src/views/practice-view.js`, `styles/views/memorize-view.css`, `styles/components/chunk-cards.css`)**:
+     - 카드를 뒤집었을 때 180도 회전(`transform: rotateY(180deg)`)이 걸리는 카드 내부 회전 컨테이너(`.memorize-card-inner`, `.classroom-card-inner`, `.card-inner`) 안에 숫자 단축키 배지(`keyBadge`)가 들어있어 배지가 우측으로 이동하고 숫자(1, 2, 3...)가 거울처럼 좌우 반전되던 현상 해결.
+     - 숫자 배지를 회전 컨테이너 외부(카드 루트 엘리먼트 직속 자식)로 분리하고 `transform: translateZ(10px); z-index: 10; pointer-events: none;`를 적용하여, 카드가 플립되어도 숫자는 항상 좌측 상단 제자리에 정방향으로 고정되도록 완벽 수정.
+  3. **'자동 다음 문장' 기능 완전 삭제 & '문장 단위 [ ] 데이터 초기화' 버튼 신규 추가 (`index.html`, `src/views/practice-view.js`, `src/audio/looper-engine.js`, `styles/components/sentence-navigator.css`)**:
+     - 하단 문장 내비게이터 우측(`nav-settings-right`)에 위치하던 '자동 다음 문장' 체크박스(`#chkAutoAdvance`) 및 루프 엔진 내부 자동 이동 타이머/콜백 로직 완전 제거.
+     - 해당 위치에 현재 문장의 빈칸 데이터를 즉시 비울 수 있는 `🔄 [ ] 초기화` 버튼(`#btnResetSentenceInputs`) 신규 배치.
+     - 클릭 시 다른 문장의 데이터는 안전하게 보존하면서 오직 현재 보고 있는 문장의 빈칸 입력값, 정답/오답 테두리, 채점 상태(`userChecked`)만 깨끗이 리셋하고 첫 번째 빈칸으로 자동 포커스 이동.
+  4. **파형창 반응 속도 및 60FPS 부드러운 재생바 움직임 최적화 구현 계획서 수립 (`docs/implementation/20261013_2326_waveform_performance_optimization.md`)**:
+     - 1단계 마스터 파형에서 `timeupdate`(4~5Hz, 250ms) 의존으로 인한 재생바 뚝뚝 끊김 현상과 매 틱 1,200개 바 풀 재렌더링 병목, 2단계 360회 `shadowBlur` 래스터라이징 병목을 정밀 진단하고 60fps rAF 루프 및 오프스크린 캔버스 캐시 아키텍처 수립 완료.
+  5. **단독 배포 번들 최신화 및 자동화 테스트 100% 통과 (`tools/build-standalone.js`, `scratch/`)**:
+     - `scratch/test_fels_answer_persistence.js` (문장 전환 시 정답/채점 보존 검증) 및 `scratch/test_reset_sentence_inputs_button.js` ([ ] 초기화 기능 검증) 신규 작성.
+     - `build-standalone.js`를 통해 `app.js` (369.3 KB) 및 `styles.css` (84.7 KB) 단독 실행 번들 갱신.
+- **검증 결과**:
+  - `npm run check`: 28개 전체 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 전체 36/36개 테스트 스위트 100% 통과 (22.6초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
+
+
 
 
 

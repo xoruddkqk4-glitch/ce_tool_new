@@ -80,7 +80,7 @@ export class PracticeView {
     this.currentSentenceNum = document.getElementById('currentSentenceNum');
     this.totalSentenceNum = document.getElementById('totalSentenceNum');
     this.sentenceChipsTrack = document.getElementById('sentenceChipsTrack');
-    this.chkAutoAdvance = document.getElementById('chkAutoAdvance');
+    this.btnResetSentenceInputs = document.getElementById('btnResetSentenceInputs');
 
     // Engines
     this.waveformRenderer = new WaveformRenderer(this.waveformCanvas);
@@ -94,6 +94,7 @@ export class PracticeView {
     this.draggingDividerIndex = null;
     this.selectedDividerForMove = null;
     this.felsBlanks = [];
+    this.currentRenderedSentenceIndex = null;
     // Last AppState.dataVersion seen by onActivated (fresh data → FELS mode default)
     this.lastSeenDataVersion = -1;
 
@@ -119,12 +120,6 @@ export class PracticeView {
           this.shadowingIndicator.classList.toggle('hidden', !isWaiting);
         }
         this.drawWaveform();
-      },
-      onAutoAdvance: () => {
-        if (appState.activeSentenceIndex < appState.sentenceList.length - 1) {
-          toast.show('⏭️ 다음 문장으로 자동 이동합니다...');
-          this.nextSentence();
-        }
       },
       onPlayStateChange: (isPlaying) => {
         this.updatePlayPauseIcon(isPlaying);
@@ -279,10 +274,9 @@ export class PracticeView {
     if (this.btnNextSentence) {
       this.btnNextSentence.addEventListener('click', () => this.nextSentence());
     }
-    if (this.chkAutoAdvance) {
-      this.chkAutoAdvance.addEventListener('change', (e) => {
-        appState.isAutoAdvance = e.target.checked;
-        toast.show(appState.isAutoAdvance ? '⏩ 다음 문장 자동 이동이 활성화되었습니다.' : '다음 문장 자동 이동이 해제되었습니다.');
+    if (this.btnResetSentenceInputs) {
+      this.btnResetSentenceInputs.addEventListener('click', () => {
+        this.resetFelsInputs();
       });
     }
 
@@ -387,17 +381,25 @@ export class PracticeView {
   }
 
   saveCurrentSentenceAnswers() {
-    const activeStn = appState.getActiveSentence();
-    if (!activeStn || !this.chunksContainer) return;
-    if (!activeStn.userAnswers) activeStn.userAnswers = {};
+    const renderedIdx = (this.currentRenderedSentenceIndex !== null && typeof this.currentRenderedSentenceIndex === 'number')
+      ? this.currentRenderedSentenceIndex
+      : null;
+    if (renderedIdx === null || !appState.sentenceList || !appState.sentenceList[renderedIdx]) return;
+    if (!this.chunksContainer) return;
+
+    const targetStn = appState.sentenceList[renderedIdx];
+    if (!targetStn.userAnswers) targetStn.userAnswers = {};
 
     const inputs = this.chunksContainer.querySelectorAll('.fels-blank-input');
-    inputs.forEach(input => {
-      const bIdx = parseInt(input.getAttribute('data-blank-idx'), 10);
-      if (!isNaN(bIdx)) {
-        activeStn.userAnswers[bIdx] = input.value;
-      }
+    inputs.forEach((input, fallbackIdx) => {
+      const bIdxAttr = input.getAttribute('data-blank-idx');
+      const bIdx = (bIdxAttr !== null && !isNaN(parseInt(bIdxAttr, 10))) ? parseInt(bIdxAttr, 10) : fallbackIdx;
+      targetStn.userAnswers[bIdx] = input.value;
     });
+
+    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+      projectService.markDirty();
+    }
   }
 
   async loadSentence(idx) {
@@ -467,7 +469,7 @@ export class PracticeView {
     this.setRowNaturalVisibility(false); // Default hidden
 
     // Render Cards in Top Section
-    this.renderChunkCards(targetStn.result.chunks || []);
+    this.renderChunkCards(targetStn.result.chunks || [], targetStn);
 
     // Set Audio Player HUD
     if (appState.uploadedAudioFile) {
@@ -487,19 +489,22 @@ export class PracticeView {
     this.drawWaveform();
   }
 
-  renderChunkCards(chunks) {
+  renderChunkCards(chunks, targetStn = null) {
     if (!this.chunksContainer) return;
     this.chunksContainer.innerHTML = '';
     this.felsBlanks = [];
     appState.areAllCardsFlipped = false;
     this.updateFlipAllButtonUI();
 
+    const activeStn = targetStn || appState.sentenceList?.[appState.activeSentenceIndex] || appState.getActiveSentence();
+    const stnIdx = (activeStn && typeof activeStn.index === 'number') ? activeStn.index : appState.activeSentenceIndex;
+    this.currentRenderedSentenceIndex = stnIdx;
+
     if (!chunks || !chunks.length) {
       this.chunksContainer.innerHTML = '<span class="placeholder-text">청크 정보가 없습니다.</span>';
       return;
     }
 
-    const activeStn = appState.getActiveSentence();
     if (activeStn && !activeStn.userAnswers) {
       activeStn.userAnswers = {};
     }
@@ -560,17 +565,22 @@ export class PracticeView {
           const savedAnswer = activeStn?.userAnswers?.[currentBlankIdx];
           if (typeof savedAnswer === 'string') {
             input.value = savedAnswer;
-            if (activeStn?.userChecked) {
-              const isCorrect = (savedAnswer || '').trim().toLowerCase() === felsInfo.clean.toLowerCase();
-              input.classList.toggle('is-correct', isCorrect);
-              input.classList.toggle('is-wrong', !isCorrect);
-            }
+          }
+          if (activeStn?.userChecked) {
+            const currentVal = (input.value || '').trim().toLowerCase();
+            const expectedVal = (felsInfo.clean || '').toLowerCase();
+            const isCorrect = currentVal.length > 0 && currentVal === expectedVal;
+            input.classList.toggle('is-correct', isCorrect);
+            input.classList.toggle('is-wrong', !isCorrect);
           }
 
           input.addEventListener('input', () => {
-            if (activeStn) {
-              if (!activeStn.userAnswers) activeStn.userAnswers = {};
-              activeStn.userAnswers[currentBlankIdx] = input.value;
+            const currentStn = (this.currentRenderedSentenceIndex !== null && appState.sentenceList?.[this.currentRenderedSentenceIndex])
+              ? appState.sentenceList[this.currentRenderedSentenceIndex]
+              : activeStn;
+            if (currentStn) {
+              if (!currentStn.userAnswers) currentStn.userAnswers = {};
+              currentStn.userAnswers[currentBlankIdx] = input.value;
             }
             input.classList.remove('is-correct', 'is-wrong');
             if (typeof projectService !== 'undefined' && projectService.markDirty) {
@@ -648,7 +658,7 @@ export class PracticeView {
         keyBadge.className = 'practice-key-badge';
         keyBadge.textContent = `${keyNum}`;
         keyBadge.title = `숫자키 [${keyNum}] 뒤집기`;
-        inner.appendChild(keyBadge);
+        card.appendChild(keyBadge);
       }
 
       inner.appendChild(frontFace);
@@ -1014,6 +1024,7 @@ export class PracticeView {
   }
 
   prevSentence() {
+    this.saveCurrentSentenceAnswers();
     if (appState.activeSentenceIndex > 0) {
       appState.setActiveSentenceIndex(appState.activeSentenceIndex - 1);
       toast.show(`⬅️ 이전 문장 (S${appState.activeSentenceIndex + 1}/${appState.sentenceList.length})`);
@@ -1023,6 +1034,7 @@ export class PracticeView {
   }
 
   nextSentence() {
+    this.saveCurrentSentenceAnswers();
     if (appState.sentenceList && appState.activeSentenceIndex < appState.sentenceList.length - 1) {
       appState.setActiveSentenceIndex(appState.activeSentenceIndex + 1);
       toast.show(`➡️ 다음 문장 (S${appState.activeSentenceIndex + 1}/${appState.sentenceList.length})`);
@@ -1080,7 +1092,10 @@ export class PracticeView {
       this.toggleFelsMode();
     }
 
-    const activeStn = appState.getActiveSentence();
+    const activeStn = (this.currentRenderedSentenceIndex !== null && appState.sentenceList?.[this.currentRenderedSentenceIndex])
+      ? appState.sentenceList[this.currentRenderedSentenceIndex]
+      : appState.getActiveSentence();
+
     if (activeStn) {
       activeStn.userChecked = true;
       if (!activeStn.userAnswers) activeStn.userAnswers = {};
@@ -1094,11 +1109,13 @@ export class PracticeView {
 
     this.felsBlanks.forEach((item, idx) => {
       if (!item.inputEl) return;
+      const bIdxAttr = item.inputEl.getAttribute('data-blank-idx');
+      const bIdx = (bIdxAttr !== null && !isNaN(parseInt(bIdxAttr, 10))) ? parseInt(bIdxAttr, 10) : idx;
       const userVal = (item.inputEl.value || '').trim().toLowerCase();
       const expected = (item.answer || '').toLowerCase();
 
       if (activeStn) {
-        activeStn.userAnswers[idx] = item.inputEl.value;
+        activeStn.userAnswers[bIdx] = item.inputEl.value;
       }
 
       // Remove any previously rendered answer reveal badges
@@ -1108,7 +1125,7 @@ export class PracticeView {
         if (oldReveal) oldReveal.remove();
       }
 
-      if (userVal === expected) {
+      if (userVal.length > 0 && userVal === expected) {
         correctCount++;
         item.inputEl.classList.remove('is-wrong');
         item.inputEl.classList.add('is-correct');
@@ -1132,7 +1149,9 @@ export class PracticeView {
   }
 
   resetFelsInputs() {
-    const activeStn = appState.getActiveSentence();
+    const activeStn = (this.currentRenderedSentenceIndex !== null && appState.sentenceList?.[this.currentRenderedSentenceIndex])
+      ? appState.sentenceList[this.currentRenderedSentenceIndex]
+      : appState.getActiveSentence();
     if (activeStn) {
       activeStn.userAnswers = {};
       delete activeStn.userChecked;
@@ -1275,6 +1294,7 @@ export class PracticeView {
         chip.title = `${stn.text}${timeStr ? ' ' + timeStr : ''}`;
 
         chip.addEventListener('click', () => {
+          this.saveCurrentSentenceAnswers();
           appState.setActiveSentenceIndex(idx);
         });
 

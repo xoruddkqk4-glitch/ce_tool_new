@@ -862,6 +862,7 @@ input, textarea {
   justify-content: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   pointer-events: none;
+  transform: translateZ(10px);
 }
 
 .card-face {
@@ -1377,7 +1378,7 @@ input, textarea {
   display: none !important;
 }
 
-/* Auto Advance Setting */
+/* Sentence Reset Button in Navigator */
 .nav-settings-right {
   display: flex;
   align-items: center;
@@ -1385,20 +1386,35 @@ input, textarea {
   flex-shrink: 0;
 }
 
-.auto-advance-label {
-  display: flex;
+.stn-reset-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.8rem;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
   color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-full);
   cursor: pointer;
-  user-select: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
 }
 
-.auto-advance-label input {
-  accent-color: var(--primary);
-  width: 16px;
-  height: 16px;
+.stn-reset-btn:hover {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.35);
+  transform: translateY(-1px);
+}
+
+.stn-reset-btn:active {
+  transform: translateY(0);
+}
+
+.stn-reset-btn .btn-icon {
+  font-size: 0.82rem;
 }
 
 
@@ -3503,7 +3519,8 @@ input, textarea {
   padding: 0 3px;
   line-height: 1.2;
   pointer-events: none;
-  z-index: 5;
+  z-index: 10;
+  transform: translateZ(10px);
   transition: all 0.2s ease;
 }
 
@@ -3858,6 +3875,8 @@ input, textarea {
   top: 3px;
   left: 4px;
   z-index: 10;
+  pointer-events: none;
+  transform: translateZ(10px);
   width: 16px;
   height: 16px;
   border-radius: 4px;
