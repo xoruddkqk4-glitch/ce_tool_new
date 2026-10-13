@@ -499,7 +499,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 28/28개 테스트 스위트 100% 통과 (14.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
-## [2026-10-13 20:33] 업데이트 이력 (Commit ID: pending)
+## [2026-10-13 20:33] 업데이트 이력 (Commit ID: f062d7d)
 - **수정 내용**:
   1. **2단계 약형드랩 청크 카드 텍스트 앞뒤 여백 축소 및 가운데 정렬 (`styles/components/chunk-cards.css`, `src/views/practice-view.js`)**:
      - 뒷면 한국어 해석 긴 문장으로 인해 카드 가로폭이 과도하게 팽창(450px+)하던 결함을 해결: 뒷면 한국어 텍스트 감싸기(`white-space: normal; word-break: keep-all;`) 적용 및 전면 영문 콘텐츠 주도 너비 산정.
