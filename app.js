@@ -2975,6 +2975,449 @@ class WaveformRenderer {
 
 
   // =========================================================================
+  // Module: src/audio/master-waveform.js
+  // =========================================================================
+
+/**
+ * Master Audio Waveform & Sentence Segment Selector
+ * Renders full-audio PCM timeline in Stage 1 Input View with interactive
+ * draggable sentence segment boundaries, silence snapping, and click-to-preview.
+ */
+
+
+
+
+class MasterWaveformTimeline {
+  constructor(canvas, options = {}) {
+    this.canvas = canvas;
+    this.ctx = (canvas && typeof canvas.getContext === 'function') ? canvas.getContext('2d') : null;
+    this.audioBuffer = null;
+    this.sentenceList = [];
+    this.options = options;
+
+    this.peaks = [];
+    this.totalBars = 600;
+    this.hoverInfo = null; // { type: 'boundary'|'segment', index: number, edge: 'start'|'end' }
+    this.activeDrag = null; // { index: number, edge: 'start'|'end', startX: number, origTime: number }
+    this.snapEnabled = true;
+
+    this.playbackTime = null;
+    this.isPlaying = false;
+    this.animFrameId = null;
+
+    this.colors = [
+      { fill: 'rgba(99, 102, 241, 0.18)', stroke: 'rgba(129, 140, 248, 0.85)', tag: '#818cf8' }, // Indigo
+      { fill: 'rgba(16, 185, 129, 0.18)', stroke: 'rgba(52, 211, 153, 0.85)', tag: '#34d399' }, // Emerald
+      { fill: 'rgba(245, 158, 11, 0.18)', stroke: 'rgba(251, 191, 36, 0.85)', tag: '#fbbf24' }, // Amber
+      { fill: 'rgba(236, 72, 153, 0.18)', stroke: 'rgba(244, 114, 182, 0.85)', tag: '#f472b6' }, // Pink
+      { fill: 'rgba(14, 165, 233, 0.18)', stroke: 'rgba(56, 189, 248, 0.85)', tag: '#38bdf8' }, // Cyan
+      { fill: 'rgba(168, 85, 247, 0.18)', stroke: 'rgba(192, 132, 252, 0.85)', tag: '#c084fc' }  // Purple
+    ];
+
+    this.initEvents();
+  }
+
+  setAudioBuffer(audioBuffer) {
+    this.audioBuffer = audioBuffer;
+    this.peaks = [];
+    if (audioBuffer) {
+      this.extractPeaks();
+    }
+    this.draw();
+  }
+
+  setSentenceList(sentenceList) {
+    this.sentenceList = sentenceList || [];
+    this.draw();
+  }
+
+  setSnapEnabled(enabled) {
+    this.snapEnabled = !!enabled;
+  }
+
+  extractPeaks() {
+    if (!this.audioBuffer) return;
+    try {
+      const rawData = this.audioBuffer.getChannelData(0);
+      const totalSamples = rawData.length;
+      const blockSize = Math.max(1, Math.floor(totalSamples / this.totalBars));
+      const peaks = [];
+      let maxVal = 0;
+
+      for (let i = 0; i < this.totalBars; i++) {
+        const start = i * blockSize;
+        const end = Math.min(start + blockSize, totalSamples);
+        let sum = 0;
+        const step = Math.max(1, Math.floor(blockSize / 64));
+        let count = 0;
+        for (let j = start; j < end; j += step) {
+          const val = Math.abs(rawData[j]);
+          if (val > sum) sum = val;
+          count++;
+        }
+        peaks.push(sum);
+        if (sum > maxVal) maxVal = sum;
+      }
+
+      if (maxVal > 0.001) {
+        this.peaks = peaks.map(p => Math.min(1, Math.max(0.04, (p / maxVal) * 0.95)));
+      } else {
+        this.peaks = new Array(this.totalBars).fill(0.1);
+      }
+    } catch (e) {
+      console.warn('Master waveform peak extraction error:', e);
+      this.peaks = new Array(this.totalBars).fill(0.1);
+    }
+  }
+
+  draw() {
+    if (!this.canvas || !this.ctx) return;
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    if (w <= 0 || h <= 0) return;
+
+    ctx.clearRect(0, 0, w, h);
+
+    const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
+
+    // 1. Background Grid & Glass styling
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+    ctx.fillRect(0, 0, w, h);
+
+    // Subtle time division grid lines every 5 seconds (or 1s for short audio)
+    const timeStep = duration > 30 ? 5 : (duration > 10 ? 2 : 1);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.lineWidth = 1;
+    ctx.font = '9px monospace';
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+
+    for (let t = 0; t <= duration; t += timeStep) {
+      const x = Math.round((t / duration) * w);
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+
+      if (t > 0 && x < w - 24) {
+        ctx.fillText(`${t}s`, x + 2, 11);
+      }
+    }
+
+    // 2. Base Waveform PCM Bars
+    if (this.peaks.length > 0) {
+      const numBars = this.peaks.length;
+      const barSpacing = w / numBars;
+      const barWidth = Math.max(1, barSpacing * 0.72);
+      const halfH = h / 2;
+
+      for (let i = 0; i < numBars; i++) {
+        const peak = this.peaks[i];
+        const barH = Math.max(2, peak * (halfH - 8));
+        const x = i * barSpacing;
+
+        ctx.fillStyle = 'rgba(0, 255, 204, 0.35)';
+        ctx.fillRect(x, halfH - barH, barWidth, barH * 2);
+      }
+    }
+
+    // 3. Sentence Segment Overlays
+    const validSentences = (this.sentenceList || []).filter(s => s.audioStart !== null && s.audioEnd !== null);
+
+    validSentences.forEach((stn, idx) => {
+      const startX = Math.round((stn.audioStart / duration) * w);
+      const endX = Math.round((stn.audioEnd / duration) * w);
+      const segW = Math.max(4, endX - startX);
+      const color = this.colors[idx % this.colors.length];
+
+      const isHovered = this.hoverInfo && this.hoverInfo.index === stn.index;
+      const isDragging = this.activeDrag && this.activeDrag.index === stn.index;
+
+      // Segment Background
+      ctx.fillStyle = (isHovered || isDragging) ? color.fill.replace('0.18', '0.32') : color.fill;
+      ctx.fillRect(startX, 0, segW, h);
+
+      // Top Header Border
+      ctx.strokeStyle = color.stroke;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(startX, 0, segW, h);
+
+      // Label Tag: S1 (00:03.2)
+      ctx.fillStyle = color.tag;
+      ctx.font = 'bold 10px sans-serif';
+      const label = `S${stn.index + 1} (${this.formatSec(stn.audioStart)}~${this.formatSec(stn.audioEnd)})`;
+      ctx.fillText(label, startX + 5, 22);
+
+      // Left Boundary Handle Line
+      const isStartHovered = isHovered && this.hoverInfo.edge === 'start';
+      ctx.strokeStyle = isStartHovered ? '#ffffff' : color.stroke;
+      ctx.lineWidth = isStartHovered ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(startX, 0);
+      ctx.lineTo(startX, h);
+      ctx.stroke();
+
+      // Right Boundary Handle Line
+      const isEndHovered = isHovered && this.hoverInfo.edge === 'end';
+      ctx.strokeStyle = isEndHovered ? '#ffffff' : color.stroke;
+      ctx.lineWidth = isEndHovered ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(endX, 0);
+      ctx.lineTo(endX, h);
+      ctx.stroke();
+
+      // Grab handle diamond indicators
+      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? '#ffffff' : color.tag);
+      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? '#ffffff' : color.tag);
+    });
+
+    // 4. Playhead Line
+    if (this.playbackTime !== null && this.playbackTime >= 0 && this.playbackTime <= duration) {
+      const playheadX = Math.round((this.playbackTime / duration) * w);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#00ffcc';
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, 0);
+      ctx.lineTo(playheadX, h);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  drawHandleDiamond(ctx, x, y, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 6);
+    ctx.lineTo(x + 4, y);
+    ctx.lineTo(x, y + 6);
+    ctx.lineTo(x - 4, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  initEvents() {
+    if (!this.canvas || typeof this.canvas.addEventListener !== 'function') return;
+
+    this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+    this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('mousemove', (e) => this.handleWindowMouseMove(e));
+      window.addEventListener('mouseup', (e) => this.handleWindowMouseUp(e));
+    }
+    this.canvas.addEventListener('mouseleave', () => {
+      if (!this.activeDrag) {
+        this.hoverInfo = null;
+        this.draw();
+      }
+    });
+
+    // Handle container resize
+    if (typeof ResizeObserver !== 'undefined' && this.canvas.parentElement) {
+      this.resizeObserver = new ResizeObserver(() => {
+        this.syncCanvasSize();
+      });
+      this.resizeObserver.observe(this.canvas.parentElement);
+    }
+  }
+
+  syncCanvasSize() {
+    if (!this.canvas || !this.canvas.parentElement) return;
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    const newW = Math.floor(rect.width);
+    if (newW > 0 && newW !== this.canvas.width) {
+      this.canvas.width = newW;
+      this.draw();
+    }
+  }
+
+  getTimeAtX(clientX) {
+    if (!this.canvas || !this.audioBuffer) return 0;
+    const rect = this.canvas.getBoundingClientRect();
+    const relX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const fraction = relX / rect.width;
+    return fraction * this.audioBuffer.duration;
+  }
+
+  handleMouseMove(e) {
+    if (this.activeDrag) return;
+    if (!this.audioBuffer || !this.sentenceList.length) return;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const w = rect.width;
+    const duration = this.audioBuffer.duration;
+    const thresholdPx = 8;
+
+    let found = null;
+
+    // Check boundary lines first
+    for (let i = 0; i < this.sentenceList.length; i++) {
+      const stn = this.sentenceList[i];
+      if (stn.audioStart === null || stn.audioEnd === null) continue;
+
+      const startX = (stn.audioStart / duration) * w;
+      const endX = (stn.audioEnd / duration) * w;
+
+      if (Math.abs(x - startX) <= thresholdPx) {
+        found = { type: 'boundary', index: stn.index, edge: 'start' };
+        break;
+      }
+      if (Math.abs(x - endX) <= thresholdPx) {
+        found = { type: 'boundary', index: stn.index, edge: 'end' };
+        break;
+      }
+    }
+
+    // If not hovering boundary, check inside segment
+    if (!found) {
+      for (let i = 0; i < this.sentenceList.length; i++) {
+        const stn = this.sentenceList[i];
+        if (stn.audioStart === null || stn.audioEnd === null) continue;
+        const startX = (stn.audioStart / duration) * w;
+        const endX = (stn.audioEnd / duration) * w;
+        if (x >= startX && x <= endX) {
+          found = { type: 'segment', index: stn.index };
+          break;
+        }
+      }
+    }
+
+    this.hoverInfo = found;
+    if (found && found.type === 'boundary') {
+      this.canvas.style.cursor = 'col-resize';
+    } else if (found && found.type === 'segment') {
+      this.canvas.style.cursor = 'pointer';
+    } else {
+      this.canvas.style.cursor = 'default';
+    }
+
+    this.draw();
+  }
+
+  handleMouseDown(e) {
+    if (!this.audioBuffer || !this.sentenceList.length) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+
+    if (this.hoverInfo && this.hoverInfo.type === 'boundary') {
+      const stn = this.sentenceList.find(s => s.index === this.hoverInfo.index);
+      if (stn) {
+        this.activeDrag = {
+          index: stn.index,
+          edge: this.hoverInfo.edge,
+          startX: e.clientX,
+          origStart: stn.audioStart,
+          origEnd: stn.audioEnd
+        };
+      }
+    } else if (this.hoverInfo && this.hoverInfo.type === 'segment') {
+      // Click inside segment: Play this segment and select it
+      const stn = this.sentenceList.find(s => s.index === this.hoverInfo.index);
+      if (stn && stn.audioStart !== null && stn.audioEnd !== null) {
+        playbackController.playSegment(stn.audioStart, stn.audioEnd, { owner: 'master-waveform' });
+        if (typeof this.options.onSegmentSelect === 'function') {
+          this.options.onSegmentSelect(stn.index);
+        }
+      }
+    }
+  }
+
+  handleWindowMouseMove(e) {
+    if (!this.activeDrag || !this.audioBuffer) return;
+
+    let targetTime = this.getTimeAtX(e.clientX);
+    const duration = this.audioBuffer.duration;
+    targetTime = Math.max(0, Math.min(duration, targetTime));
+
+    if (this.snapEnabled) {
+      targetTime = this.findNearestSilenceTime(targetTime, 0.25);
+    }
+
+    targetTime = Math.round(targetTime * 10) / 10;
+
+    const stn = this.sentenceList.find(s => s.index === this.activeDrag.index);
+    if (!stn) return;
+
+    if (this.activeDrag.edge === 'start') {
+      // Must be < audioEnd - 0.2
+      const maxStart = Math.max(0, (stn.audioEnd || duration) - 0.3);
+      stn.audioStart = Math.min(maxStart, targetTime);
+      stn.cachedPeaks = null;
+    } else {
+      // Must be > audioStart + 0.2
+      const minEnd = (stn.audioStart || 0) + 0.3;
+      stn.audioEnd = Math.max(minEnd, Math.min(duration, targetTime));
+      stn.cachedPeaks = null;
+    }
+
+    this.draw();
+
+    if (typeof this.options.onSegmentChange === 'function') {
+      this.options.onSegmentChange(stn.index, stn.audioStart, stn.audioEnd, false);
+    }
+  }
+
+  handleWindowMouseUp(e) {
+    if (!this.activeDrag) return;
+
+    const stn = this.sentenceList.find(s => s.index === this.activeDrag.index);
+    if (stn && typeof this.options.onSegmentChange === 'function') {
+      this.options.onSegmentChange(stn.index, stn.audioStart, stn.audioEnd, true);
+    }
+
+    this.activeDrag = null;
+    this.draw();
+  }
+
+  findNearestSilenceTime(time, thresholdSec = 0.25) {
+    if (!this.audioBuffer) return time;
+    try {
+      const rawData = this.audioBuffer.getChannelData(0);
+      const sr = this.audioBuffer.sampleRate;
+      const centerSample = Math.floor(time * sr);
+      const rangeSamples = Math.floor(thresholdSec * sr);
+      const startSample = Math.max(0, centerSample - rangeSamples);
+      const endSample = Math.min(rawData.length, centerSample + rangeSamples);
+
+      let minRms = Infinity;
+      let minSample = centerSample;
+      const windowSize = Math.floor(sr * 0.04); // 40ms window
+
+      for (let s = startSample; s < endSample - windowSize; s += Math.floor(windowSize / 2)) {
+        let sumSq = 0;
+        for (let j = 0; j < windowSize; j += 8) {
+          const v = rawData[s + j];
+          sumSq += v * v;
+        }
+        const rms = Math.sqrt(sumSq / (windowSize / 8));
+        if (rms < minRms) {
+          minRms = rms;
+          minSample = s + Math.floor(windowSize / 2);
+        }
+      }
+
+      if (minRms < 0.05) {
+        return minSample / sr;
+      }
+    } catch (e) {}
+    return time;
+  }
+
+  setPlayheadTime(time) {
+    this.playbackTime = time;
+    this.draw();
+  }
+
+  formatSec(sec) {
+    if (sec === null || sec === undefined) return '0.0s';
+    return `${sec.toFixed(1)}s`;
+  }
+}
+
+
+  // =========================================================================
   // Module: src/audio/looper-engine.js
   // =========================================================================
 
@@ -3855,6 +4298,368 @@ class SettingsModal {
 
 
   // =========================================================================
+  // Module: src/ui/sentence-trimmer-modal.js
+  // =========================================================================
+
+/**
+ * Sentence Audio Waveform Trimmer Modal
+ * High-resolution zoomed waveform editor for adjusting individual sentence audioStart & audioEnd
+ * with visual draggable handles, numeric inputs, and instant segment preview playback.
+ */
+
+
+
+
+class SentenceTrimmerModal {
+  constructor() {
+    this.modalEl = document.getElementById('sentenceTrimmerModal');
+    this.canvas = document.getElementById('trimmerCanvas');
+    this.ctx = (this.canvas && typeof this.canvas.getContext === 'function') ? this.canvas.getContext('2d') : null;
+
+    this.titleEl = document.getElementById('trimmerModalTitle');
+    this.textPreviewEl = document.getElementById('trimmerStnText');
+    this.inputStart = document.getElementById('trimmerInputStart');
+    this.inputEnd = document.getElementById('trimmerInputEnd');
+    this.btnPlay = document.getElementById('btnTrimmerPlaySegment');
+    this.btnSave = document.getElementById('btnSaveTrimmer');
+    this.btnCancel = document.getElementById('btnCancelTrimmer');
+    this.btnClose = document.getElementById('btnCloseTrimmerModal');
+
+    this.currentStn = null;
+    this.audioBuffer = null;
+    this.onSave = null;
+
+    this.zoomStart = 0;
+    this.zoomEnd = 10;
+    this.currentStart = 0;
+    this.currentEnd = 5;
+
+    this.activeDrag = null; // 'start' | 'end' | 'body'
+    this.dragStartX = 0;
+    this.dragOrigStart = 0;
+    this.dragOrigEnd = 0;
+
+    this.peaks = [];
+    this.initEvents();
+  }
+
+  open(stn, audioBuffer, onSaveCallback) {
+    if (!stn || !audioBuffer) return;
+    this.currentStn = stn;
+    this.audioBuffer = audioBuffer;
+    this.onSave = onSaveCallback;
+
+    const totalDur = audioBuffer.duration || 1;
+    this.currentStart = stn.audioStart !== null ? Math.max(0, stn.audioStart) : 0;
+    this.currentEnd = stn.audioEnd !== null ? Math.min(totalDur, stn.audioEnd) : Math.min(totalDur, this.currentStart + 4);
+
+    // Zoom view: 1.8s margin before and after sentence
+    const margin = 1.8;
+    this.zoomStart = Math.max(0, this.currentStart - margin);
+    this.zoomEnd = Math.min(totalDur, this.currentEnd + margin);
+
+    if (this.titleEl) {
+      this.titleEl.textContent = `문장 S${stn.index + 1} 음성 구간 정밀 조정`;
+    }
+    if (this.textPreviewEl) {
+      this.textPreviewEl.textContent = `"${stn.text || ''}"`;
+    }
+
+    this.updateInputFields();
+    this.extractZoomedPeaks();
+
+    if (this.modalEl) {
+      this.modalEl.classList.remove('hidden');
+    }
+
+    requestAnimationFrame(() => {
+      this.syncCanvasSize();
+      this.draw();
+    });
+  }
+
+  close() {
+    playbackController.stopAll();
+    if (this.modalEl) {
+      this.modalEl.classList.add('hidden');
+    }
+    this.currentStn = null;
+  }
+
+  updateInputFields() {
+    if (this.inputStart) this.inputStart.value = (Math.round(this.currentStart * 10) / 10).toFixed(1);
+    if (this.inputEnd) this.inputEnd.value = (Math.round(this.currentEnd * 10) / 10).toFixed(1);
+  }
+
+  syncCanvasSize() {
+    if (!this.canvas || !this.canvas.parentElement) return;
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    const w = Math.floor(rect.width);
+    if (w > 0 && w !== this.canvas.width) {
+      this.canvas.width = w;
+      this.extractZoomedPeaks();
+    }
+  }
+
+  extractZoomedPeaks() {
+    if (!this.audioBuffer) return;
+    try {
+      const rawData = this.audioBuffer.getChannelData(0);
+      const sr = this.audioBuffer.sampleRate;
+      const startSample = Math.floor(this.zoomStart * sr);
+      const endSample = Math.min(rawData.length, Math.floor(this.zoomEnd * sr));
+      const rangeSamples = Math.max(1, endSample - startSample);
+      const numBars = 320;
+      const blockSize = Math.max(1, Math.floor(rangeSamples / numBars));
+      const peaks = [];
+      let maxVal = 0;
+
+      for (let i = 0; i < numBars; i++) {
+        const s = startSample + i * blockSize;
+        const e = Math.min(s + blockSize, endSample);
+        let sum = 0;
+        let count = 0;
+        for (let j = s; j < e; j += 4) {
+          const val = Math.abs(rawData[j]);
+          if (val > sum) sum = val;
+          count++;
+        }
+        peaks.push(sum);
+        if (sum > maxVal) maxVal = sum;
+      }
+
+      if (maxVal > 0.001) {
+        this.peaks = peaks.map(p => Math.min(1, Math.max(0.05, (p / maxVal) * 0.95)));
+      } else {
+        this.peaks = new Array(numBars).fill(0.1);
+      }
+    } catch (e) {
+      this.peaks = new Array(320).fill(0.1);
+    }
+  }
+
+  timeToX(time) {
+    if (!this.canvas) return 0;
+    const span = Math.max(0.1, this.zoomEnd - this.zoomStart);
+    return Math.round(((time - this.zoomStart) / span) * this.canvas.width);
+  }
+
+  xToTime(x) {
+    if (!this.canvas) return 0;
+    const fraction = Math.max(0, Math.min(1, x / this.canvas.width));
+    const span = Math.max(0.1, this.zoomEnd - this.zoomStart);
+    return this.zoomStart + fraction * span;
+  }
+
+  draw() {
+    if (!this.canvas || !this.ctx) return;
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    if (w <= 0 || h <= 0) return;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // 1. Background
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, w, h);
+
+    const startX = this.timeToX(this.currentStart);
+    const endX = this.timeToX(this.currentEnd);
+    const activeW = Math.max(4, endX - startX);
+
+    // 2. Pre-selection dim background
+    if (startX > 0) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(0, 0, startX, h);
+    }
+
+    // Active Selection Background
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+    ctx.fillRect(startX, 0, activeW, h);
+
+    // Post-selection dim background
+    if (endX < w) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(endX, 0, w - endX, h);
+    }
+
+    // 3. High-definition PCM Bars
+    if (this.peaks.length > 0) {
+      const numBars = this.peaks.length;
+      const barSpacing = w / numBars;
+      const barW = Math.max(1, barSpacing * 0.75);
+      const halfH = h / 2;
+
+      for (let i = 0; i < numBars; i++) {
+        const peak = this.peaks[i];
+        const barH = Math.max(2, peak * (halfH - 10));
+        const x = i * barSpacing;
+
+        const isInside = x >= startX && x <= endX;
+        ctx.fillStyle = isInside ? '#00ffcc' : 'rgba(100, 116, 139, 0.4)';
+        ctx.fillRect(x, halfH - barH, barW, barH * 2);
+      }
+    }
+
+    // 4. Selection Active Border Box
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(startX, 0, activeW, h);
+
+    // 5. Handles (Start & End)
+    this.drawHandle(ctx, startX, h, '#10b981', '시작');
+    this.drawHandle(ctx, endX, h, '#f43f5e', '종료');
+
+    // 6. Time HUD at bottom
+    ctx.font = 'bold 11px monospace';
+    ctx.fillStyle = '#34d399';
+    ctx.fillText(`${(Math.round(this.currentStart * 10) / 10).toFixed(1)}s`, Math.max(6, startX - 20), h - 8);
+
+    ctx.fillStyle = '#fb7185';
+    ctx.fillText(`${(Math.round(this.currentEnd * 10) / 10).toFixed(1)}s`, Math.min(w - 38, endX - 10), h - 8);
+  }
+
+  drawHandle(ctx, x, h, color, text) {
+    // Vertical line
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+
+    // Top Handle Badge
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(x - 18, 4, 36, 18, 4);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x, 17);
+    ctx.textAlign = 'left';
+  }
+
+  initEvents() {
+    if (!this.canvas || typeof this.canvas.addEventListener !== 'function') return;
+
+    this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+      window.addEventListener('mouseup', () => this.handleMouseUp());
+    }
+
+    if (this.inputStart) {
+      this.inputStart.addEventListener('change', () => {
+        const val = parseFloat(this.inputStart.value);
+        if (!isNaN(val) && val >= 0 && val < this.currentEnd - 0.2) {
+          this.currentStart = Math.round(val * 10) / 10;
+          this.draw();
+        } else {
+          this.updateInputFields();
+        }
+      });
+    }
+
+    if (this.inputEnd) {
+      this.inputEnd.addEventListener('change', () => {
+        const val = parseFloat(this.inputEnd.value);
+        const totalDur = this.audioBuffer ? this.audioBuffer.duration : 999;
+        if (!isNaN(val) && val > this.currentStart + 0.2 && val <= totalDur) {
+          this.currentEnd = Math.round(val * 10) / 10;
+          this.draw();
+        } else {
+          this.updateInputFields();
+        }
+      });
+    }
+
+    if (this.btnPlay) {
+      this.btnPlay.addEventListener('click', () => {
+        playbackController.playSegment(this.currentStart, this.currentEnd, { owner: 'trimmer-modal' });
+      });
+    }
+
+    if (this.btnSave) {
+      this.btnSave.addEventListener('click', () => {
+        if (typeof this.onSave === 'function') {
+          this.onSave(this.currentStart, this.currentEnd);
+        }
+        this.close();
+      });
+    }
+
+    if (this.btnCancel) this.btnCancel.addEventListener('click', () => this.close());
+    if (this.btnClose) this.btnClose.addEventListener('click', () => this.close());
+
+    // Close on backdrop click
+    if (this.modalEl) {
+      this.modalEl.addEventListener('click', (e) => {
+        if (e.target === this.modalEl) this.close();
+      });
+    }
+  }
+
+  handleMouseDown(e) {
+    if (!this.canvas) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const startX = this.timeToX(this.currentStart);
+    const endX = this.timeToX(this.currentEnd);
+    const hitThreshold = 18;
+
+    if (Math.abs(x - startX) <= hitThreshold) {
+      this.activeDrag = 'start';
+    } else if (Math.abs(x - endX) <= hitThreshold) {
+      this.activeDrag = 'end';
+    } else if (x > startX && x < endX) {
+      this.activeDrag = 'body';
+      this.dragStartX = x;
+      this.dragOrigStart = this.currentStart;
+      this.dragOrigEnd = this.currentEnd;
+    }
+  }
+
+  handleMouseMove(e) {
+    if (!this.activeDrag || !this.canvas) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const totalDur = this.audioBuffer ? this.audioBuffer.duration : 999;
+
+    if (this.activeDrag === 'start') {
+      const newTime = Math.max(0, Math.min(this.currentEnd - 0.2, this.xToTime(x)));
+      this.currentStart = Math.round(newTime * 10) / 10;
+    } else if (this.activeDrag === 'end') {
+      const newTime = Math.max(this.currentStart + 0.2, Math.min(totalDur, this.xToTime(x)));
+      this.currentEnd = Math.round(newTime * 10) / 10;
+    } else if (this.activeDrag === 'body') {
+      const deltaX = x - this.dragStartX;
+      const deltaTime = (deltaX / this.canvas.width) * (this.zoomEnd - this.zoomStart);
+      const dur = this.dragOrigEnd - this.dragOrigStart;
+
+      let newStart = Math.max(0, this.dragOrigStart + deltaTime);
+      let newEnd = newStart + dur;
+      if (newEnd > totalDur) {
+        newEnd = totalDur;
+        newStart = Math.max(0, newEnd - dur);
+      }
+      this.currentStart = Math.round(newStart * 10) / 10;
+      this.currentEnd = Math.round(newEnd * 10) / 10;
+    }
+
+    this.updateInputFields();
+    this.draw();
+  }
+
+  handleMouseUp() {
+    this.activeDrag = null;
+  }
+}
+
+
+  // =========================================================================
   // Module: src/ui/router.js
   // =========================================================================
 
@@ -4194,6 +4999,8 @@ class ShortcutManager {
 
 
 
+
+
 // Placeholder kept in the 직독직해 slash string for empty chunks so slot positions never shift
 const DIRECT_EMPTY_PLACEHOLDER = '—';
 // Inline base64 audio requests above this size are rejected by Gemini (≈20MB request limit)
@@ -4245,6 +5052,47 @@ class InputView {
 
     // Audio Singleton
     this.nativeAudioPlayer = document.getElementById('nativeAudioPlayer');
+
+    // DOM Elements - Master Waveform & Trimmer
+    this.masterWaveformSection = document.getElementById('masterWaveformSection');
+    this.masterWaveformCanvas = document.getElementById('masterWaveformCanvas');
+    this.btnMasterPlayPause = document.getElementById('btnMasterPlayPause');
+    this.masterPlayIcon = document.getElementById('masterPlayIcon');
+    this.masterPlayLabel = document.getElementById('masterPlayLabel');
+    this.masterTimeHud = document.getElementById('masterTimeHud');
+    this.btnSnapSilence = document.getElementById('btnSnapSilence');
+
+    this.masterWaveform = null;
+    if (this.masterWaveformCanvas) {
+      this.masterWaveform = new MasterWaveformTimeline(this.masterWaveformCanvas, {
+        onSegmentChange: (idx, start, end, isFinal) => {
+          const stn = appState.sentenceList ? appState.sentenceList.find(s => s.index === idx) : null;
+          if (stn) {
+            stn.audioStart = start;
+            stn.audioEnd = end;
+            stn.cachedPeaks = null;
+            const timeBadge = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"] .stn-audio-time`) : null;
+            if (timeBadge) {
+              timeBadge.textContent = `⏱ ${this.formatSec(start)} ~ ${this.formatSec(end)}`;
+            }
+            if (isFinal) {
+              projectService.markDirty();
+              toast.show(`⏱ 문장 S${idx + 1} 구간: ${start}s ~ ${end}s`);
+            }
+          }
+        },
+        onSegmentSelect: (idx) => {
+          const targetCard = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
+          if (targetCard) {
+            targetCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            targetCard.classList.add('merged-highlight');
+            setTimeout(() => targetCard.classList.remove('merged-highlight'), 1000);
+          }
+        }
+      });
+    }
+
+    this.trimmerModal = new SentenceTrimmerModal();
 
     this.initEvents();
     this.setMode('text'); // default: script only
@@ -4353,6 +5201,62 @@ class InputView {
     // Auto Audio-Script Sync Trigger
     if (this.btnAutoSyncAudio) {
       this.btnAutoSyncAudio.addEventListener('click', () => this.autoSyncAudioScript());
+    }
+
+    // Master Waveform Controls
+    if (this.btnMasterPlayPause) {
+      this.btnMasterPlayPause.addEventListener('click', () => {
+        if (!this.nativeAudioPlayer || !this.nativeAudioPlayer.src) {
+          toast.show('⚠️ 재생 가능한 오디오 파일이 없습니다.');
+          return;
+        }
+        if (this.nativeAudioPlayer.paused) {
+          playbackController.claim('input-master');
+          this.nativeAudioPlayer.play().then(() => {
+            if (this.masterPlayIcon) this.masterPlayIcon.textContent = '⏸';
+            if (this.masterPlayLabel) this.masterPlayLabel.textContent = '일시정지';
+          }).catch(e => console.error(e));
+        } else {
+          this.nativeAudioPlayer.pause();
+          if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+          if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+        }
+      });
+    }
+
+    if (this.btnSnapSilence) {
+      this.btnSnapSilence.addEventListener('click', () => {
+        const isActive = this.btnSnapSilence.classList.toggle('active');
+        if (this.masterWaveform) {
+          this.masterWaveform.setSnapEnabled(isActive);
+        }
+        const span = this.btnSnapSilence.querySelector('span');
+        if (span) span.textContent = isActive ? '🧲 묵음 스냅 ON' : '🧲 묵음 스냅 OFF';
+        toast.show(isActive ? '🧲 묵음 구간 자동 스냅이 활성화되었습니다.' : '묵음 구간 스냅이 비활성화되었습니다.');
+      });
+    }
+
+    if (this.nativeAudioPlayer) {
+      this.nativeAudioPlayer.addEventListener('timeupdate', () => {
+        const cur = this.nativeAudioPlayer.currentTime;
+        const dur = this.nativeAudioPlayer.duration || 1;
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(cur);
+        }
+        if (this.masterTimeHud) {
+          this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+        }
+      });
+
+      this.nativeAudioPlayer.addEventListener('pause', () => {
+        if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+        if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+      });
+
+      this.nativeAudioPlayer.addEventListener('play', () => {
+        if (this.masterPlayIcon) this.masterPlayIcon.textContent = '⏸';
+        if (this.masterPlayLabel) this.masterPlayLabel.textContent = '일시정지';
+      });
     }
 
     // Handout Modal Triggers
@@ -4502,6 +5406,13 @@ class InputView {
     }
 
     this.renderDropAreaPreview(file);
+    if (this.masterWaveform && appState.audioBuffer) {
+      this.masterWaveform.setAudioBuffer(appState.audioBuffer);
+      if (appState.sentenceList && appState.sentenceList.length > 0) {
+        if (this.masterWaveformSection) this.masterWaveformSection.classList.remove('hidden');
+        this.masterWaveform.setSentenceList(appState.sentenceList);
+      }
+    }
     projectService.markDirty();
   }
 
@@ -4537,6 +5448,14 @@ class InputView {
     appState.audioBuffer = null;
     appState.isSynthesizedAudio = false;
     projectService.markDirty();
+
+    if (this.masterWaveformSection) {
+      this.masterWaveformSection.classList.add('hidden');
+    }
+    if (this.masterWaveform) {
+      this.masterWaveform.setAudioBuffer(null);
+      this.masterWaveform.setSentenceList([]);
+    }
 
     if (this.audioFileInput) this.audioFileInput.value = '';
     if (this.dropArea) {
@@ -5142,23 +6061,40 @@ class InputView {
         });
       }
 
-      // 4. Hook up Audio Time adjustment on click
+      // 4. Hook up Audio Time adjustment on click (Visual Waveform Trimmer Modal)
       const timeBadge = itemCard.querySelector('.stn-audio-time');
       if (timeBadge && hasAudioTime) {
+        timeBadge.title = '클릭하여 파형을 보며 오디오 구간을 정밀 조정합니다.';
+        timeBadge.style.cursor = 'pointer';
         timeBadge.addEventListener('click', () => {
-          const currentStart = stn.audioStart !== null ? stn.audioStart : 0;
-          const currentEnd = stn.audioEnd !== null ? stn.audioEnd : 0;
-          const inputStr = prompt(`문장 S${idx + 1} 오디오 구간 (초 단위) 수정:\n예: 3.5 ~ 8.2`, `${currentStart} ~ ${currentEnd}`);
-          if (inputStr) {
-            const parts = inputStr.split('~').map(s => parseFloat(s.trim()));
-            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] > parts[0]) {
-              stn.audioStart = Math.round(parts[0] * 10) / 10;
-              stn.audioEnd = Math.round(parts[1] * 10) / 10;
+          if (this.trimmerModal && appState.audioBuffer) {
+            this.trimmerModal.open(stn, appState.audioBuffer, (newStart, newEnd) => {
+              stn.audioStart = newStart;
+              stn.audioEnd = newEnd;
               stn.cachedPeaks = null;
               timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+              if (this.masterWaveform) {
+                this.masterWaveform.draw();
+              }
+              projectService.markDirty();
               toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
-            } else {
-              toast.show('⚠️ 올바른 시간 형식(예: 3.5 ~ 8.2)을 입력하세요.');
+            });
+          } else {
+            // Fallback prompt if audio buffer not yet decoded
+            const currentStart = stn.audioStart !== null ? stn.audioStart : 0;
+            const currentEnd = stn.audioEnd !== null ? stn.audioEnd : 0;
+            const inputStr = prompt(`문장 S${idx + 1} 오디오 구간 (초 단위) 수정:\n예: 3.5 ~ 8.2`, `${currentStart} ~ ${currentEnd}`);
+            if (inputStr) {
+              const parts = inputStr.split('~').map(s => parseFloat(s.trim()));
+              if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] > parts[0]) {
+                stn.audioStart = Math.round(parts[0] * 10) / 10;
+                stn.audioEnd = Math.round(parts[1] * 10) / 10;
+                stn.cachedPeaks = null;
+                timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+                if (this.masterWaveform) this.masterWaveform.draw();
+                projectService.markDirty();
+                toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
+              }
             }
           }
         });
@@ -5243,6 +6179,13 @@ class InputView {
     });
 
     this.parsedResultsSection.classList.remove('hidden');
+
+    // Sync master waveform
+    if (this.masterWaveform && appState.audioBuffer) {
+      if (this.masterWaveformSection) this.masterWaveformSection.classList.remove('hidden');
+      this.masterWaveform.setAudioBuffer(appState.audioBuffer);
+      this.masterWaveform.setSentenceList(appState.sentenceList);
+    }
 
     requestAnimationFrame(() => {
       // Release temporary min-height lock
@@ -6234,6 +7177,7 @@ class PracticeView {
 
     window.addEventListener('resize', () => {
       this.drawWaveform();
+      this.computeAndApplyStabilizedWidths();
     });
 
     // Resize observer on waveform container to ensure wave window is always drawn
@@ -6460,9 +7404,9 @@ class PracticeView {
           input.setAttribute('data-answer', felsInfo.clean);
           input.setAttribute('data-original', word);
           input.setAttribute('data-category', felsInfo.label);
-          input.placeholder = '[  ]';
-          input.style.width = `${Math.min(84, Math.max(46, felsInfo.clean.length * 10 + 16))}px`;
-          input.style.maxWidth = '90px';
+          input.placeholder = '[ ]';
+          input.style.width = `${Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20))}px`;
+          input.style.maxWidth = '80px';
           input.spellcheck = false;
           input.autocomplete = 'off';
 
@@ -6577,25 +7521,28 @@ class PracticeView {
     words.forEach(word => {
       const felsInfo = getFelsInfo(word);
       if (felsInfo) {
-        const inputW = Math.min(84, Math.max(46, felsInfo.clean.length * 10 + 16));
+        const inputW = Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20));
         felsW += inputW;
         const trailingPunct = word.match(/[.,!?;:]+$/);
         if (trailingPunct) {
-          felsW += trailingPunct[0].length * 10 + 4;
+          felsW += trailingPunct[0].length * 8 + 2;
         }
       } else {
-        felsW += word.length * 10.5;
+        felsW += word.length * 10;
       }
     });
     if (words.length > 1) {
-      felsW += (words.length - 1) * 8;
+      felsW += (words.length - 1) * 5;
     }
 
-    const origW = enText.length * 10.5;
-    const koW = koText.length * 16;
+    const origW = enText.length * 10;
+    // Korean text on back face can wrap onto 2 lines if long
+    const rawKoW = koText.length * 15;
+    const koW = rawKoW > 160 ? Math.ceil(rawKoW / 2) + 14 : rawKoW;
 
-    const contentW = Math.max(felsW, origW, koW, 20);
-    return Math.max(56, Math.ceil(contentW + 28));
+    const frontW = Math.max(felsW, origW, 20);
+    const contentW = Math.max(frontW, Math.min(koW, frontW * 1.15 + 16));
+    return Math.max(56, Math.ceil(contentW + 14));
   }
 
   findNextBlank(currentInput) {
@@ -6609,6 +7556,9 @@ class PracticeView {
   computeAndApplyStabilizedWidths() {
     const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
     if (!cards.length) return;
+
+    const containerWidth = this.chunksContainer.clientWidth || 0;
+    const cardMeasurements = [];
 
     cards.forEach((card) => {
       const felsWrap = card.querySelector('.chunk-tokens-fels');
@@ -6635,7 +7585,7 @@ class PracticeView {
           }
         });
         if (felsWrap.children.length > 1) {
-          childSum += (felsWrap.children.length - 1) * 6;
+          childSum += (felsWrap.children.length - 1) * 4;
         }
 
         wFels = Math.max(felsWrap.scrollWidth || 0, childSum);
@@ -6654,7 +7604,7 @@ class PracticeView {
           origChildSum += (ch.offsetWidth || 0);
         });
         if (origWrap.children.length > 1) {
-          origChildSum += (origWrap.children.length - 1) * 6;
+          origChildSum += (origWrap.children.length - 1) * 4;
         }
 
         wOrig = Math.max(origWrap.scrollWidth || 0, origChildSum);
@@ -6663,21 +7613,51 @@ class PracticeView {
       }
 
       if (koWrap) {
-        wKo = Math.max(koWrap.scrollWidth || 0, koWrap.offsetWidth || 0);
+        const rawKoW = Math.max(koWrap.scrollWidth || 0, koWrap.offsetWidth || 0);
+        wKo = rawKoW > 160 ? Math.ceil(rawKoW / 2) + 14 : rawKoW;
       }
 
-      // Dynamic width per card based on content length with clean breathing room
-      const contentWidth = Math.max(wFels, wOrig, wKo);
-      if (contentWidth > 0) {
-        const currentW = parseFloat(card.style.width) || 0;
-        const measuredCardWidth = Math.ceil(contentWidth + 28);
-        const finalCardWidth = Math.max(currentW, 56, measuredCardWidth);
+      // Front-face dominant sizing: eliminate excessive blank margin on front face
+      const frontW = Math.max(wFels, wOrig, 20);
+      const effectiveContentW = Math.max(frontW, Math.min(wKo, frontW * 1.15 + 16));
+      const currentW = parseFloat(card.style.width) || 0;
+      const measuredCardWidth = Math.ceil(effectiveContentW + 14);
+      // In real DOM with layout, measuredCardWidth reflects true contents.
+      // In mock DOM without layout (where scrollWidth is 0), fall back to currentW.
+      const naturalCardWidth = Math.max(currentW, 56, measuredCardWidth);
+      const minCardWidth = Math.max(56, Math.ceil(frontW + 10));
 
-        card.style.flex = '0 0 auto';
-        card.style.width = `${finalCardWidth}px`;
-        card.style.minWidth = `${finalCardWidth}px`;
-      }
+      cardMeasurements.push({
+        card,
+        naturalWidth: naturalCardWidth,
+        minWidth: minCardWidth
+      });
     });
+
+    const totalNaturalWidth = cardMeasurements.reduce((sum, item) => sum + item.naturalWidth, 0);
+    const totalGap = (cardMeasurements.length - 1) * 5;
+    const requiredTotal = totalNaturalWidth + totalGap;
+
+    if (containerWidth > 0 && requiredTotal > containerWidth) {
+      const availableForCards = Math.max(0, containerWidth - totalGap - 4);
+      const scale = availableForCards / totalNaturalWidth;
+
+      cardMeasurements.forEach(({ card, naturalWidth, minWidth }) => {
+        let targetWidth = naturalWidth;
+        if (scale >= 0.70) {
+          targetWidth = Math.max(minWidth, Math.floor(naturalWidth * scale));
+        }
+        card.style.flex = '0 0 auto';
+        card.style.width = `${targetWidth}px`;
+        card.style.minWidth = `${Math.min(targetWidth, minWidth)}px`;
+      });
+    } else {
+      cardMeasurements.forEach(({ card, naturalWidth }) => {
+        card.style.flex = '0 0 auto';
+        card.style.width = `${naturalWidth}px`;
+        card.style.minWidth = `${naturalWidth}px`;
+      });
+    }
   }
 
   // --- Shortcut & UI Actions ---

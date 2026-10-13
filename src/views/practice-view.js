@@ -277,6 +277,7 @@ export class PracticeView {
 
     window.addEventListener('resize', () => {
       this.drawWaveform();
+      this.computeAndApplyStabilizedWidths();
     });
 
     // Resize observer on waveform container to ensure wave window is always drawn
@@ -503,9 +504,9 @@ export class PracticeView {
           input.setAttribute('data-answer', felsInfo.clean);
           input.setAttribute('data-original', word);
           input.setAttribute('data-category', felsInfo.label);
-          input.placeholder = '[  ]';
-          input.style.width = `${Math.min(84, Math.max(46, felsInfo.clean.length * 10 + 16))}px`;
-          input.style.maxWidth = '90px';
+          input.placeholder = '[ ]';
+          input.style.width = `${Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20))}px`;
+          input.style.maxWidth = '80px';
           input.spellcheck = false;
           input.autocomplete = 'off';
 
@@ -620,25 +621,28 @@ export class PracticeView {
     words.forEach(word => {
       const felsInfo = getFelsInfo(word);
       if (felsInfo) {
-        const inputW = Math.min(84, Math.max(46, felsInfo.clean.length * 10 + 16));
+        const inputW = Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20));
         felsW += inputW;
         const trailingPunct = word.match(/[.,!?;:]+$/);
         if (trailingPunct) {
-          felsW += trailingPunct[0].length * 10 + 4;
+          felsW += trailingPunct[0].length * 8 + 2;
         }
       } else {
-        felsW += word.length * 10.5;
+        felsW += word.length * 10;
       }
     });
     if (words.length > 1) {
-      felsW += (words.length - 1) * 8;
+      felsW += (words.length - 1) * 5;
     }
 
-    const origW = enText.length * 10.5;
-    const koW = koText.length * 16;
+    const origW = enText.length * 10;
+    // Korean text on back face can wrap onto 2 lines if long
+    const rawKoW = koText.length * 15;
+    const koW = rawKoW > 160 ? Math.ceil(rawKoW / 2) + 14 : rawKoW;
 
-    const contentW = Math.max(felsW, origW, koW, 20);
-    return Math.max(56, Math.ceil(contentW + 28));
+    const frontW = Math.max(felsW, origW, 20);
+    const contentW = Math.max(frontW, Math.min(koW, frontW * 1.15 + 16));
+    return Math.max(56, Math.ceil(contentW + 14));
   }
 
   findNextBlank(currentInput) {
@@ -652,6 +656,9 @@ export class PracticeView {
   computeAndApplyStabilizedWidths() {
     const cards = this.chunksContainer.querySelectorAll('.chunk-card-3d');
     if (!cards.length) return;
+
+    const containerWidth = this.chunksContainer.clientWidth || 0;
+    const cardMeasurements = [];
 
     cards.forEach((card) => {
       const felsWrap = card.querySelector('.chunk-tokens-fels');
@@ -678,7 +685,7 @@ export class PracticeView {
           }
         });
         if (felsWrap.children.length > 1) {
-          childSum += (felsWrap.children.length - 1) * 6;
+          childSum += (felsWrap.children.length - 1) * 4;
         }
 
         wFels = Math.max(felsWrap.scrollWidth || 0, childSum);
@@ -697,7 +704,7 @@ export class PracticeView {
           origChildSum += (ch.offsetWidth || 0);
         });
         if (origWrap.children.length > 1) {
-          origChildSum += (origWrap.children.length - 1) * 6;
+          origChildSum += (origWrap.children.length - 1) * 4;
         }
 
         wOrig = Math.max(origWrap.scrollWidth || 0, origChildSum);
@@ -706,21 +713,51 @@ export class PracticeView {
       }
 
       if (koWrap) {
-        wKo = Math.max(koWrap.scrollWidth || 0, koWrap.offsetWidth || 0);
+        const rawKoW = Math.max(koWrap.scrollWidth || 0, koWrap.offsetWidth || 0);
+        wKo = rawKoW > 160 ? Math.ceil(rawKoW / 2) + 14 : rawKoW;
       }
 
-      // Dynamic width per card based on content length with clean breathing room
-      const contentWidth = Math.max(wFels, wOrig, wKo);
-      if (contentWidth > 0) {
-        const currentW = parseFloat(card.style.width) || 0;
-        const measuredCardWidth = Math.ceil(contentWidth + 28);
-        const finalCardWidth = Math.max(currentW, 56, measuredCardWidth);
+      // Front-face dominant sizing: eliminate excessive blank margin on front face
+      const frontW = Math.max(wFels, wOrig, 20);
+      const effectiveContentW = Math.max(frontW, Math.min(wKo, frontW * 1.15 + 16));
+      const currentW = parseFloat(card.style.width) || 0;
+      const measuredCardWidth = Math.ceil(effectiveContentW + 14);
+      // In real DOM with layout, measuredCardWidth reflects true contents.
+      // In mock DOM without layout (where scrollWidth is 0), fall back to currentW.
+      const naturalCardWidth = Math.max(currentW, 56, measuredCardWidth);
+      const minCardWidth = Math.max(56, Math.ceil(frontW + 10));
 
-        card.style.flex = '0 0 auto';
-        card.style.width = `${finalCardWidth}px`;
-        card.style.minWidth = `${finalCardWidth}px`;
-      }
+      cardMeasurements.push({
+        card,
+        naturalWidth: naturalCardWidth,
+        minWidth: minCardWidth
+      });
     });
+
+    const totalNaturalWidth = cardMeasurements.reduce((sum, item) => sum + item.naturalWidth, 0);
+    const totalGap = (cardMeasurements.length - 1) * 5;
+    const requiredTotal = totalNaturalWidth + totalGap;
+
+    if (containerWidth > 0 && requiredTotal > containerWidth) {
+      const availableForCards = Math.max(0, containerWidth - totalGap - 4);
+      const scale = availableForCards / totalNaturalWidth;
+
+      cardMeasurements.forEach(({ card, naturalWidth, minWidth }) => {
+        let targetWidth = naturalWidth;
+        if (scale >= 0.70) {
+          targetWidth = Math.max(minWidth, Math.floor(naturalWidth * scale));
+        }
+        card.style.flex = '0 0 auto';
+        card.style.width = `${targetWidth}px`;
+        card.style.minWidth = `${Math.min(targetWidth, minWidth)}px`;
+      });
+    } else {
+      cardMeasurements.forEach(({ card, naturalWidth }) => {
+        card.style.flex = '0 0 auto';
+        card.style.width = `${naturalWidth}px`;
+        card.style.minWidth = `${naturalWidth}px`;
+      });
+    }
   }
 
   // --- Shortcut & UI Actions ---

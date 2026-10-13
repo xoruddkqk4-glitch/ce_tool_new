@@ -180,6 +180,30 @@
             </div>
           </div>
 
+          <!-- Master Audio Waveform & Sentence Segment Selector -->
+          <div id="masterWaveformSection" class="master-waveform-panel hidden">
+            <div class="master-waveform-header">
+              <div class="master-waveform-title">
+                <span class="waveform-icon">🌊</span>
+                <span class="waveform-title-text">전체 오디오 문장 구간 편집기</span>
+                <span class="waveform-hint-badge">마우스 드래그로 문장 경계 조절 | 클릭하여 구간 청취</span>
+              </div>
+              <div class="master-waveform-controls">
+                <button id="btnMasterPlayPause" class="action-pill-btn" type="button" title="전체 오디오 재생/정지">
+                  <span id="masterPlayIcon">▶</span>
+                  <span id="masterPlayLabel">재생</span>
+                </button>
+                <span id="masterTimeHud" class="master-time-hud">00:00.0 / 00:00.0</span>
+                <button id="btnSnapSilence" class="action-pill-btn active" type="button" title="묵음 구간 자동 스냅 토글">
+                  <span>🧲 묵음 스냅 ON</span>
+                </button>
+              </div>
+            </div>
+            <div class="master-waveform-canvas-wrap">
+              <canvas id="masterWaveformCanvas" class="master-waveform-canvas" height="90"></canvas>
+            </div>
+          </div>
+
           <!-- Parsed Sentences Dynamic List Container -->
           <div id="parsedSentenceList" class="parsed-sentence-list">
             <!-- Dynamically populated sentence cards -->
@@ -499,6 +523,42 @@
           <div class="classroom-tips">
             <span>💡 <strong>단축키:</strong> 숫자 [1]~[9] 청크 뒤집기 | [←] [→] 문장 이동 | [Space] 듣기 | [F] 전체 뒤집기 | [ESC] 닫기</span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sentence Waveform Trimmer Modal (#sentenceTrimmerModal) -->
+    <div id="sentenceTrimmerModal" class="modal-overlay hidden" tabindex="-1">
+      <div class="modal-card trimmer-modal-card">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <h3 id="trimmerModalTitle" class="modal-title">⏱ 문장 S1 음성 구간 정밀 조정</h3>
+            <p id="trimmerModalSubtitle" class="modal-subtitle" style="font-size: 0.8rem; color: #94a3b8; margin-top: 2px;">파형을 보면서 시작점과 끝점을 드래그하고 직접 들어보며 확정하세요.</p>
+          </div>
+          <button id="btnCloseTrimmerModal" class="icon-btn modal-close-btn" type="button" title="닫기">✕</button>
+        </div>
+        <div class="trimmer-modal-body">
+          <div class="trimmer-stn-text-preview" id="trimmerStnText">"I went to school yesterday."</div>
+          <div class="trimmer-canvas-container">
+            <canvas id="trimmerCanvas" class="trimmer-canvas" height="110"></canvas>
+          </div>
+          <div class="trimmer-time-bar">
+            <div class="trimmer-time-input-group">
+              <label>시작 (초):</label>
+              <input type="number" id="trimmerInputStart" step="0.1" min="0" class="trimmer-num-input">
+            </div>
+            <button id="btnTrimmerPlaySegment" class="action-pill-btn btn-primary-pill" type="button">
+              <span>▶ 선택 구간 듣기</span>
+            </button>
+            <div class="trimmer-time-input-group">
+              <label>종료 (초):</label>
+              <input type="number" id="trimmerInputEnd" step="0.1" min="0" class="trimmer-num-input">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+          <button id="btnCancelTrimmer" class="secondary-btn" type="button">취소</button>
+          <button id="btnSaveTrimmer" class="primary-btn" type="button">✓ 구간 저장 및 반영</button>
         </div>
       </div>
     </div>

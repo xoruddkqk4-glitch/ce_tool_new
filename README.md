@@ -499,6 +499,31 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 28/28개 테스트 스위트 100% 통과 (14.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
+## [2026-10-13 20:33] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **2단계 약형드랩 청크 카드 텍스트 앞뒤 여백 축소 및 가운데 정렬 (`styles/components/chunk-cards.css`, `src/views/practice-view.js`)**:
+     - 뒷면 한국어 해석 긴 문장으로 인해 카드 가로폭이 과도하게 팽창(450px+)하던 결함을 해결: 뒷면 한국어 텍스트 감싸기(`white-space: normal; word-break: keep-all;`) 적용 및 전면 영문 콘텐츠 주도 너비 산정.
+     - 카드 페이스 패딩을 `4px 8px`에서 `3px 6px`로 축소하고 고정 가산 여백을 `+28px`에서 `+14px`로 대폭 축소하여 불필요한 좌우 여백 제거.
+     - 1~2글자 기능어 빈칸 인풋 슬림화(`placeholder = '[ ]'`, `padding: 1px 3px`, min 34px) 적용.
+     - `.chunk-tokens-wrap`, `.chunk-tokens-original`, `.ko-chunk-content`에 `margin: 0 auto; text-align: center; justify-content: center;`를 적용하여 카드 내부 텍스트 완전 중앙 정렬.
+     - 청크 카드가 여러 줄로 밀려나지 않고 단일 행에 배치되도록 컨테이너 너비 기반 비례 스케일링(`scale >= 0.70`) 및 반응형 윈도우 리사이즈 리스너 연동.
+  2. **1단계 입력 화면 전체 오디오 마스터 파형 타임라인 구현 (`src/audio/master-waveform.js`, `index.html`, `styles/views/input-view.css`)**:
+     - MP3 음성 파일 업로드 시 1단계 분석 결과 상단에 전체 오디오 PCM 파형과 문장 구간(`S1`, `S2`, `S3`...)을 시각적 컬러 블록과 라벨로 표시하는 마스터 파형 패널(`#masterWaveformSection`) 신규 구현.
+     - 문장 블록 경계선(핸들)을 마우스 좌우 드래그하여 문장별 `audioStart`와 `audioEnd`를 실시간으로 직접 조정 가능.
+     - VAD 감지 묵음 구간에 마우스 핸들이 자석처럼 달라붙는 `🧲 묵음 스냅 (Snap to Silence)` 토글 기능 지원.
+     - 세그먼트 클릭 시 해당 문장만 즉시 미리듣기 재생 및 하단 문장 카드 스크롤 연동.
+  3. **문장 카드별 시각적 파형 트리머 팝업 모달 구현 (`src/ui/sentence-trimmer-modal.js`, `index.html`)**:
+     - 문장 카드의 `⏱` 시간 배지 클릭 시 기존 `prompt()` 텍스트 입력창 대신 고해상도 파형을 보면서 시작점/끝점을 정밀 조절하는 시각적 트리머 모달(`#sentenceTrimmerModal`) 신규 구현.
+     - 문장 앞뒤 ±1.8초 여유 구간을 포함한 줌인 파형 뷰, 시작(초록)/끝(빨강) 드래그 핸들 및 0.1초 단위 숫자 입력 연동.
+     - `[▶ 선택 구간 듣기]` 즉시 청취 및 `[✓ 구간 저장 및 반영]` 원클릭 동기화.
+  4. **단독 배포 번들 최신화 및 무의존성 빌드 연동 (`tools/build-standalone.js`)**:
+     - `tools/build-standalone.js`에 신규 모듈(`master-waveform.js`, `sentence-trimmer-modal.js`)을 등록하고 `app.js` (333.9 KB), `styles.css` (80.1 KB) 단독 실행형 패키징 완료.
+- **검증 결과**:
+  - `npm run check`: 28개 전체 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 전체 28/28개 테스트 스위트 100% 통과 (14.3초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
+
+
 
 
 

@@ -24,6 +24,8 @@ import { getFelsInfo } from '../config/fels-dict.js';
 import { toast } from '../ui/toast-manager.js';
 import { escapeHtml } from '../utils/dom.js';
 import { projectService } from '../services/project-service.js';
+import { MasterWaveformTimeline } from '../audio/master-waveform.js';
+import { SentenceTrimmerModal } from '../ui/sentence-trimmer-modal.js';
 
 // Placeholder kept in the 직독직해 slash string for empty chunks so slot positions never shift
 const DIRECT_EMPTY_PLACEHOLDER = '—';
@@ -76,6 +78,47 @@ export class InputView {
 
     // Audio Singleton
     this.nativeAudioPlayer = document.getElementById('nativeAudioPlayer');
+
+    // DOM Elements - Master Waveform & Trimmer
+    this.masterWaveformSection = document.getElementById('masterWaveformSection');
+    this.masterWaveformCanvas = document.getElementById('masterWaveformCanvas');
+    this.btnMasterPlayPause = document.getElementById('btnMasterPlayPause');
+    this.masterPlayIcon = document.getElementById('masterPlayIcon');
+    this.masterPlayLabel = document.getElementById('masterPlayLabel');
+    this.masterTimeHud = document.getElementById('masterTimeHud');
+    this.btnSnapSilence = document.getElementById('btnSnapSilence');
+
+    this.masterWaveform = null;
+    if (this.masterWaveformCanvas) {
+      this.masterWaveform = new MasterWaveformTimeline(this.masterWaveformCanvas, {
+        onSegmentChange: (idx, start, end, isFinal) => {
+          const stn = appState.sentenceList ? appState.sentenceList.find(s => s.index === idx) : null;
+          if (stn) {
+            stn.audioStart = start;
+            stn.audioEnd = end;
+            stn.cachedPeaks = null;
+            const timeBadge = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"] .stn-audio-time`) : null;
+            if (timeBadge) {
+              timeBadge.textContent = `⏱ ${this.formatSec(start)} ~ ${this.formatSec(end)}`;
+            }
+            if (isFinal) {
+              projectService.markDirty();
+              toast.show(`⏱ 문장 S${idx + 1} 구간: ${start}s ~ ${end}s`);
+            }
+          }
+        },
+        onSegmentSelect: (idx) => {
+          const targetCard = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
+          if (targetCard) {
+            targetCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            targetCard.classList.add('merged-highlight');
+            setTimeout(() => targetCard.classList.remove('merged-highlight'), 1000);
+          }
+        }
+      });
+    }
+
+    this.trimmerModal = new SentenceTrimmerModal();
 
     this.initEvents();
     this.setMode('text'); // default: script only
@@ -184,6 +227,62 @@ export class InputView {
     // Auto Audio-Script Sync Trigger
     if (this.btnAutoSyncAudio) {
       this.btnAutoSyncAudio.addEventListener('click', () => this.autoSyncAudioScript());
+    }
+
+    // Master Waveform Controls
+    if (this.btnMasterPlayPause) {
+      this.btnMasterPlayPause.addEventListener('click', () => {
+        if (!this.nativeAudioPlayer || !this.nativeAudioPlayer.src) {
+          toast.show('⚠️ 재생 가능한 오디오 파일이 없습니다.');
+          return;
+        }
+        if (this.nativeAudioPlayer.paused) {
+          playbackController.claim('input-master');
+          this.nativeAudioPlayer.play().then(() => {
+            if (this.masterPlayIcon) this.masterPlayIcon.textContent = '⏸';
+            if (this.masterPlayLabel) this.masterPlayLabel.textContent = '일시정지';
+          }).catch(e => console.error(e));
+        } else {
+          this.nativeAudioPlayer.pause();
+          if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+          if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+        }
+      });
+    }
+
+    if (this.btnSnapSilence) {
+      this.btnSnapSilence.addEventListener('click', () => {
+        const isActive = this.btnSnapSilence.classList.toggle('active');
+        if (this.masterWaveform) {
+          this.masterWaveform.setSnapEnabled(isActive);
+        }
+        const span = this.btnSnapSilence.querySelector('span');
+        if (span) span.textContent = isActive ? '🧲 묵음 스냅 ON' : '🧲 묵음 스냅 OFF';
+        toast.show(isActive ? '🧲 묵음 구간 자동 스냅이 활성화되었습니다.' : '묵음 구간 스냅이 비활성화되었습니다.');
+      });
+    }
+
+    if (this.nativeAudioPlayer) {
+      this.nativeAudioPlayer.addEventListener('timeupdate', () => {
+        const cur = this.nativeAudioPlayer.currentTime;
+        const dur = this.nativeAudioPlayer.duration || 1;
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(cur);
+        }
+        if (this.masterTimeHud) {
+          this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+        }
+      });
+
+      this.nativeAudioPlayer.addEventListener('pause', () => {
+        if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+        if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+      });
+
+      this.nativeAudioPlayer.addEventListener('play', () => {
+        if (this.masterPlayIcon) this.masterPlayIcon.textContent = '⏸';
+        if (this.masterPlayLabel) this.masterPlayLabel.textContent = '일시정지';
+      });
     }
 
     // Handout Modal Triggers
@@ -333,6 +432,13 @@ export class InputView {
     }
 
     this.renderDropAreaPreview(file);
+    if (this.masterWaveform && appState.audioBuffer) {
+      this.masterWaveform.setAudioBuffer(appState.audioBuffer);
+      if (appState.sentenceList && appState.sentenceList.length > 0) {
+        if (this.masterWaveformSection) this.masterWaveformSection.classList.remove('hidden');
+        this.masterWaveform.setSentenceList(appState.sentenceList);
+      }
+    }
     projectService.markDirty();
   }
 
@@ -368,6 +474,14 @@ export class InputView {
     appState.audioBuffer = null;
     appState.isSynthesizedAudio = false;
     projectService.markDirty();
+
+    if (this.masterWaveformSection) {
+      this.masterWaveformSection.classList.add('hidden');
+    }
+    if (this.masterWaveform) {
+      this.masterWaveform.setAudioBuffer(null);
+      this.masterWaveform.setSentenceList([]);
+    }
 
     if (this.audioFileInput) this.audioFileInput.value = '';
     if (this.dropArea) {
@@ -973,23 +1087,40 @@ export class InputView {
         });
       }
 
-      // 4. Hook up Audio Time adjustment on click
+      // 4. Hook up Audio Time adjustment on click (Visual Waveform Trimmer Modal)
       const timeBadge = itemCard.querySelector('.stn-audio-time');
       if (timeBadge && hasAudioTime) {
+        timeBadge.title = '클릭하여 파형을 보며 오디오 구간을 정밀 조정합니다.';
+        timeBadge.style.cursor = 'pointer';
         timeBadge.addEventListener('click', () => {
-          const currentStart = stn.audioStart !== null ? stn.audioStart : 0;
-          const currentEnd = stn.audioEnd !== null ? stn.audioEnd : 0;
-          const inputStr = prompt(`문장 S${idx + 1} 오디오 구간 (초 단위) 수정:\n예: 3.5 ~ 8.2`, `${currentStart} ~ ${currentEnd}`);
-          if (inputStr) {
-            const parts = inputStr.split('~').map(s => parseFloat(s.trim()));
-            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] > parts[0]) {
-              stn.audioStart = Math.round(parts[0] * 10) / 10;
-              stn.audioEnd = Math.round(parts[1] * 10) / 10;
+          if (this.trimmerModal && appState.audioBuffer) {
+            this.trimmerModal.open(stn, appState.audioBuffer, (newStart, newEnd) => {
+              stn.audioStart = newStart;
+              stn.audioEnd = newEnd;
               stn.cachedPeaks = null;
               timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+              if (this.masterWaveform) {
+                this.masterWaveform.draw();
+              }
+              projectService.markDirty();
               toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
-            } else {
-              toast.show('⚠️ 올바른 시간 형식(예: 3.5 ~ 8.2)을 입력하세요.');
+            });
+          } else {
+            // Fallback prompt if audio buffer not yet decoded
+            const currentStart = stn.audioStart !== null ? stn.audioStart : 0;
+            const currentEnd = stn.audioEnd !== null ? stn.audioEnd : 0;
+            const inputStr = prompt(`문장 S${idx + 1} 오디오 구간 (초 단위) 수정:\n예: 3.5 ~ 8.2`, `${currentStart} ~ ${currentEnd}`);
+            if (inputStr) {
+              const parts = inputStr.split('~').map(s => parseFloat(s.trim()));
+              if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] > parts[0]) {
+                stn.audioStart = Math.round(parts[0] * 10) / 10;
+                stn.audioEnd = Math.round(parts[1] * 10) / 10;
+                stn.cachedPeaks = null;
+                timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+                if (this.masterWaveform) this.masterWaveform.draw();
+                projectService.markDirty();
+                toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
+              }
             }
           }
         });
@@ -1074,6 +1205,13 @@ export class InputView {
     });
 
     this.parsedResultsSection.classList.remove('hidden');
+
+    // Sync master waveform
+    if (this.masterWaveform && appState.audioBuffer) {
+      if (this.masterWaveformSection) this.masterWaveformSection.classList.remove('hidden');
+      this.masterWaveform.setAudioBuffer(appState.audioBuffer);
+      this.masterWaveform.setSentenceList(appState.sentenceList);
+    }
 
     requestAnimationFrame(() => {
       // Release temporary min-height lock

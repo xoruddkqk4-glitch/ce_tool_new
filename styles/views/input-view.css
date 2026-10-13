@@ -1176,3 +1176,162 @@
     break-after: auto !important;
   }
 }
+
+/* Master Waveform Timeline Panel in Stage 1 */
+.master-waveform-panel {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.master-waveform-panel.hidden {
+  display: none !important;
+}
+
+.master-waveform-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.master-waveform-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.master-waveform-title .waveform-icon {
+  font-size: 1.2rem;
+}
+
+.master-waveform-title .waveform-title-text {
+  font-weight: 700;
+  font-size: 0.98rem;
+  color: #f8fafc;
+}
+
+.master-waveform-title .waveform-hint-badge {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.master-waveform-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.master-time-hud {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #00ffcc;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 255, 204, 0.2);
+}
+
+.master-waveform-canvas-wrap {
+  width: 100%;
+  height: 90px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #090d16;
+  position: relative;
+}
+
+.master-waveform-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Sentence Waveform Trimmer Modal */
+.trimmer-modal-card {
+  max-width: 640px !important;
+  background: #0f172a !important;
+  border: 1px solid rgba(99, 102, 241, 0.35) !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6) !important;
+}
+
+.trimmer-modal-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.trimmer-stn-text-preview {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid #10b981;
+  font-style: italic;
+}
+
+.trimmer-canvas-container {
+  width: 100%;
+  height: 110px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #080c14;
+  position: relative;
+}
+
+.trimmer-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.trimmer-time-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.trimmer-time-input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.trimmer-num-input {
+  width: 75px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.5);
+  color: #00ffcc;
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.trimmer-num-input:focus {
+  outline: none;
+  border-color: #00ffcc;
+  box-shadow: 0 0 8px rgba(0, 255, 204, 0.4);
+}
+
