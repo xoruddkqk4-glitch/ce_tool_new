@@ -587,7 +587,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 35/35개 테스트 스위트 100% 통과 (21.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
-## [2026-10-13 23:45] 업데이트 이력 (Commit ID: Pending)
+## [2026-10-13 23:45] 업데이트 이력 (Commit ID: eb62c47)
 - **수정 내용**:
   1. **2단계 약형드랩 문장 간 이동 시 정답 및 채점 결과 100% 영구 보존 (`src/views/practice-view.js`)**:
      - `PracticeView`에 `currentRenderedSentenceIndex` 속성을 도입하여 현재 화면에 렌더링된 문장 번호를 엄격하게 추적.
