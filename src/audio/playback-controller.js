@@ -119,6 +119,10 @@ export class PlaybackController {
       player.pause();
     }
   }
+
+  stopAll() {
+    this.stop();
+  }
 }
 
 export const playbackController = new PlaybackController();

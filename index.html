@@ -87,6 +87,9 @@
         <div class="glass-card">
           <!-- 3 Mode Segmented Tabs + 3x1 Action Button on the Right -->
           <div class="mode-selector-bar">
+            <button id="btnResetAllData" class="btn-data-reset" type="button" title="현재 입력 및 불러온 모든 데이터를 삭제하고 초기화합니다">
+              <span>🔄 데이터 새로고침</span>
+            </button>
             <button class="mode-tab" data-mode="both" type="button">
               <span>🎧 mp3 음성 + 📝 script</span>
             </button>
@@ -186,7 +189,7 @@
               <div class="master-waveform-title">
                 <span class="waveform-icon">🌊</span>
                 <span class="waveform-title-text">전체 오디오 문장 구간 편집기</span>
-                <span class="waveform-hint-badge">마우스 드래그로 문장 경계 조절 | 클릭하여 구간 청취</span>
+                <span class="waveform-hint-badge">Ctrl+휠로 확대/축소 | 경계 드래그 시 인접 문장 자동 연동 | 클릭하여 청취</span>
               </div>
               <div class="master-waveform-controls">
                 <button id="btnMasterPlayPause" class="action-pill-btn" type="button" title="전체 오디오 재생/정지">
@@ -194,13 +197,18 @@
                   <span id="masterPlayLabel">재생</span>
                 </button>
                 <span id="masterTimeHud" class="master-time-hud">00:00.0 / 00:00.0</span>
+                <div class="master-zoom-group">
+                  <button id="btnMasterZoomOut" class="master-zoom-btn" type="button" title="파형 축소 (Ctrl+마우스 휠 다운)">➖</button>
+                  <span id="masterZoomLabel" class="master-zoom-label" title="클릭하여 100% 원본 배율로 리셋">100%</span>
+                  <button id="btnMasterZoomIn" class="master-zoom-btn" type="button" title="파형 확대 (Ctrl+마우스 휠 업)">➕</button>
+                </div>
                 <button id="btnSnapSilence" class="action-pill-btn active" type="button" title="묵음 구간 자동 스냅 토글">
                   <span>🧲 묵음 스냅 ON</span>
                 </button>
               </div>
             </div>
-            <div class="master-waveform-canvas-wrap">
-              <canvas id="masterWaveformCanvas" class="master-waveform-canvas" height="90"></canvas>
+            <div id="masterWaveformCanvasWrap" class="master-waveform-canvas-wrap">
+              <canvas id="masterWaveformCanvas" class="master-waveform-canvas" height="86"></canvas>
             </div>
           </div>
 

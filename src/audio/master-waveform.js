@@ -1,7 +1,8 @@
 /**
  * Master Audio Waveform & Sentence Segment Selector
  * Renders full-audio PCM timeline in Stage 1 Input View with interactive
- * draggable sentence segment boundaries, silence snapping, and click-to-preview.
+ * draggable sentence segment boundaries, Ctrl+Wheel zoom, non-overlapping lockstep
+ * boundary editing, silence snapping, and click-to-preview.
  */
 
 import { formatTime } from './looper-engine.js';
@@ -16,10 +17,16 @@ export class MasterWaveformTimeline {
     this.options = options;
 
     this.peaks = [];
-    this.totalBars = 600;
-    this.hoverInfo = null; // { type: 'boundary'|'segment', index: number, edge: 'start'|'end' }
-    this.activeDrag = null; // { index: number, edge: 'start'|'end', startX: number, origTime: number }
+    this.totalBars = 1200; // High-resolution peak buffer
+    this.hoverInfo = null; // { type: 'boundary'|'segment', index: number, listIdx: number, edge: 'start'|'end' }
+    this.activeDrag = null; // { index: number, listIdx: number, edge: 'start'|'end', startX: number }
     this.snapEnabled = true;
+
+    // Zoom state
+    this.zoomLevel = 1.0;
+    this.minZoom = 1.0;
+    this.maxZoom = 10.0;
+    this.baseWidth = 0;
 
     this.playbackTime = null;
     this.isPlaying = false;
@@ -43,6 +50,7 @@ export class MasterWaveformTimeline {
     if (audioBuffer) {
       this.extractPeaks();
     }
+    this.syncCanvasSize();
     this.draw();
   }
 
@@ -69,11 +77,9 @@ export class MasterWaveformTimeline {
         const end = Math.min(start + blockSize, totalSamples);
         let sum = 0;
         const step = Math.max(1, Math.floor(blockSize / 64));
-        let count = 0;
         for (let j = start; j < end; j += step) {
           const val = Math.abs(rawData[j]);
           if (val > sum) sum = val;
-          count++;
         }
         peaks.push(sum);
         if (sum > maxVal) maxVal = sum;
@@ -102,15 +108,26 @@ export class MasterWaveformTimeline {
     const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
 
     // 1. Background Grid & Glass styling
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
     ctx.fillRect(0, 0, w, h);
 
-    // Subtle time division grid lines every 5 seconds (or 1s for short audio)
-    const timeStep = duration > 30 ? 5 : (duration > 10 ? 2 : 1);
+    // Dynamic time division grid lines based on zoom and duration
+    const pxPerSec = w / duration;
+    let timeStep = 5;
+    if (pxPerSec > 160) {
+      timeStep = 0.5;
+    } else if (pxPerSec > 80) {
+      timeStep = 1;
+    } else if (pxPerSec > 35) {
+      timeStep = 2;
+    } else {
+      timeStep = 5;
+    }
+
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
     ctx.font = '9px monospace';
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.65)';
 
     for (let t = 0; t <= duration; t += timeStep) {
       const x = Math.round((t / duration) * w);
@@ -120,7 +137,8 @@ export class MasterWaveformTimeline {
       ctx.stroke();
 
       if (t > 0 && x < w - 24) {
-        ctx.fillText(`${t}s`, x + 2, 11);
+        const text = Number.isInteger(t) ? `${t}s` : `${t.toFixed(1)}s`;
+        ctx.fillText(text, x + 2, 11);
       }
     }
 
@@ -128,7 +146,7 @@ export class MasterWaveformTimeline {
     if (this.peaks.length > 0) {
       const numBars = this.peaks.length;
       const barSpacing = w / numBars;
-      const barWidth = Math.max(1, barSpacing * 0.72);
+      const barWidth = Math.max(1, barSpacing * 0.75);
       const halfH = h / 2;
 
       for (let i = 0; i < numBars; i++) {
@@ -147,14 +165,14 @@ export class MasterWaveformTimeline {
     validSentences.forEach((stn, idx) => {
       const startX = Math.round((stn.audioStart / duration) * w);
       const endX = Math.round((stn.audioEnd / duration) * w);
-      const segW = Math.max(4, endX - startX);
+      const segW = Math.max(2, endX - startX);
       const color = this.colors[idx % this.colors.length];
 
       const isHovered = this.hoverInfo && this.hoverInfo.index === stn.index;
       const isDragging = this.activeDrag && this.activeDrag.index === stn.index;
 
       // Segment Background
-      ctx.fillStyle = (isHovered || isDragging) ? color.fill.replace('0.18', '0.32') : color.fill;
+      ctx.fillStyle = (isHovered || isDragging) ? color.fill.replace('0.18', '0.34') : color.fill;
       ctx.fillRect(startX, 0, segW, h);
 
       // Top Header Border
@@ -233,6 +251,23 @@ export class MasterWaveformTimeline {
       }
     });
 
+    // Ctrl + Mouse Wheel Zoom Listener
+    const wrap = this.canvas.parentElement || this.canvas;
+    wrap.addEventListener('wheel', (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
+        const rect = wrap.getBoundingClientRect();
+        const mouseViewportX = e.clientX - rect.left;
+        const contentX = wrap.scrollLeft + mouseViewportX;
+        const anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+
+        const factor = e.deltaY < 0 ? 1.25 : 0.8;
+        const nextZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoomLevel * factor));
+        this.setZoom(nextZoom, anchorTime, mouseViewportX);
+      }
+    }, { passive: false });
+
     // Handle container resize
     if (typeof ResizeObserver !== 'undefined' && this.canvas.parentElement) {
       this.resizeObserver = new ResizeObserver(() => {
@@ -244,11 +279,65 @@ export class MasterWaveformTimeline {
 
   syncCanvasSize() {
     if (!this.canvas || !this.canvas.parentElement) return;
-    const rect = this.canvas.parentElement.getBoundingClientRect();
-    const newW = Math.floor(rect.width);
-    if (newW > 0 && newW !== this.canvas.width) {
-      this.canvas.width = newW;
-      this.draw();
+    const wrap = this.canvas.parentElement;
+    const baseW = Math.floor(wrap.clientWidth);
+    if (baseW > 0) {
+      this.baseWidth = baseW;
+      const targetW = Math.round(baseW * this.zoomLevel);
+      if (targetW !== this.canvas.width) {
+        this.canvas.width = targetW;
+        if (this.zoomLevel > 1.0) {
+          this.canvas.style.width = `${targetW}px`;
+        } else {
+          this.canvas.style.width = '100%';
+        }
+        this.draw();
+      }
+    }
+  }
+
+  /**
+   * Adjust horizontal zoom level
+   * @param {number} level Zoom multiplier (1.0 to 10.0)
+   * @param {number|null} anchorTime Time position in seconds to center zoom on
+   * @param {number|null} anchorViewportX Horizontal mouse offset inside container
+   */
+  setZoom(level, anchorTime = null, anchorViewportX = null) {
+    const clamped = Math.max(this.minZoom, Math.min(this.maxZoom, Math.round(level * 10) / 10));
+    const wrap = this.canvas.parentElement;
+    const baseW = (wrap && wrap.clientWidth > 0) ? wrap.clientWidth : (this.baseWidth || 800);
+    this.baseWidth = baseW;
+
+    const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
+
+    // If anchor is not provided, anchor to center of visible container
+    if (anchorTime === null && wrap) {
+      const mouseViewportX = wrap.clientWidth / 2;
+      const contentX = wrap.scrollLeft + mouseViewportX;
+      anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+      anchorViewportX = mouseViewportX;
+    }
+
+    this.zoomLevel = clamped;
+    const newWidth = Math.round(baseW * this.zoomLevel);
+    this.canvas.width = newWidth;
+
+    if (this.zoomLevel > 1.0) {
+      this.canvas.style.width = `${newWidth}px`;
+    } else {
+      this.canvas.style.width = '100%';
+    }
+
+    // Preserve anchor point under view
+    if (wrap && anchorTime !== null && anchorViewportX !== null) {
+      const newContentX = (anchorTime / duration) * newWidth;
+      wrap.scrollLeft = Math.max(0, newContentX - anchorViewportX);
+    }
+
+    this.draw();
+
+    if (typeof this.options.onZoomChange === 'function') {
+      this.options.onZoomChange(this.zoomLevel);
     }
   }
 
@@ -268,7 +357,7 @@ export class MasterWaveformTimeline {
     const x = e.clientX - rect.left;
     const w = rect.width;
     const duration = this.audioBuffer.duration;
-    const thresholdPx = 8;
+    const thresholdPx = 10;
 
     let found = null;
 
@@ -281,11 +370,11 @@ export class MasterWaveformTimeline {
       const endX = (stn.audioEnd / duration) * w;
 
       if (Math.abs(x - startX) <= thresholdPx) {
-        found = { type: 'boundary', index: stn.index, edge: 'start' };
+        found = { type: 'boundary', index: stn.index, listIdx: i, edge: 'start' };
         break;
       }
       if (Math.abs(x - endX) <= thresholdPx) {
-        found = { type: 'boundary', index: stn.index, edge: 'end' };
+        found = { type: 'boundary', index: stn.index, listIdx: i, edge: 'end' };
         break;
       }
     }
@@ -298,7 +387,7 @@ export class MasterWaveformTimeline {
         const startX = (stn.audioStart / duration) * w;
         const endX = (stn.audioEnd / duration) * w;
         if (x >= startX && x <= endX) {
-          found = { type: 'segment', index: stn.index };
+          found = { type: 'segment', index: stn.index, listIdx: i };
           break;
         }
       }
@@ -307,10 +396,20 @@ export class MasterWaveformTimeline {
     this.hoverInfo = found;
     if (found && found.type === 'boundary') {
       this.canvas.style.cursor = 'col-resize';
+      const i = found.listIdx;
+      if (found.edge === 'end' && i < this.sentenceList.length - 1) {
+        this.canvas.title = `경계 조절: S${i + 1} 늘림/줄임 시 S${i + 2} 시작 위치 자동 연동`;
+      } else if (found.edge === 'start' && i > 0) {
+        this.canvas.title = `경계 조절: S${i + 1} 시작 조절 시 S${i} 끝 위치 자동 연동`;
+      } else {
+        this.canvas.title = `문장 S${found.index + 1} 경계 조절`;
+      }
     } else if (found && found.type === 'segment') {
       this.canvas.style.cursor = 'pointer';
+      this.canvas.title = `클릭하여 문장 S${found.index + 1} 오디오 구간 청취`;
     } else {
       this.canvas.style.cursor = 'default';
+      this.canvas.title = '';
     }
 
     this.draw();
@@ -318,14 +417,16 @@ export class MasterWaveformTimeline {
 
   handleMouseDown(e) {
     if (!this.audioBuffer || !this.sentenceList.length) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
 
     if (this.hoverInfo && this.hoverInfo.type === 'boundary') {
-      const stn = this.sentenceList.find(s => s.index === this.hoverInfo.index);
+      const listIdx = this.hoverInfo.listIdx !== undefined 
+        ? this.hoverInfo.listIdx 
+        : this.sentenceList.findIndex(s => s.index === this.hoverInfo.index);
+      const stn = this.sentenceList[listIdx];
       if (stn) {
         this.activeDrag = {
           index: stn.index,
+          listIdx: listIdx,
           edge: this.hoverInfo.edge,
           startX: e.clientX,
           origStart: stn.audioStart,
@@ -347,6 +448,17 @@ export class MasterWaveformTimeline {
   handleWindowMouseMove(e) {
     if (!this.activeDrag || !this.audioBuffer) return;
 
+    // Auto-scroll container when dragging near viewport edges if zoomed in
+    if (this.zoomLevel > 1.0 && this.canvas.parentElement) {
+      const wrap = this.canvas.parentElement;
+      const wrapRect = wrap.getBoundingClientRect();
+      if (e.clientX < wrapRect.left + 30) {
+        wrap.scrollLeft -= 14;
+      } else if (e.clientX > wrapRect.right - 30) {
+        wrap.scrollLeft += 14;
+      }
+    }
+
     let targetTime = this.getTimeAtX(e.clientX);
     const duration = this.audioBuffer.duration;
     targetTime = Math.max(0, Math.min(duration, targetTime));
@@ -357,34 +469,99 @@ export class MasterWaveformTimeline {
 
     targetTime = Math.round(targetTime * 10) / 10;
 
-    const stn = this.sentenceList.find(s => s.index === this.activeDrag.index);
+    const listIdx = this.activeDrag.listIdx;
+    const stn = this.sentenceList[listIdx];
     if (!stn) return;
 
-    if (this.activeDrag.edge === 'start') {
-      // Must be < audioEnd - 0.2
-      const maxStart = Math.max(0, (stn.audioEnd || duration) - 0.3);
-      stn.audioStart = Math.min(maxStart, targetTime);
-      stn.cachedPeaks = null;
-    } else {
-      // Must be > audioStart + 0.2
-      const minEnd = (stn.audioStart || 0) + 0.3;
-      stn.audioEnd = Math.max(minEnd, Math.min(duration, targetTime));
-      stn.cachedPeaks = null;
-    }
+    const minDur = 0.2; // Minimum sentence duration
 
-    this.draw();
+    if (this.activeDrag.edge === 'end') {
+      // S[listIdx] right boundary is moving.
+      // Contiguous with S[listIdx + 1] start: If S[listIdx] length expands, S[listIdx + 1] length shortens!
+      const nextStn = (listIdx < this.sentenceList.length - 1) ? this.sentenceList[listIdx + 1] : null;
 
-    if (typeof this.options.onSegmentChange === 'function') {
-      this.options.onSegmentChange(stn.index, stn.audioStart, stn.audioEnd, false);
+      const minBound = (stn.audioStart !== null ? stn.audioStart : 0) + minDur;
+      let maxBound = duration;
+      if (nextStn && nextStn.audioEnd !== null) {
+        maxBound = nextStn.audioEnd - minDur;
+      }
+
+      let clampedTime = Math.max(minBound, Math.min(maxBound, targetTime));
+      clampedTime = Math.round(clampedTime * 10) / 10;
+
+      stn.audioEnd = clampedTime;
+      stn.cachedPeaks = null;
+
+      if (nextStn) {
+        nextStn.audioStart = clampedTime;
+        nextStn.cachedPeaks = null;
+      }
+
+      this.draw();
+
+      if (typeof this.options.onSegmentChange === 'function') {
+        this.options.onSegmentChange(
+          stn.index,
+          stn.audioStart,
+          stn.audioEnd,
+          false,
+          nextStn ? { index: nextStn.index, audioStart: nextStn.audioStart, audioEnd: nextStn.audioEnd } : null
+        );
+      }
+    } else { // edge === 'start'
+      // S[listIdx] left boundary is moving.
+      // Contiguous with S[listIdx - 1] end: If S[listIdx] start moves left, S[listIdx - 1] end moves left!
+      const prevStn = (listIdx > 0) ? this.sentenceList[listIdx - 1] : null;
+
+      let minBound = 0;
+      if (prevStn && prevStn.audioStart !== null) {
+        minBound = prevStn.audioStart + minDur;
+      }
+      const maxBound = (stn.audioEnd !== null ? stn.audioEnd : duration) - minDur;
+
+      let clampedTime = Math.max(minBound, Math.min(maxBound, targetTime));
+      clampedTime = Math.round(clampedTime * 10) / 10;
+
+      stn.audioStart = clampedTime;
+      stn.cachedPeaks = null;
+
+      if (prevStn) {
+        prevStn.audioEnd = clampedTime;
+        prevStn.cachedPeaks = null;
+      }
+
+      this.draw();
+
+      if (typeof this.options.onSegmentChange === 'function') {
+        this.options.onSegmentChange(
+          stn.index,
+          stn.audioStart,
+          stn.audioEnd,
+          false,
+          prevStn ? { index: prevStn.index, audioStart: prevStn.audioStart, audioEnd: prevStn.audioEnd } : null
+        );
+      }
     }
   }
 
   handleWindowMouseUp(e) {
     if (!this.activeDrag) return;
 
-    const stn = this.sentenceList.find(s => s.index === this.activeDrag.index);
+    const listIdx = this.activeDrag.listIdx;
+    const edge = this.activeDrag.edge;
+    const stn = this.sentenceList[listIdx];
+    const adjStn = edge === 'end'
+      ? (listIdx < this.sentenceList.length - 1 ? this.sentenceList[listIdx + 1] : null)
+      : (listIdx > 0 ? this.sentenceList[listIdx - 1] : null);
+
     if (stn && typeof this.options.onSegmentChange === 'function') {
-      this.options.onSegmentChange(stn.index, stn.audioStart, stn.audioEnd, true);
+      this.options.onSegmentChange(
+        stn.index,
+        stn.audioStart,
+        stn.audioEnd,
+        true,
+        adjStn ? { index: adjStn.index, audioStart: adjStn.audioStart, audioEnd: adjStn.audioEnd } : null
+      );
     }
 
     this.activeDrag = null;
@@ -428,6 +605,19 @@ export class MasterWaveformTimeline {
   setPlayheadTime(time) {
     this.playbackTime = time;
     this.draw();
+
+    // Auto-follow playhead if zoomed in
+    if (this.zoomLevel > 1.0 && this.audioBuffer && this.canvas && this.canvas.parentElement) {
+      const wrap = this.canvas.parentElement;
+      const duration = this.audioBuffer.duration;
+      const playheadX = (time / duration) * this.canvas.width;
+      const wrapW = wrap.clientWidth;
+      const curScroll = wrap.scrollLeft;
+
+      if (playheadX > curScroll + wrapW * 0.75 || playheadX < curScroll) {
+        wrap.scrollLeft = Math.max(0, playheadX - wrapW * 0.25);
+      }
+    }
   }
 
   formatSec(sec) {

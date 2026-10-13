@@ -1163,6 +1163,21 @@ class AppState {
     this.emit('sentencesLoaded', this.sentenceList);
   }
 
+  reset() {
+    this.uploadedAudioFile = null;
+    this.uploadedAudioUrl = null;
+    this.audioBuffer = null;
+    this.isSynthesizedAudio = false;
+    this.synthesizedWavBlob = null;
+    this.scriptText = '';
+    this.sentenceList = [];
+    this.activeSentenceIndex = 0;
+    this.dataVersion++;
+    this.clearLoop();
+    this.emit('sentencesLoaded', []);
+    this.emit('stateReset');
+  }
+
   setActiveSentenceIndex(idx) {
     if (idx < 0 || idx >= this.sentenceList.length) return;
     this.activeSentenceIndex = idx;
@@ -2981,7 +2996,8 @@ class WaveformRenderer {
 /**
  * Master Audio Waveform & Sentence Segment Selector
  * Renders full-audio PCM timeline in Stage 1 Input View with interactive
- * draggable sentence segment boundaries, silence snapping, and click-to-preview.
+ * draggable sentence segment boundaries, Ctrl+Wheel zoom, non-overlapping lockstep
+ * boundary editing, silence snapping, and click-to-preview.
  */
 
 
@@ -2996,10 +3012,16 @@ class MasterWaveformTimeline {
     this.options = options;
 
     this.peaks = [];
-    this.totalBars = 600;
-    this.hoverInfo = null; // { type: 'boundary'|'segment', index: number, edge: 'start'|'end' }
-    this.activeDrag = null; // { index: number, edge: 'start'|'end', startX: number, origTime: number }
+    this.totalBars = 1200; // High-resolution peak buffer
+    this.hoverInfo = null; // { type: 'boundary'|'segment', index: number, listIdx: number, edge: 'start'|'end' }
+    this.activeDrag = null; // { index: number, listIdx: number, edge: 'start'|'end', startX: number }
     this.snapEnabled = true;
+
+    // Zoom state
+    this.zoomLevel = 1.0;
+    this.minZoom = 1.0;
+    this.maxZoom = 10.0;
+    this.baseWidth = 0;
 
     this.playbackTime = null;
     this.isPlaying = false;
@@ -3023,6 +3045,7 @@ class MasterWaveformTimeline {
     if (audioBuffer) {
       this.extractPeaks();
     }
+    this.syncCanvasSize();
     this.draw();
   }
 
@@ -3049,11 +3072,9 @@ class MasterWaveformTimeline {
         const end = Math.min(start + blockSize, totalSamples);
         let sum = 0;
         const step = Math.max(1, Math.floor(blockSize / 64));
-        let count = 0;
         for (let j = start; j < end; j += step) {
           const val = Math.abs(rawData[j]);
           if (val > sum) sum = val;
-          count++;
         }
         peaks.push(sum);
         if (sum > maxVal) maxVal = sum;
@@ -3082,15 +3103,26 @@ class MasterWaveformTimeline {
     const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
 
     // 1. Background Grid & Glass styling
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
     ctx.fillRect(0, 0, w, h);
 
-    // Subtle time division grid lines every 5 seconds (or 1s for short audio)
-    const timeStep = duration > 30 ? 5 : (duration > 10 ? 2 : 1);
+    // Dynamic time division grid lines based on zoom and duration
+    const pxPerSec = w / duration;
+    let timeStep = 5;
+    if (pxPerSec > 160) {
+      timeStep = 0.5;
+    } else if (pxPerSec > 80) {
+      timeStep = 1;
+    } else if (pxPerSec > 35) {
+      timeStep = 2;
+    } else {
+      timeStep = 5;
+    }
+
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
     ctx.font = '9px monospace';
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.65)';
 
     for (let t = 0; t <= duration; t += timeStep) {
       const x = Math.round((t / duration) * w);
@@ -3100,7 +3132,8 @@ class MasterWaveformTimeline {
       ctx.stroke();
 
       if (t > 0 && x < w - 24) {
-        ctx.fillText(`${t}s`, x + 2, 11);
+        const text = Number.isInteger(t) ? `${t}s` : `${t.toFixed(1)}s`;
+        ctx.fillText(text, x + 2, 11);
       }
     }
 
@@ -3108,7 +3141,7 @@ class MasterWaveformTimeline {
     if (this.peaks.length > 0) {
       const numBars = this.peaks.length;
       const barSpacing = w / numBars;
-      const barWidth = Math.max(1, barSpacing * 0.72);
+      const barWidth = Math.max(1, barSpacing * 0.75);
       const halfH = h / 2;
 
       for (let i = 0; i < numBars; i++) {
@@ -3127,14 +3160,14 @@ class MasterWaveformTimeline {
     validSentences.forEach((stn, idx) => {
       const startX = Math.round((stn.audioStart / duration) * w);
       const endX = Math.round((stn.audioEnd / duration) * w);
-      const segW = Math.max(4, endX - startX);
+      const segW = Math.max(2, endX - startX);
       const color = this.colors[idx % this.colors.length];
 
       const isHovered = this.hoverInfo && this.hoverInfo.index === stn.index;
       const isDragging = this.activeDrag && this.activeDrag.index === stn.index;
 
       // Segment Background
-      ctx.fillStyle = (isHovered || isDragging) ? color.fill.replace('0.18', '0.32') : color.fill;
+      ctx.fillStyle = (isHovered || isDragging) ? color.fill.replace('0.18', '0.34') : color.fill;
       ctx.fillRect(startX, 0, segW, h);
 
       // Top Header Border
@@ -3213,6 +3246,23 @@ class MasterWaveformTimeline {
       }
     });
 
+    // Ctrl + Mouse Wheel Zoom Listener
+    const wrap = this.canvas.parentElement || this.canvas;
+    wrap.addEventListener('wheel', (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
+        const rect = wrap.getBoundingClientRect();
+        const mouseViewportX = e.clientX - rect.left;
+        const contentX = wrap.scrollLeft + mouseViewportX;
+        const anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+
+        const factor = e.deltaY < 0 ? 1.25 : 0.8;
+        const nextZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoomLevel * factor));
+        this.setZoom(nextZoom, anchorTime, mouseViewportX);
+      }
+    }, { passive: false });
+
     // Handle container resize
     if (typeof ResizeObserver !== 'undefined' && this.canvas.parentElement) {
       this.resizeObserver = new ResizeObserver(() => {
@@ -3224,11 +3274,65 @@ class MasterWaveformTimeline {
 
   syncCanvasSize() {
     if (!this.canvas || !this.canvas.parentElement) return;
-    const rect = this.canvas.parentElement.getBoundingClientRect();
-    const newW = Math.floor(rect.width);
-    if (newW > 0 && newW !== this.canvas.width) {
-      this.canvas.width = newW;
-      this.draw();
+    const wrap = this.canvas.parentElement;
+    const baseW = Math.floor(wrap.clientWidth);
+    if (baseW > 0) {
+      this.baseWidth = baseW;
+      const targetW = Math.round(baseW * this.zoomLevel);
+      if (targetW !== this.canvas.width) {
+        this.canvas.width = targetW;
+        if (this.zoomLevel > 1.0) {
+          this.canvas.style.width = `${targetW}px`;
+        } else {
+          this.canvas.style.width = '100%';
+        }
+        this.draw();
+      }
+    }
+  }
+
+  /**
+   * Adjust horizontal zoom level
+   * @param {number} level Zoom multiplier (1.0 to 10.0)
+   * @param {number|null} anchorTime Time position in seconds to center zoom on
+   * @param {number|null} anchorViewportX Horizontal mouse offset inside container
+   */
+  setZoom(level, anchorTime = null, anchorViewportX = null) {
+    const clamped = Math.max(this.minZoom, Math.min(this.maxZoom, Math.round(level * 10) / 10));
+    const wrap = this.canvas.parentElement;
+    const baseW = (wrap && wrap.clientWidth > 0) ? wrap.clientWidth : (this.baseWidth || 800);
+    this.baseWidth = baseW;
+
+    const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
+
+    // If anchor is not provided, anchor to center of visible container
+    if (anchorTime === null && wrap) {
+      const mouseViewportX = wrap.clientWidth / 2;
+      const contentX = wrap.scrollLeft + mouseViewportX;
+      anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+      anchorViewportX = mouseViewportX;
+    }
+
+    this.zoomLevel = clamped;
+    const newWidth = Math.round(baseW * this.zoomLevel);
+    this.canvas.width = newWidth;
+
+    if (this.zoomLevel > 1.0) {
+      this.canvas.style.width = `${newWidth}px`;
+    } else {
+      this.canvas.style.width = '100%';
+    }
+
+    // Preserve anchor point under view
+    if (wrap && anchorTime !== null && anchorViewportX !== null) {
+      const newContentX = (anchorTime / duration) * newWidth;
+      wrap.scrollLeft = Math.max(0, newContentX - anchorViewportX);
+    }
+
+    this.draw();
+
+    if (typeof this.options.onZoomChange === 'function') {
+      this.options.onZoomChange(this.zoomLevel);
     }
   }
 
@@ -3248,7 +3352,7 @@ class MasterWaveformTimeline {
     const x = e.clientX - rect.left;
     const w = rect.width;
     const duration = this.audioBuffer.duration;
-    const thresholdPx = 8;
+    const thresholdPx = 10;
 
     let found = null;
 
@@ -3261,11 +3365,11 @@ class MasterWaveformTimeline {
       const endX = (stn.audioEnd / duration) * w;
 
       if (Math.abs(x - startX) <= thresholdPx) {
-        found = { type: 'boundary', index: stn.index, edge: 'start' };
+        found = { type: 'boundary', index: stn.index, listIdx: i, edge: 'start' };
         break;
       }
       if (Math.abs(x - endX) <= thresholdPx) {
-        found = { type: 'boundary', index: stn.index, edge: 'end' };
+        found = { type: 'boundary', index: stn.index, listIdx: i, edge: 'end' };
         break;
       }
     }
@@ -3278,7 +3382,7 @@ class MasterWaveformTimeline {
         const startX = (stn.audioStart / duration) * w;
         const endX = (stn.audioEnd / duration) * w;
         if (x >= startX && x <= endX) {
-          found = { type: 'segment', index: stn.index };
+          found = { type: 'segment', index: stn.index, listIdx: i };
           break;
         }
       }
@@ -3287,10 +3391,20 @@ class MasterWaveformTimeline {
     this.hoverInfo = found;
     if (found && found.type === 'boundary') {
       this.canvas.style.cursor = 'col-resize';
+      const i = found.listIdx;
+      if (found.edge === 'end' && i < this.sentenceList.length - 1) {
+        this.canvas.title = `경계 조절: S${i + 1} 늘림/줄임 시 S${i + 2} 시작 위치 자동 연동`;
+      } else if (found.edge === 'start' && i > 0) {
+        this.canvas.title = `경계 조절: S${i + 1} 시작 조절 시 S${i} 끝 위치 자동 연동`;
+      } else {
+        this.canvas.title = `문장 S${found.index + 1} 경계 조절`;
+      }
     } else if (found && found.type === 'segment') {
       this.canvas.style.cursor = 'pointer';
+      this.canvas.title = `클릭하여 문장 S${found.index + 1} 오디오 구간 청취`;
     } else {
       this.canvas.style.cursor = 'default';
+      this.canvas.title = '';
     }
 
     this.draw();
@@ -3298,14 +3412,16 @@ class MasterWaveformTimeline {
 
   handleMouseDown(e) {
     if (!this.audioBuffer || !this.sentenceList.length) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
 
     if (this.hoverInfo && this.hoverInfo.type === 'boundary') {
-      const stn = this.sentenceList.find(s => s.index === this.hoverInfo.index);
+      const listIdx = this.hoverInfo.listIdx !== undefined 
+        ? this.hoverInfo.listIdx 
+        : this.sentenceList.findIndex(s => s.index === this.hoverInfo.index);
+      const stn = this.sentenceList[listIdx];
       if (stn) {
         this.activeDrag = {
           index: stn.index,
+          listIdx: listIdx,
           edge: this.hoverInfo.edge,
           startX: e.clientX,
           origStart: stn.audioStart,
@@ -3327,6 +3443,17 @@ class MasterWaveformTimeline {
   handleWindowMouseMove(e) {
     if (!this.activeDrag || !this.audioBuffer) return;
 
+    // Auto-scroll container when dragging near viewport edges if zoomed in
+    if (this.zoomLevel > 1.0 && this.canvas.parentElement) {
+      const wrap = this.canvas.parentElement;
+      const wrapRect = wrap.getBoundingClientRect();
+      if (e.clientX < wrapRect.left + 30) {
+        wrap.scrollLeft -= 14;
+      } else if (e.clientX > wrapRect.right - 30) {
+        wrap.scrollLeft += 14;
+      }
+    }
+
     let targetTime = this.getTimeAtX(e.clientX);
     const duration = this.audioBuffer.duration;
     targetTime = Math.max(0, Math.min(duration, targetTime));
@@ -3337,34 +3464,99 @@ class MasterWaveformTimeline {
 
     targetTime = Math.round(targetTime * 10) / 10;
 
-    const stn = this.sentenceList.find(s => s.index === this.activeDrag.index);
+    const listIdx = this.activeDrag.listIdx;
+    const stn = this.sentenceList[listIdx];
     if (!stn) return;
 
-    if (this.activeDrag.edge === 'start') {
-      // Must be < audioEnd - 0.2
-      const maxStart = Math.max(0, (stn.audioEnd || duration) - 0.3);
-      stn.audioStart = Math.min(maxStart, targetTime);
-      stn.cachedPeaks = null;
-    } else {
-      // Must be > audioStart + 0.2
-      const minEnd = (stn.audioStart || 0) + 0.3;
-      stn.audioEnd = Math.max(minEnd, Math.min(duration, targetTime));
-      stn.cachedPeaks = null;
-    }
+    const minDur = 0.2; // Minimum sentence duration
 
-    this.draw();
+    if (this.activeDrag.edge === 'end') {
+      // S[listIdx] right boundary is moving.
+      // Contiguous with S[listIdx + 1] start: If S[listIdx] length expands, S[listIdx + 1] length shortens!
+      const nextStn = (listIdx < this.sentenceList.length - 1) ? this.sentenceList[listIdx + 1] : null;
 
-    if (typeof this.options.onSegmentChange === 'function') {
-      this.options.onSegmentChange(stn.index, stn.audioStart, stn.audioEnd, false);
+      const minBound = (stn.audioStart !== null ? stn.audioStart : 0) + minDur;
+      let maxBound = duration;
+      if (nextStn && nextStn.audioEnd !== null) {
+        maxBound = nextStn.audioEnd - minDur;
+      }
+
+      let clampedTime = Math.max(minBound, Math.min(maxBound, targetTime));
+      clampedTime = Math.round(clampedTime * 10) / 10;
+
+      stn.audioEnd = clampedTime;
+      stn.cachedPeaks = null;
+
+      if (nextStn) {
+        nextStn.audioStart = clampedTime;
+        nextStn.cachedPeaks = null;
+      }
+
+      this.draw();
+
+      if (typeof this.options.onSegmentChange === 'function') {
+        this.options.onSegmentChange(
+          stn.index,
+          stn.audioStart,
+          stn.audioEnd,
+          false,
+          nextStn ? { index: nextStn.index, audioStart: nextStn.audioStart, audioEnd: nextStn.audioEnd } : null
+        );
+      }
+    } else { // edge === 'start'
+      // S[listIdx] left boundary is moving.
+      // Contiguous with S[listIdx - 1] end: If S[listIdx] start moves left, S[listIdx - 1] end moves left!
+      const prevStn = (listIdx > 0) ? this.sentenceList[listIdx - 1] : null;
+
+      let minBound = 0;
+      if (prevStn && prevStn.audioStart !== null) {
+        minBound = prevStn.audioStart + minDur;
+      }
+      const maxBound = (stn.audioEnd !== null ? stn.audioEnd : duration) - minDur;
+
+      let clampedTime = Math.max(minBound, Math.min(maxBound, targetTime));
+      clampedTime = Math.round(clampedTime * 10) / 10;
+
+      stn.audioStart = clampedTime;
+      stn.cachedPeaks = null;
+
+      if (prevStn) {
+        prevStn.audioEnd = clampedTime;
+        prevStn.cachedPeaks = null;
+      }
+
+      this.draw();
+
+      if (typeof this.options.onSegmentChange === 'function') {
+        this.options.onSegmentChange(
+          stn.index,
+          stn.audioStart,
+          stn.audioEnd,
+          false,
+          prevStn ? { index: prevStn.index, audioStart: prevStn.audioStart, audioEnd: prevStn.audioEnd } : null
+        );
+      }
     }
   }
 
   handleWindowMouseUp(e) {
     if (!this.activeDrag) return;
 
-    const stn = this.sentenceList.find(s => s.index === this.activeDrag.index);
+    const listIdx = this.activeDrag.listIdx;
+    const edge = this.activeDrag.edge;
+    const stn = this.sentenceList[listIdx];
+    const adjStn = edge === 'end'
+      ? (listIdx < this.sentenceList.length - 1 ? this.sentenceList[listIdx + 1] : null)
+      : (listIdx > 0 ? this.sentenceList[listIdx - 1] : null);
+
     if (stn && typeof this.options.onSegmentChange === 'function') {
-      this.options.onSegmentChange(stn.index, stn.audioStart, stn.audioEnd, true);
+      this.options.onSegmentChange(
+        stn.index,
+        stn.audioStart,
+        stn.audioEnd,
+        true,
+        adjStn ? { index: adjStn.index, audioStart: adjStn.audioStart, audioEnd: adjStn.audioEnd } : null
+      );
     }
 
     this.activeDrag = null;
@@ -3408,6 +3600,19 @@ class MasterWaveformTimeline {
   setPlayheadTime(time) {
     this.playbackTime = time;
     this.draw();
+
+    // Auto-follow playhead if zoomed in
+    if (this.zoomLevel > 1.0 && this.audioBuffer && this.canvas && this.canvas.parentElement) {
+      const wrap = this.canvas.parentElement;
+      const duration = this.audioBuffer.duration;
+      const playheadX = (time / duration) * this.canvas.width;
+      const wrapW = wrap.clientWidth;
+      const curScroll = wrap.scrollLeft;
+
+      if (playheadX > curScroll + wrapW * 0.75 || playheadX < curScroll) {
+        wrap.scrollLeft = Math.max(0, playheadX - wrapW * 0.25);
+      }
+    }
   }
 
   formatSec(sec) {
@@ -3658,6 +3863,10 @@ class PlaybackController {
       player.pause();
     }
   }
+
+  stopAll() {
+    this.stop();
+  }
 }
 
 const playbackController = new PlaybackController();
@@ -3770,6 +3979,15 @@ class ProjectService {
   markClean(name = this.currentProjectName) {
     this.isDirty = false;
     this.currentProjectName = name;
+    this.notifyStateChange();
+  }
+
+  resetProject() {
+    this.currentFileHandle = null;
+    this.currentProjectName = '새 프로젝트';
+    this.isDirty = false;
+    this.saveLastProjectMeta('새 프로젝트');
+    this.saveHandleToIDB('last_file_handle', null);
     this.notifyStateChange();
   }
 
@@ -5026,6 +5244,7 @@ class InputView {
     this.inputEnglish = document.getElementById('inputEnglish');
     this.charCount = document.getElementById('charCount');
     this.btnClear = document.getElementById('btnClear');
+    this.btnResetAllData = document.getElementById('btnResetAllData');
     this.btnTranslate = document.getElementById('btnTranslate');
     this.btnTranslateText = document.getElementById('btnTranslateText');
     this.presetChips = document.querySelectorAll('.preset-chip');
@@ -5061,22 +5280,42 @@ class InputView {
     this.masterPlayLabel = document.getElementById('masterPlayLabel');
     this.masterTimeHud = document.getElementById('masterTimeHud');
     this.btnSnapSilence = document.getElementById('btnSnapSilence');
+    this.btnMasterZoomOut = document.getElementById('btnMasterZoomOut');
+    this.masterZoomLabel = document.getElementById('masterZoomLabel');
+    this.btnMasterZoomIn = document.getElementById('btnMasterZoomIn');
 
     this.masterWaveform = null;
     if (this.masterWaveformCanvas) {
       this.masterWaveform = new MasterWaveformTimeline(this.masterWaveformCanvas, {
-        onSegmentChange: (idx, start, end, isFinal) => {
-          const stn = appState.sentenceList ? appState.sentenceList.find(s => s.index === idx) : null;
-          if (stn) {
-            stn.audioStart = start;
-            stn.audioEnd = end;
-            stn.cachedPeaks = null;
-            const timeBadge = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"] .stn-audio-time`) : null;
-            if (timeBadge) {
-              timeBadge.textContent = `⏱ ${this.formatSec(start)} ~ ${this.formatSec(end)}`;
+        onZoomChange: (zoom) => {
+          if (this.masterZoomLabel) {
+            this.masterZoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+          }
+        },
+        onSegmentChange: (idx, start, end, isFinal, adjInfo) => {
+          const updateStn = (stnIdx, sStart, sEnd) => {
+            const stn = appState.sentenceList ? appState.sentenceList.find(s => s.index === stnIdx) : null;
+            if (stn) {
+              stn.audioStart = sStart;
+              stn.audioEnd = sEnd;
+              stn.cachedPeaks = null;
+              const timeBadge = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${stnIdx}"] .stn-audio-time`) : null;
+              if (timeBadge) {
+                timeBadge.textContent = `⏱ ${this.formatSec(sStart)} ~ ${this.formatSec(sEnd)}`;
+              }
             }
-            if (isFinal) {
-              projectService.markDirty();
+          };
+
+          updateStn(idx, start, end);
+          if (adjInfo) {
+            updateStn(adjInfo.index, adjInfo.audioStart, adjInfo.audioEnd);
+          }
+
+          if (isFinal) {
+            projectService.markDirty();
+            if (adjInfo) {
+              toast.show(`⏱ 문장 S${idx + 1} & S${adjInfo.index + 1} 구간 자동 연동 완료!`);
+            } else {
               toast.show(`⏱ 문장 S${idx + 1} 구간: ${start}s ~ ${end}s`);
             }
           }
@@ -5099,6 +5338,13 @@ class InputView {
   }
 
   initEvents() {
+    // Data Reset Button (All data clear)
+    if (this.btnResetAllData) {
+      this.btnResetAllData.addEventListener('click', () => {
+        this.resetAllData();
+      });
+    }
+
     // Mode tabs
     this.modeTabs.forEach(tab => {
       tab.addEventListener('click', () => {
@@ -5233,6 +5479,32 @@ class InputView {
         const span = this.btnSnapSilence.querySelector('span');
         if (span) span.textContent = isActive ? '🧲 묵음 스냅 ON' : '🧲 묵음 스냅 OFF';
         toast.show(isActive ? '🧲 묵음 구간 자동 스냅이 활성화되었습니다.' : '묵음 구간 스냅이 비활성화되었습니다.');
+      });
+    }
+
+    // Master Waveform Zoom Controls
+    if (this.btnMasterZoomOut) {
+      this.btnMasterZoomOut.addEventListener('click', () => {
+        if (this.masterWaveform) {
+          this.masterWaveform.setZoom(this.masterWaveform.zoomLevel - 0.5);
+        }
+      });
+    }
+
+    if (this.btnMasterZoomIn) {
+      this.btnMasterZoomIn.addEventListener('click', () => {
+        if (this.masterWaveform) {
+          this.masterWaveform.setZoom(this.masterWaveform.zoomLevel + 0.5);
+        }
+      });
+    }
+
+    if (this.masterZoomLabel) {
+      this.masterZoomLabel.addEventListener('click', () => {
+        if (this.masterWaveform) {
+          this.masterWaveform.setZoom(1.0);
+          toast.show('🔍 파형 배율이 100% 원본으로 리셋되었습니다.');
+        }
       });
     }
 
@@ -5466,6 +5738,92 @@ class InputView {
       `;
     }
     toast.show('오디오 파일이 제거되었습니다.');
+  }
+
+  /**
+   * Reset and clear all loaded/saved data across the application
+   */
+  resetAllData() {
+    const hasData = (this.inputEnglish && this.inputEnglish.value.trim().length > 0) ||
+                    (appState.sentenceList && appState.sentenceList.length > 0) ||
+                    appState.uploadedAudioFile || appState.audioBuffer;
+
+    if (hasData) {
+      if (typeof confirm === 'function' && !confirm('현재 입력 및 불러온 모든 데이터(스크립트, 음성, 문장 구간)를 삭제하고 초기화하시겠습니까?')) {
+        return;
+      }
+    }
+
+    // 1. Stop any active audio playback
+    playbackController.stopAll();
+    if (this.nativeAudioPlayer) {
+      if (typeof this.nativeAudioPlayer.pause === 'function') this.nativeAudioPlayer.pause();
+      if (typeof this.nativeAudioPlayer.removeAttribute === 'function') this.nativeAudioPlayer.removeAttribute('src');
+      if (typeof this.nativeAudioPlayer.load === 'function') this.nativeAudioPlayer.load();
+    }
+
+    // 2. Reset Audio State & Drop Area
+    this.resetAudioFile();
+
+    // 3. Reset AppState
+    if (typeof appState.reset === 'function') {
+      appState.reset();
+    } else {
+      appState.uploadedAudioFile = null;
+      appState.uploadedAudioUrl = null;
+      appState.audioBuffer = null;
+      appState.isSynthesizedAudio = false;
+      appState.synthesizedWavBlob = null;
+      appState.scriptText = '';
+      appState.setSentenceList([]);
+    }
+
+    // 4. Reset Project Service
+    if (typeof projectService.resetProject === 'function') {
+      projectService.resetProject();
+    } else {
+      projectService.currentFileHandle = null;
+      projectService.currentProjectName = '새 프로젝트';
+      projectService.isDirty = false;
+      projectService.notifyStateChange();
+    }
+
+    // 5. Reset Script Input Area
+    if (this.inputEnglish) {
+      this.inputEnglish.value = '';
+      this.inputEnglish.focus();
+    }
+    if (this.charCount) {
+      this.charCount.textContent = '0자';
+    }
+
+    // 6. Reset Master Waveform Timeline
+    if (this.masterWaveform) {
+      this.masterWaveform.setAudioBuffer(null);
+      this.masterWaveform.setSentenceList([]);
+      this.masterWaveform.setZoom(1.0);
+    }
+    if (this.masterWaveformSection) {
+      this.masterWaveformSection.classList.add('hidden');
+    }
+    if (this.masterTimeHud) {
+      this.masterTimeHud.textContent = '00:00.0 / 00:00.0';
+    }
+    if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+    if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+
+    // 7. Hide Parsed Results Section
+    if (this.parsedResultsSection) {
+      this.parsedResultsSection.classList.add('hidden');
+    }
+    if (this.parsedSentenceList) {
+      this.parsedSentenceList.innerHTML = '';
+    }
+    if (this.resultsCountBadge) {
+      this.resultsCountBadge.textContent = '0개 문장';
+    }
+
+    toast.show('🔄 모든 데이터가 성공적으로 삭제되고 초기화되었습니다.');
   }
 
   /**
@@ -6073,11 +6431,28 @@ class InputView {
               stn.audioEnd = newEnd;
               stn.cachedPeaks = null;
               timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+
+              // Synchronize adjacent sentences so no overlap occurs
+              const prevStn = idx > 0 ? appState.sentenceList[idx - 1] : null;
+              const nextStn = idx < appState.sentenceList.length - 1 ? appState.sentenceList[idx + 1] : null;
+              if (prevStn && prevStn.audioEnd !== null && Math.abs(prevStn.audioEnd - newStart) > 0.05) {
+                prevStn.audioEnd = newStart;
+                prevStn.cachedPeaks = null;
+                const prevBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .stn-audio-time`);
+                if (prevBadge) prevBadge.textContent = `⏱ ${this.formatSec(prevStn.audioStart)} ~ ${this.formatSec(prevStn.audioEnd)}`;
+              }
+              if (nextStn && nextStn.audioStart !== null && Math.abs(nextStn.audioStart - newEnd) > 0.05) {
+                nextStn.audioStart = newEnd;
+                nextStn.cachedPeaks = null;
+                const nextBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx + 1}"] .stn-audio-time`);
+                if (nextBadge) nextBadge.textContent = `⏱ ${this.formatSec(nextStn.audioStart)} ~ ${this.formatSec(nextStn.audioEnd)}`;
+              }
+
               if (this.masterWaveform) {
                 this.masterWaveform.draw();
               }
               projectService.markDirty();
-              toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
+              toast.show(`⏱ 문장 S${idx + 1} 구간 수정 및 인접 문장 자동 연동 완료!`);
             });
           } else {
             // Fallback prompt if audio buffer not yet decoded

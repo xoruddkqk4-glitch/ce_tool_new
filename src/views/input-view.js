@@ -52,6 +52,7 @@ export class InputView {
     this.inputEnglish = document.getElementById('inputEnglish');
     this.charCount = document.getElementById('charCount');
     this.btnClear = document.getElementById('btnClear');
+    this.btnResetAllData = document.getElementById('btnResetAllData');
     this.btnTranslate = document.getElementById('btnTranslate');
     this.btnTranslateText = document.getElementById('btnTranslateText');
     this.presetChips = document.querySelectorAll('.preset-chip');
@@ -87,22 +88,42 @@ export class InputView {
     this.masterPlayLabel = document.getElementById('masterPlayLabel');
     this.masterTimeHud = document.getElementById('masterTimeHud');
     this.btnSnapSilence = document.getElementById('btnSnapSilence');
+    this.btnMasterZoomOut = document.getElementById('btnMasterZoomOut');
+    this.masterZoomLabel = document.getElementById('masterZoomLabel');
+    this.btnMasterZoomIn = document.getElementById('btnMasterZoomIn');
 
     this.masterWaveform = null;
     if (this.masterWaveformCanvas) {
       this.masterWaveform = new MasterWaveformTimeline(this.masterWaveformCanvas, {
-        onSegmentChange: (idx, start, end, isFinal) => {
-          const stn = appState.sentenceList ? appState.sentenceList.find(s => s.index === idx) : null;
-          if (stn) {
-            stn.audioStart = start;
-            stn.audioEnd = end;
-            stn.cachedPeaks = null;
-            const timeBadge = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"] .stn-audio-time`) : null;
-            if (timeBadge) {
-              timeBadge.textContent = `⏱ ${this.formatSec(start)} ~ ${this.formatSec(end)}`;
+        onZoomChange: (zoom) => {
+          if (this.masterZoomLabel) {
+            this.masterZoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+          }
+        },
+        onSegmentChange: (idx, start, end, isFinal, adjInfo) => {
+          const updateStn = (stnIdx, sStart, sEnd) => {
+            const stn = appState.sentenceList ? appState.sentenceList.find(s => s.index === stnIdx) : null;
+            if (stn) {
+              stn.audioStart = sStart;
+              stn.audioEnd = sEnd;
+              stn.cachedPeaks = null;
+              const timeBadge = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${stnIdx}"] .stn-audio-time`) : null;
+              if (timeBadge) {
+                timeBadge.textContent = `⏱ ${this.formatSec(sStart)} ~ ${this.formatSec(sEnd)}`;
+              }
             }
-            if (isFinal) {
-              projectService.markDirty();
+          };
+
+          updateStn(idx, start, end);
+          if (adjInfo) {
+            updateStn(adjInfo.index, adjInfo.audioStart, adjInfo.audioEnd);
+          }
+
+          if (isFinal) {
+            projectService.markDirty();
+            if (adjInfo) {
+              toast.show(`⏱ 문장 S${idx + 1} & S${adjInfo.index + 1} 구간 자동 연동 완료!`);
+            } else {
               toast.show(`⏱ 문장 S${idx + 1} 구간: ${start}s ~ ${end}s`);
             }
           }
@@ -125,6 +146,13 @@ export class InputView {
   }
 
   initEvents() {
+    // Data Reset Button (All data clear)
+    if (this.btnResetAllData) {
+      this.btnResetAllData.addEventListener('click', () => {
+        this.resetAllData();
+      });
+    }
+
     // Mode tabs
     this.modeTabs.forEach(tab => {
       tab.addEventListener('click', () => {
@@ -259,6 +287,32 @@ export class InputView {
         const span = this.btnSnapSilence.querySelector('span');
         if (span) span.textContent = isActive ? '🧲 묵음 스냅 ON' : '🧲 묵음 스냅 OFF';
         toast.show(isActive ? '🧲 묵음 구간 자동 스냅이 활성화되었습니다.' : '묵음 구간 스냅이 비활성화되었습니다.');
+      });
+    }
+
+    // Master Waveform Zoom Controls
+    if (this.btnMasterZoomOut) {
+      this.btnMasterZoomOut.addEventListener('click', () => {
+        if (this.masterWaveform) {
+          this.masterWaveform.setZoom(this.masterWaveform.zoomLevel - 0.5);
+        }
+      });
+    }
+
+    if (this.btnMasterZoomIn) {
+      this.btnMasterZoomIn.addEventListener('click', () => {
+        if (this.masterWaveform) {
+          this.masterWaveform.setZoom(this.masterWaveform.zoomLevel + 0.5);
+        }
+      });
+    }
+
+    if (this.masterZoomLabel) {
+      this.masterZoomLabel.addEventListener('click', () => {
+        if (this.masterWaveform) {
+          this.masterWaveform.setZoom(1.0);
+          toast.show('🔍 파형 배율이 100% 원본으로 리셋되었습니다.');
+        }
       });
     }
 
@@ -492,6 +546,92 @@ export class InputView {
       `;
     }
     toast.show('오디오 파일이 제거되었습니다.');
+  }
+
+  /**
+   * Reset and clear all loaded/saved data across the application
+   */
+  resetAllData() {
+    const hasData = (this.inputEnglish && this.inputEnglish.value.trim().length > 0) ||
+                    (appState.sentenceList && appState.sentenceList.length > 0) ||
+                    appState.uploadedAudioFile || appState.audioBuffer;
+
+    if (hasData) {
+      if (typeof confirm === 'function' && !confirm('현재 입력 및 불러온 모든 데이터(스크립트, 음성, 문장 구간)를 삭제하고 초기화하시겠습니까?')) {
+        return;
+      }
+    }
+
+    // 1. Stop any active audio playback
+    playbackController.stopAll();
+    if (this.nativeAudioPlayer) {
+      if (typeof this.nativeAudioPlayer.pause === 'function') this.nativeAudioPlayer.pause();
+      if (typeof this.nativeAudioPlayer.removeAttribute === 'function') this.nativeAudioPlayer.removeAttribute('src');
+      if (typeof this.nativeAudioPlayer.load === 'function') this.nativeAudioPlayer.load();
+    }
+
+    // 2. Reset Audio State & Drop Area
+    this.resetAudioFile();
+
+    // 3. Reset AppState
+    if (typeof appState.reset === 'function') {
+      appState.reset();
+    } else {
+      appState.uploadedAudioFile = null;
+      appState.uploadedAudioUrl = null;
+      appState.audioBuffer = null;
+      appState.isSynthesizedAudio = false;
+      appState.synthesizedWavBlob = null;
+      appState.scriptText = '';
+      appState.setSentenceList([]);
+    }
+
+    // 4. Reset Project Service
+    if (typeof projectService.resetProject === 'function') {
+      projectService.resetProject();
+    } else {
+      projectService.currentFileHandle = null;
+      projectService.currentProjectName = '새 프로젝트';
+      projectService.isDirty = false;
+      projectService.notifyStateChange();
+    }
+
+    // 5. Reset Script Input Area
+    if (this.inputEnglish) {
+      this.inputEnglish.value = '';
+      this.inputEnglish.focus();
+    }
+    if (this.charCount) {
+      this.charCount.textContent = '0자';
+    }
+
+    // 6. Reset Master Waveform Timeline
+    if (this.masterWaveform) {
+      this.masterWaveform.setAudioBuffer(null);
+      this.masterWaveform.setSentenceList([]);
+      this.masterWaveform.setZoom(1.0);
+    }
+    if (this.masterWaveformSection) {
+      this.masterWaveformSection.classList.add('hidden');
+    }
+    if (this.masterTimeHud) {
+      this.masterTimeHud.textContent = '00:00.0 / 00:00.0';
+    }
+    if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+    if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+
+    // 7. Hide Parsed Results Section
+    if (this.parsedResultsSection) {
+      this.parsedResultsSection.classList.add('hidden');
+    }
+    if (this.parsedSentenceList) {
+      this.parsedSentenceList.innerHTML = '';
+    }
+    if (this.resultsCountBadge) {
+      this.resultsCountBadge.textContent = '0개 문장';
+    }
+
+    toast.show('🔄 모든 데이터가 성공적으로 삭제되고 초기화되었습니다.');
   }
 
   /**
@@ -1099,11 +1239,28 @@ export class InputView {
               stn.audioEnd = newEnd;
               stn.cachedPeaks = null;
               timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
+
+              // Synchronize adjacent sentences so no overlap occurs
+              const prevStn = idx > 0 ? appState.sentenceList[idx - 1] : null;
+              const nextStn = idx < appState.sentenceList.length - 1 ? appState.sentenceList[idx + 1] : null;
+              if (prevStn && prevStn.audioEnd !== null && Math.abs(prevStn.audioEnd - newStart) > 0.05) {
+                prevStn.audioEnd = newStart;
+                prevStn.cachedPeaks = null;
+                const prevBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .stn-audio-time`);
+                if (prevBadge) prevBadge.textContent = `⏱ ${this.formatSec(prevStn.audioStart)} ~ ${this.formatSec(prevStn.audioEnd)}`;
+              }
+              if (nextStn && nextStn.audioStart !== null && Math.abs(nextStn.audioStart - newEnd) > 0.05) {
+                nextStn.audioStart = newEnd;
+                nextStn.cachedPeaks = null;
+                const nextBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx + 1}"] .stn-audio-time`);
+                if (nextBadge) nextBadge.textContent = `⏱ ${this.formatSec(nextStn.audioStart)} ~ ${this.formatSec(nextStn.audioEnd)}`;
+              }
+
               if (this.masterWaveform) {
                 this.masterWaveform.draw();
               }
               projectService.markDirty();
-              toast.show(`⏱ 문장 S${idx + 1} 구간 수정: ${stn.audioStart}s ~ ${stn.audioEnd}s`);
+              toast.show(`⏱ 문장 S${idx + 1} 구간 수정 및 인접 문장 자동 연동 완료!`);
             });
           } else {
             // Fallback prompt if audio buffer not yet decoded

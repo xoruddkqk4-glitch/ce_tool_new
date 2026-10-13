@@ -84,6 +84,21 @@ export class AppState {
     this.emit('sentencesLoaded', this.sentenceList);
   }
 
+  reset() {
+    this.uploadedAudioFile = null;
+    this.uploadedAudioUrl = null;
+    this.audioBuffer = null;
+    this.isSynthesizedAudio = false;
+    this.synthesizedWavBlob = null;
+    this.scriptText = '';
+    this.sentenceList = [];
+    this.activeSentenceIndex = 0;
+    this.dataVersion++;
+    this.clearLoop();
+    this.emit('sentencesLoaded', []);
+    this.emit('stateReset');
+  }
+
   setActiveSentenceIndex(idx) {
     if (idx < 0 || idx >= this.sentenceList.length) return;
     this.activeSentenceIndex = idx;

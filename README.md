@@ -523,6 +523,35 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 28/28개 테스트 스위트 100% 통과 (14.3초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
+## [2026-10-13 20:50] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **1단계 전체 오디오 문장 구간 편집기 파형 창 상단 고정 (Sticky Header, `styles/views/input-view.css`)**:
+     - `.master-waveform-panel`에 `position: sticky; top: 66px; z-index: 95;`와 고해상도 백드롭 블러(`backdrop-filter: blur(20px)`) 및 딥 섀도우를 적용.
+     - 하단 문장 카드들(S1, S2, ...)을 아래로 스크롤하여 검토하거나 편집할 때도 마스터 파형 창이 상단에 고정되어 항상 전체 오디오 흐름을 참조 가능하도록 개선.
+  2. **Ctrl + 마우스 휠 파형 확대/축소 및 컨트롤 연동 (`src/audio/master-waveform.js`, `index.html`, `styles/views/input-view.css`)**:
+     - `Ctrl + 마우스 휠` 회전 시 브라우저 확대 대신 마우스 커서 위치를 기준점으로 삼아 파형 타임라인을 가로로 정밀 확대/축소(`1.0x` ~ `10.0x`)하는 기능 구현.
+     - 상단 컨트롤 바에 `[ ➖ ]`, `[ 100% ]`, `[ ➕ ]` 배율 조절 버튼을 추가하여 클릭으로도 확대/축소 및 100% 원본 배율 즉시 리셋 지원.
+     - 확대된 상태에서 재생 시 재생선(Playhead) 위치를 감지하여 캔버스 스크롤이 자동으로 따라가는 Auto-follow 뷰포트 추종 기능 구현.
+     - 배율에 따라 0.5초 / 1초 / 2초 단위의 세부 시간 눈금 및 타임스탬프 동적 렌더링.
+  3. **인접 문장 간 음성 겹침 방지 및 실시간 연동 (Non-Overlapping Lockstep Boundary, `src/audio/master-waveform.js`, `src/views/input-view.js`)**:
+     - 문장 간 오디오가 겹치지 않는 프로젝트 특성에 맞추어, S1의 끝(우측 경계)을 늘리면 인접한 S2의 시작점이 자동으로 밀려나며 길이가 줄어들도록 완벽 연동(Lockstep).
+     - 반대로 S2의 시작점(좌측 경계)을 늘리거나 줄이면 S1의 끝점이 함께 움직이며, 각 문장별 최소 재생 길이(0.2초) 보장 클램핑 적용.
+     - 마우스 드래그 중 및 드래그 종료 시 1단계 목록 내 두 문장의 시간 배지(`⏱`)와 `appState` 데이터가 실시간으로 동시 동기화.
+     - `SentenceTrimmerModal` 팝업을 통한 수치 변경 시에도 인접 문장과 자동 연동되도록 동기화.
+  4. **1단계 입력 화면 '데이터 새로고침' 버튼 신규 추가 (`index.html`, `styles/views/input-view.css`, `src/views/input-view.js`, `src/core/app-state.js`, `src/services/project-service.js`)**:
+     - `.mode-selector-bar` 내 `🎧 mp3 음성 + 📝 script` 버튼 좌측에 `btnResetAllData` 버튼 신규 배치 (`🔄 데이터 새로고침`).
+     - 은은한 로즈/레드 톤 글래스 스타일링(`btn-data-reset`)을 적용하여 데이터 초기화 기능임을 직관적으로 식별 가능하도록 설계.
+     - 오작동 방지 브라우저 확인창(`confirm`) 확인 후, 오디오 정지, Blob URL 해제, `appState.reset()`, `projectService.resetProject()`, 텍스트 입력창 비우기, 마스터 파형 창 및 문장 검토/청크 편집 카드 영역 전체 초기화 로직 구현.
+     - `appState.reset()`, `projectService.resetProject()`, `playbackController.stopAll()` 표준 메서드 완비.
+  5. **단독 배포 번들 최신화 및 신규 자동화 테스트 완비 (`tools/build-standalone.js`, `scratch/`)**:
+     - `scratch/test_master_waveform_zoom_and_lockstep.js` (파형 가로 줌 배율 및 인접 문장 연동 검증) 및 `scratch/test_data_reset_button.js` (데이터 새로고침 전체 초기화 검증) 신규 추가.
+     - `app.js` (347.2 KB), `styles.css` (82.4 KB) 단독 실행 번들 패키징 완료.
+- **검증 결과**:
+  - `npm run check`: 28개 전체 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 전체 30/30개 테스트 스위트 100% 통과 (17.5초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
+
+
 
 
 

@@ -60,6 +60,15 @@ export class ProjectService {
     this.notifyStateChange();
   }
 
+  resetProject() {
+    this.currentFileHandle = null;
+    this.currentProjectName = '새 프로젝트';
+    this.isDirty = false;
+    this.saveLastProjectMeta('새 프로젝트');
+    this.saveHandleToIDB('last_file_handle', null);
+    this.notifyStateChange();
+  }
+
   /* -------------------------------------------------------------------------
    * IndexedDB Persistence for Handles & Metadata
    * ------------------------------------------------------------------------- */
