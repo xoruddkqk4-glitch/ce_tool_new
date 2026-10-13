@@ -23,3 +23,54 @@ export const CONSTANTS = {
     'gemini-2.5-pro'
   ]
 };
+
+export const WAVEFORM_SEGMENT_COLORS = [
+  {
+    fill: 'rgba(99, 102, 241, 0.18)',
+    stroke: 'rgba(129, 140, 248, 0.85)',
+    tag: '#818cf8',
+    glow: 'rgba(99, 102, 241, 0.45)',
+    bgTint: 'rgba(99, 102, 241, 0.10)',
+    badgeBg: 'rgba(99, 102, 241, 0.28)'
+  }, // S1: Indigo
+  {
+    fill: 'rgba(16, 185, 129, 0.18)',
+    stroke: 'rgba(52, 211, 153, 0.85)',
+    tag: '#34d399',
+    glow: 'rgba(16, 185, 129, 0.45)',
+    bgTint: 'rgba(16, 185, 129, 0.10)',
+    badgeBg: 'rgba(16, 185, 129, 0.28)'
+  }, // S2: Emerald
+  {
+    fill: 'rgba(245, 158, 11, 0.18)',
+    stroke: 'rgba(251, 191, 36, 0.85)',
+    tag: '#fbbf24',
+    glow: 'rgba(245, 158, 11, 0.45)',
+    bgTint: 'rgba(245, 158, 11, 0.10)',
+    badgeBg: 'rgba(245, 158, 11, 0.28)'
+  }, // S3: Amber
+  {
+    fill: 'rgba(236, 72, 153, 0.18)',
+    stroke: 'rgba(244, 114, 182, 0.85)',
+    tag: '#f472b6',
+    glow: 'rgba(236, 72, 153, 0.45)',
+    bgTint: 'rgba(236, 72, 153, 0.10)',
+    badgeBg: 'rgba(236, 72, 153, 0.28)'
+  }, // S4: Pink
+  {
+    fill: 'rgba(14, 165, 233, 0.18)',
+    stroke: 'rgba(56, 189, 248, 0.85)',
+    tag: '#38bdf8',
+    glow: 'rgba(14, 165, 233, 0.45)',
+    bgTint: 'rgba(14, 165, 233, 0.10)',
+    badgeBg: 'rgba(14, 165, 233, 0.28)'
+  }, // S5: Cyan
+  {
+    fill: 'rgba(168, 85, 247, 0.18)',
+    stroke: 'rgba(192, 132, 252, 0.85)',
+    tag: '#c084fc',
+    glow: 'rgba(168, 85, 247, 0.45)',
+    bgTint: 'rgba(168, 85, 247, 0.10)',
+    badgeBg: 'rgba(168, 85, 247, 0.28)'
+  }  // S6: Purple
+];

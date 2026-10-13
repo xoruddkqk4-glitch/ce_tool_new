@@ -370,6 +370,15 @@
                 <button class="looper-count-btn" data-count="infinite" type="button">∞</button>
               </div>
               <button id="btnClearLoop" class="clear-loop-btn" title="반복 구간 해제 (\ 키)" type="button">✕ 구간 해제</button>
+
+              <span class="replay-divider">|</span>
+              <span class="replay-label">⏪ F3 되감기:</span>
+              <div class="replay-btn-group" id="replayBtnGroup">
+                <button class="replay-sec-btn" data-sec="0.5" type="button" title="F3 키 누르면 0.5초 뒤로 되돌아가 연속 재생">0.5초</button>
+                <button class="replay-sec-btn active" data-sec="1" type="button" title="F3 키 누르면 1초 뒤로 되돌아가 연속 재생">1초</button>
+                <button class="replay-sec-btn" data-sec="1.5" type="button" title="F3 키 누르면 1.5초 뒤로 되돌아가 연속 재생">1.5초</button>
+                <button class="replay-sec-btn" data-sec="2" type="button" title="F3 키 누르면 2초 뒤로 되돌아가 연속 재생">2초</button>
+              </div>
             </div>
 
             <div id="loopStatusBadge" class="loop-status-badge hidden">
@@ -386,11 +395,12 @@
             <span class="shortcut-item"><kbd>[</kbd> 시작점</span>
             <span class="shortcut-item"><kbd>]</kbd> 끝점&amp;재생</span>
             <span class="shortcut-item"><kbd>\</kbd>(￦) 구간해제</span>
-            <span class="shortcut-item"><kbd>R</kbd> 구간반복</span>
-            <span class="shortcut-item"><kbd>←</kbd> 이전문장</span>
-            <span class="shortcut-item"><kbd>→</kbd> 다음문장</span>
+            <span class="shortcut-item"><kbd>F3</kbd> <span id="shortcutRLabel">1초 되감기재생</span></span>
+            <span class="shortcut-item"><kbd>F4</kbd>(←) 이전문장</span>
+            <span class="shortcut-item"><kbd>F5</kbd>(→) 다음문장</span>
             <span class="shortcut-item"><kbd>S</kbd> 약형/대본</span>
             <span class="shortcut-item"><kbd>T</kbd> 해석토글</span>
+            <span class="shortcut-item"><kbd>F2</kbd> 빈칸입력</span>
           </div>
         </section>
 

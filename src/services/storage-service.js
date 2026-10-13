@@ -62,4 +62,13 @@ export class StorageService {
   static saveTheme(theme) {
     safeSet('ce_tool_theme', theme);
   }
+
+  static getReplaySeconds() {
+    const val = parseFloat(safeGet('ce_tool_replay_seconds', '1'));
+    return (!isNaN(val) && [0.5, 1, 1.5, 2].includes(val)) ? val : 1;
+  }
+
+  static setReplaySeconds(sec) {
+    safeSet('ce_tool_replay_seconds', String(sec));
+  }
 }

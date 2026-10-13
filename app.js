@@ -37,6 +37,57 @@ const CONSTANTS = {
   ]
 };
 
+const WAVEFORM_SEGMENT_COLORS = [
+  {
+    fill: 'rgba(99, 102, 241, 0.18)',
+    stroke: 'rgba(129, 140, 248, 0.85)',
+    tag: '#818cf8',
+    glow: 'rgba(99, 102, 241, 0.45)',
+    bgTint: 'rgba(99, 102, 241, 0.10)',
+    badgeBg: 'rgba(99, 102, 241, 0.28)'
+  }, // S1: Indigo
+  {
+    fill: 'rgba(16, 185, 129, 0.18)',
+    stroke: 'rgba(52, 211, 153, 0.85)',
+    tag: '#34d399',
+    glow: 'rgba(16, 185, 129, 0.45)',
+    bgTint: 'rgba(16, 185, 129, 0.10)',
+    badgeBg: 'rgba(16, 185, 129, 0.28)'
+  }, // S2: Emerald
+  {
+    fill: 'rgba(245, 158, 11, 0.18)',
+    stroke: 'rgba(251, 191, 36, 0.85)',
+    tag: '#fbbf24',
+    glow: 'rgba(245, 158, 11, 0.45)',
+    bgTint: 'rgba(245, 158, 11, 0.10)',
+    badgeBg: 'rgba(245, 158, 11, 0.28)'
+  }, // S3: Amber
+  {
+    fill: 'rgba(236, 72, 153, 0.18)',
+    stroke: 'rgba(244, 114, 182, 0.85)',
+    tag: '#f472b6',
+    glow: 'rgba(236, 72, 153, 0.45)',
+    bgTint: 'rgba(236, 72, 153, 0.10)',
+    badgeBg: 'rgba(236, 72, 153, 0.28)'
+  }, // S4: Pink
+  {
+    fill: 'rgba(14, 165, 233, 0.18)',
+    stroke: 'rgba(56, 189, 248, 0.85)',
+    tag: '#38bdf8',
+    glow: 'rgba(14, 165, 233, 0.45)',
+    bgTint: 'rgba(14, 165, 233, 0.10)',
+    badgeBg: 'rgba(14, 165, 233, 0.28)'
+  }, // S5: Cyan
+  {
+    fill: 'rgba(168, 85, 247, 0.18)',
+    stroke: 'rgba(192, 132, 252, 0.85)',
+    tag: '#c084fc',
+    glow: 'rgba(168, 85, 247, 0.45)',
+    bgTint: 'rgba(168, 85, 247, 0.10)',
+    badgeBg: 'rgba(168, 85, 247, 0.28)'
+  }  // S6: Purple
+];
+
 
   // =========================================================================
   // Module: src/config/fels-dict.js
@@ -1298,6 +1349,15 @@ class StorageService {
 
   static saveTheme(theme) {
     safeSet('ce_tool_theme', theme);
+  }
+
+  static getReplaySeconds() {
+    const val = parseFloat(safeGet('ce_tool_replay_seconds', '1'));
+    return (!isNaN(val) && [0.5, 1, 1.5, 2].includes(val)) ? val : 1;
+  }
+
+  static setReplaySeconds(sec) {
+    safeSet('ce_tool_replay_seconds', String(sec));
   }
 }
 
@@ -3003,6 +3063,7 @@ class WaveformRenderer {
 
 
 
+
 class MasterWaveformTimeline {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -3027,16 +3088,25 @@ class MasterWaveformTimeline {
     this.isPlaying = false;
     this.animFrameId = null;
 
-    this.colors = [
-      { fill: 'rgba(99, 102, 241, 0.18)', stroke: 'rgba(129, 140, 248, 0.85)', tag: '#818cf8' }, // Indigo
-      { fill: 'rgba(16, 185, 129, 0.18)', stroke: 'rgba(52, 211, 153, 0.85)', tag: '#34d399' }, // Emerald
-      { fill: 'rgba(245, 158, 11, 0.18)', stroke: 'rgba(251, 191, 36, 0.85)', tag: '#fbbf24' }, // Amber
-      { fill: 'rgba(236, 72, 153, 0.18)', stroke: 'rgba(244, 114, 182, 0.85)', tag: '#f472b6' }, // Pink
-      { fill: 'rgba(14, 165, 233, 0.18)', stroke: 'rgba(56, 189, 248, 0.85)', tag: '#38bdf8' }, // Cyan
-      { fill: 'rgba(168, 85, 247, 0.18)', stroke: 'rgba(192, 132, 252, 0.85)', tag: '#c084fc' }  // Purple
-    ];
+    this.selectedSentenceIndex = null;
+    this.colors = (typeof WAVEFORM_SEGMENT_COLORS !== 'undefined' && Array.isArray(WAVEFORM_SEGMENT_COLORS) && WAVEFORM_SEGMENT_COLORS.length)
+      ? WAVEFORM_SEGMENT_COLORS
+      : [
+          { fill: 'rgba(99, 102, 241, 0.18)', stroke: 'rgba(129, 140, 248, 0.85)', tag: '#818cf8' },
+          { fill: 'rgba(16, 185, 129, 0.18)', stroke: 'rgba(52, 211, 153, 0.85)', tag: '#34d399' },
+          { fill: 'rgba(245, 158, 11, 0.18)', stroke: 'rgba(251, 191, 36, 0.85)', tag: '#fbbf24' },
+          { fill: 'rgba(236, 72, 153, 0.18)', stroke: 'rgba(244, 114, 182, 0.85)', tag: '#f472b6' },
+          { fill: 'rgba(14, 165, 233, 0.18)', stroke: 'rgba(56, 189, 248, 0.85)', tag: '#38bdf8' },
+          { fill: 'rgba(168, 85, 247, 0.18)', stroke: 'rgba(192, 132, 252, 0.85)', tag: '#c084fc' }
+        ];
 
     this.initEvents();
+  }
+
+  setSelectedSentence(idx) {
+    if (this.selectedSentenceIndex === idx) return;
+    this.selectedSentenceIndex = idx;
+    this.draw();
   }
 
   setAudioBuffer(audioBuffer) {
@@ -3165,43 +3235,50 @@ class MasterWaveformTimeline {
 
       const isHovered = this.hoverInfo && this.hoverInfo.index === stn.index;
       const isDragging = this.activeDrag && this.activeDrag.index === stn.index;
+      const isSelected = this.selectedSentenceIndex === stn.index;
 
-      // Segment Background
-      ctx.fillStyle = (isHovered || isDragging) ? color.fill.replace('0.18', '0.34') : color.fill;
+      // Segment Background (selected stays prominently highlighted)
+      if (isSelected) {
+        ctx.fillStyle = color.fill.replace('0.18', '0.38');
+      } else if (isHovered || isDragging) {
+        ctx.fillStyle = color.fill.replace('0.18', '0.32');
+      } else {
+        ctx.fillStyle = color.fill;
+      }
       ctx.fillRect(startX, 0, segW, h);
 
-      // Top Header Border
+      // Top & Segment Header Border
       ctx.strokeStyle = color.stroke;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = isSelected ? 2.5 : 1.5;
       ctx.strokeRect(startX, 0, segW, h);
 
       // Label Tag: S1 (00:03.2)
-      ctx.fillStyle = color.tag;
-      ctx.font = 'bold 10px sans-serif';
+      ctx.fillStyle = isSelected ? '#ffffff' : color.tag;
+      ctx.font = isSelected ? 'bold 11px sans-serif' : 'bold 10px sans-serif';
       const label = `S${stn.index + 1} (${this.formatSec(stn.audioStart)}~${this.formatSec(stn.audioEnd)})`;
       ctx.fillText(label, startX + 5, 22);
 
       // Left Boundary Handle Line
-      const isStartHovered = isHovered && this.hoverInfo.edge === 'start';
+      const isStartHovered = (isHovered && this.hoverInfo.edge === 'start') || (isDragging && this.activeDrag.edge === 'start');
       ctx.strokeStyle = isStartHovered ? '#ffffff' : color.stroke;
-      ctx.lineWidth = isStartHovered ? 3 : 2;
+      ctx.lineWidth = isStartHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(startX, 0);
       ctx.lineTo(startX, h);
       ctx.stroke();
 
       // Right Boundary Handle Line
-      const isEndHovered = isHovered && this.hoverInfo.edge === 'end';
+      const isEndHovered = (isHovered && this.hoverInfo.edge === 'end') || (isDragging && this.activeDrag.edge === 'end');
       ctx.strokeStyle = isEndHovered ? '#ffffff' : color.stroke;
-      ctx.lineWidth = isEndHovered ? 3 : 2;
+      ctx.lineWidth = isEndHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(endX, 0);
       ctx.lineTo(endX, h);
       ctx.stroke();
 
       // Grab handle diamond indicators
-      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? '#ffffff' : color.tag);
-      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? '#ffffff' : color.tag);
+      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
+      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
     });
 
     // 4. Playhead Line
@@ -3427,11 +3504,16 @@ class MasterWaveformTimeline {
           origStart: stn.audioStart,
           origEnd: stn.audioEnd
         };
+        this.setSelectedSentence(stn.index);
+        if (typeof this.options.onSegmentSelect === 'function') {
+          this.options.onSegmentSelect(stn.index);
+        }
       }
     } else if (this.hoverInfo && this.hoverInfo.type === 'segment') {
       // Click inside segment: Play this segment and select it
       const stn = this.sentenceList.find(s => s.index === this.hoverInfo.index);
       if (stn && stn.audioStart !== null && stn.audioEnd !== null) {
+        this.setSelectedSentence(stn.index);
         playbackController.playSegment(stn.audioStart, stn.audioEnd, { owner: 'master-waveform' });
         if (typeof this.options.onSegmentSelect === 'function') {
           this.options.onSegmentSelect(stn.index);
@@ -3677,55 +3759,64 @@ class LooperEngine {
     const cur = player.currentTime;
     const { loopStart, loopEnd, targetLoopCount, isShadowingWaiting, isAutoAdvance } = this.appState;
 
-    if (loopStart !== null && loopEnd !== null && !isShadowingWaiting) {
-      if (cur >= loopEnd) {
-        player.pause();
-        this.appState.currentLoopCount++;
-        this.callbacks.onLoopCountUpdate(this.appState.currentLoopCount, targetLoopCount);
+    if (isShadowingWaiting) return;
 
-        if (targetLoopCount !== Infinity && this.appState.currentLoopCount >= targetLoopCount) {
-          this.callbacks.onLoopComplete(targetLoopCount);
-          this.callbacks.onPlayStateChange(false);
+    const activeStn = this.appState.getActiveSentence();
+    const hasCustomLoop = (loopStart !== null && loopEnd !== null);
 
-          if (isAutoAdvance) {
-            setTimeout(() => {
-              this.callbacks.onAutoAdvance();
-            }, 800);
-          }
-        } else {
-          // 0.5s shadowing pause delay
-          this.appState.isShadowingWaiting = true;
-          this.callbacks.onShadowingWait(true);
+    let effectiveStart = null;
+    let effectiveEnd = null;
 
-          clearTimeout(this.shadowTimer);
-          this.shadowTimer = setTimeout(() => {
-            this.appState.isShadowingWaiting = false;
-            this.callbacks.onShadowingWait(false);
+    if (hasCustomLoop) {
+      effectiveStart = loopStart;
+      effectiveEnd = loopEnd;
+    } else if (activeStn && activeStn.audioEnd !== null) {
+      effectiveStart = (activeStn.audioStart !== null ? activeStn.audioStart : 0);
+      effectiveEnd = activeStn.audioEnd;
+    }
 
-            if (this.appState.loopStart !== null) {
-              player.currentTime = this.appState.loopStart;
-              player.play().then(() => {
-                this.callbacks.onPlayStateChange(true);
-                // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
-                this.callbacks.onLoopRestart();
-              }).catch(e => console.error(e));
-            }
-          }, CONSTANTS.SHADOWING_PAUSE_MS);
+    if (effectiveStart === null || effectiveEnd === null) return;
+
+    if (cur >= effectiveEnd) {
+      player.pause();
+      this.appState.currentLoopCount++;
+      this.callbacks.onLoopCountUpdate(this.appState.currentLoopCount, targetLoopCount);
+
+      if (targetLoopCount !== Infinity && this.appState.currentLoopCount >= targetLoopCount) {
+        const typeStr = hasCustomLoop ? '선택 구간' : `문장 S${this.appState.activeSentenceIndex + 1}`;
+        this.callbacks.onLoopComplete(targetLoopCount, typeStr);
+        this.callbacks.onPlayStateChange(false);
+
+        if (isAutoAdvance) {
+          setTimeout(() => {
+            this.callbacks.onAutoAdvance();
+          }, 800);
         }
-      }
-    } else {
-      // Bound strictly to current sentence
-      const activeStn = this.appState.getActiveSentence();
-      if (activeStn && activeStn.audioEnd !== null && !isShadowingWaiting) {
-        if (cur >= activeStn.audioEnd) {
-          player.pause();
-          this.callbacks.onPlayStateChange(false);
-          if (isAutoAdvance) {
-            setTimeout(() => {
-              this.callbacks.onAutoAdvance();
-            }, 600);
+      } else {
+        // 0.5s shadowing pause delay between loop iterations
+        this.appState.isShadowingWaiting = true;
+        this.callbacks.onShadowingWait(true);
+
+        clearTimeout(this.shadowTimer);
+        this.shadowTimer = setTimeout(() => {
+          this.appState.isShadowingWaiting = false;
+          this.callbacks.onShadowingWait(false);
+
+          const curCustom = (this.appState.loopStart !== null && this.appState.loopEnd !== null);
+          const curStn = this.appState.getActiveSentence();
+          const restartTime = curCustom
+            ? this.appState.loopStart
+            : (curStn && curStn.audioStart !== null ? curStn.audioStart : effectiveStart);
+
+          if (restartTime !== null && this.audioPlayer) {
+            this.audioPlayer.currentTime = restartTime;
+            this.audioPlayer.play().then(() => {
+              this.callbacks.onPlayStateChange(true);
+              // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
+              this.callbacks.onLoopRestart();
+            }).catch(e => console.error(e));
           }
-        }
+        }, CONSTANTS.SHADOWING_PAUSE_MS);
       }
     }
   }
@@ -5039,13 +5130,50 @@ class ShortcutManager {
     // Typing protection: If user is actively typing in a form field
     if (isTyping) {
       const isFelsBlank = target.classList && target.classList.contains('fels-blank-input');
-      // Alt + Arrow allowed inside FELS blanks for sentence jumping
-      if (isFelsBlank && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        e.preventDefault();
-        if (e.key === 'ArrowLeft' && this.handlers.onPrevSentence) {
-          this.handlers.onPrevSentence();
-        } else if (e.key === 'ArrowRight' && this.handlers.onNextSentence) {
-          this.handlers.onNextSentence();
+      if (isFelsBlank) {
+        // 1. Space: togglePlayPause even while typing inside blank (keeps focus)
+        if (e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          if (this.handlers.onPlayPause) this.handlers.onPlayPause();
+          return;
+        }
+        // 2. F3: rewindAndPlay even while typing inside blank (keeps focus)
+        if (e.key === 'F3') {
+          e.preventDefault();
+          if (this.handlers.onRewindAndPlay) {
+            this.handlers.onRewindAndPlay();
+          } else if (this.handlers.onStartLoop) {
+            this.handlers.onStartLoop();
+          }
+          return;
+        }
+        // 3. F4: prevSentence (앞문장 이동)
+        if (e.key === 'F4') {
+          e.preventDefault();
+          if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
+          return;
+        }
+        // 4. F5: nextSentence (뒷문장 이동, 브라우저 새로고침 방지)
+        if (e.key === 'F5') {
+          e.preventDefault();
+          if (this.handlers.onNextSentence) this.handlers.onNextSentence();
+          return;
+        }
+        // Toggle OFF via F2 or Escape: immediately exit text input mode and blur
+        if (e.key === 'F2' || e.key === 'Escape') {
+          e.preventDefault();
+          target.blur();
+          return;
+        }
+        // Alt + Arrow allowed inside FELS blanks for sentence jumping
+        if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          e.preventDefault();
+          if (e.key === 'ArrowLeft' && this.handlers.onPrevSentence) {
+            this.handlers.onPrevSentence();
+          } else if (e.key === 'ArrowRight' && this.handlers.onNextSentence) {
+            this.handlers.onNextSentence();
+          }
+          return;
         }
       }
       return;
@@ -5092,6 +5220,21 @@ class ShortcutManager {
     }
 
     // =========================================================================
+    // PAGE 1: Input View Waveform Shortcuts (Space: Play/Pause Waveform)
+    // =========================================================================
+    if (currentPage === 'input') {
+      const key = e.key;
+      if (key === ' ' || key === 'Spacebar') {
+        e.preventDefault();
+        if (this.handlers.onPlayPauseInput) {
+          this.handlers.onPlayPauseInput();
+        }
+        return;
+      }
+      return;
+    }
+
+    // =========================================================================
     // PAGE 2: Practice View Shortcuts (Space, [, ], \, R, Arrows, S, T)
     // =========================================================================
     if (currentPage !== 'practice') {
@@ -5120,7 +5263,7 @@ class ShortcutManager {
 
     const key = e.key;
 
-    // 1. Space: togglePlayPause
+    // 1. Space : togglePlayPause (스페이스바로 재생/정지)
     if (key === ' ' || key === 'Spacebar') {
       e.preventDefault();
       if (this.handlers.onPlayPause) this.handlers.onPlayPause();
@@ -5148,22 +5291,26 @@ class ShortcutManager {
       return;
     }
 
-    // 5. R / r : startRegionLoop
-    if (key === 'r' || key === 'R' || key === 'ㄱ') {
+    // 5. F3 : rewindAndPlay (user-configured seconds rewind & continuous playback)
+    if (key === 'F3') {
       e.preventDefault();
-      if (this.handlers.onStartLoop) this.handlers.onStartLoop();
+      if (this.handlers.onRewindAndPlay) {
+        this.handlers.onRewindAndPlay();
+      } else if (this.handlers.onStartLoop) {
+        this.handlers.onStartLoop();
+      }
       return;
     }
 
-    // 6. ArrowLeft : prevSentence
-    if (key === 'ArrowLeft') {
+    // 6. F4 / ArrowLeft : prevSentence (앞문장으로 이동)
+    if (key === 'F4' || key === 'ArrowLeft') {
       e.preventDefault();
       if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
       return;
     }
 
-    // 7. ArrowRight : nextSentence
-    if (key === 'ArrowRight') {
+    // 7. F5 / ArrowRight : nextSentence (뒷문장으로 이동, F5 브라우저 새로고침 방지)
+    if (key === 'F5' || key === 'ArrowRight') {
       e.preventDefault();
       if (this.handlers.onNextSentence) this.handlers.onNextSentence();
       return;
@@ -5180,6 +5327,13 @@ class ShortcutManager {
     if (key === 't' || key === 'T' || key === 'ㅅ') {
       e.preventDefault();
       if (this.handlers.onToggleTranslation) this.handlers.onToggleTranslation();
+      return;
+    }
+
+    // 10. F2 : toggleTextInput (약형 빈칸 텍스트 입력 모드 진입/해제)
+    if (key === 'F2') {
+      e.preventDefault();
+      if (this.handlers.onToggleTextInput) this.handlers.onToggleTextInput();
       return;
     }
   }
@@ -5219,6 +5373,7 @@ class ShortcutManager {
 
 
 
+
 // Placeholder kept in the 직독직해 slash string for empty chunks so slot positions never shift
 const DIRECT_EMPTY_PLACEHOLDER = '—';
 // Inline base64 audio requests above this size are rejected by Gemini (≈20MB request limit)
@@ -5234,6 +5389,7 @@ class InputView {
     this.isStartingPractice = false;     // re-entrancy guard for the 3 "start practice" buttons
     this.busySentences = new WeakSet();   // sentences with an in-flight chunk re-translation
     this.cachedBase64 = null;             // { file, base64 } — avoid re-encoding the same upload
+    this.activeSentenceIndex = null;      // Currently active sentence being edited/previewed
 
     // DOM Elements - Input Form
     this.container = document.getElementById('view-input');
@@ -5319,14 +5475,10 @@ class InputView {
               toast.show(`⏱ 문장 S${idx + 1} 구간: ${start}s ~ ${end}s`);
             }
           }
+          this.setActiveSentence(idx);
         },
         onSegmentSelect: (idx) => {
-          const targetCard = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
-          if (targetCard) {
-            targetCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            targetCard.classList.add('merged-highlight');
-            setTimeout(() => targetCard.classList.remove('merged-highlight'), 1000);
-          }
+          this.setActiveSentence(idx, { scrollToCard: true });
         }
       });
     }
@@ -5335,6 +5487,79 @@ class InputView {
 
     this.initEvents();
     this.setMode('text'); // default: script only
+  }
+
+  /**
+   * Sets the currently active sentence being edited, listened to, or dragged.
+   * Keeps persistent waveform-matched emphasis highlight on the card without disappearing.
+   */
+  setActiveSentence(idx, { scrollToCard = false } = {}) {
+    if (typeof idx !== 'number' || idx < 0) return;
+    this.activeSentenceIndex = idx;
+
+    if (this.parsedSentenceList && typeof this.parsedSentenceList.querySelectorAll === 'function') {
+      const cards = this.parsedSentenceList.querySelectorAll('.parsed-sentence-item');
+      if (cards && typeof cards.forEach === 'function') {
+        cards.forEach((card) => {
+          if (!card || typeof card.getAttribute !== 'function') return;
+          const cIdx = parseInt(card.getAttribute('data-stn-idx'), 10);
+          const isActive = (cIdx === idx);
+          if (card.classList && typeof card.classList.toggle === 'function') {
+            card.classList.toggle('is-active', isActive);
+          }
+          if (isActive && scrollToCard && typeof card.scrollIntoView === 'function') {
+            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        });
+      }
+    }
+
+    if (this.masterWaveform && typeof this.masterWaveform.setSelectedSentence === 'function') {
+      this.masterWaveform.setSelectedSentence(idx);
+    }
+  }
+
+  /**
+   * Toggles play/pause for Stage 1 master waveform & segment preview.
+   * Bound to Spacebar shortcut when on Stage 1 input view.
+   */
+  togglePlayPauseWaveform() {
+    const player = this.nativeAudioPlayer || (playbackController && playbackController.getPlayer());
+    const isPlaying = player && !player.paused;
+
+    if (isPlaying) {
+      playbackController.stop();
+      if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+      if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+      return;
+    }
+
+    // If whole-track master playback was previously active, resume whole-track
+    if (playbackController && playbackController.owner === 'input-master') {
+      if (this.btnMasterPlayPause) {
+        this.btnMasterPlayPause.click();
+        return;
+      }
+    }
+
+    const curTime = (player && typeof player.currentTime === 'number') ? player.currentTime : 0;
+
+    // If currently paused, play active sentence segment (resuming from paused position if within sentence)
+    if (typeof this.activeSentenceIndex === 'number' && appState.sentenceList) {
+      const stn = appState.sentenceList.find(s => s.index === this.activeSentenceIndex);
+      if (stn && stn.audioStart !== null && stn.audioEnd !== null) {
+        let startTime = stn.audioStart;
+        if (curTime >= stn.audioStart && curTime < (stn.audioEnd - 0.05)) {
+          startTime = curTime;
+        }
+        playbackController.playSegment(startTime, stn.audioEnd, { owner: 'master-waveform' });
+        return;
+      }
+    }
+
+    if (this.btnMasterPlayPause) {
+      this.btnMasterPlayPause.click();
+    }
   }
 
   initEvents() {
@@ -6318,6 +6543,39 @@ class InputView {
       itemCard.className = 'parsed-sentence-item';
       itemCard.setAttribute('data-stn-idx', idx);
 
+      const colors = (typeof WAVEFORM_SEGMENT_COLORS !== 'undefined' && Array.isArray(WAVEFORM_SEGMENT_COLORS) && WAVEFORM_SEGMENT_COLORS.length)
+        ? WAVEFORM_SEGMENT_COLORS
+        : [
+            { fill: 'rgba(99, 102, 241, 0.18)', stroke: 'rgba(129, 140, 248, 0.85)', tag: '#818cf8', glow: 'rgba(99, 102, 241, 0.45)', bgTint: 'rgba(99, 102, 241, 0.10)', badgeBg: 'rgba(99, 102, 241, 0.28)' }
+          ];
+      const color = colors[idx % colors.length];
+      if (itemCard.style) {
+        if (typeof itemCard.style.setProperty === 'function') {
+          itemCard.style.setProperty('--stn-stroke', color.stroke);
+          itemCard.style.setProperty('--stn-glow', color.glow || color.stroke);
+          itemCard.style.setProperty('--stn-bgtint', color.bgTint || color.fill);
+          itemCard.style.setProperty('--stn-badge-bg', color.badgeBg || color.fill);
+          itemCard.style.setProperty('--stn-tag', color.tag);
+          itemCard.style.setProperty('--stn-fill', color.fill);
+        } else {
+          itemCard.style['--stn-stroke'] = color.stroke;
+          itemCard.style['--stn-glow'] = color.glow || color.stroke;
+          itemCard.style['--stn-bgtint'] = color.bgTint || color.fill;
+          itemCard.style['--stn-badge-bg'] = color.badgeBg || color.fill;
+          itemCard.style['--stn-tag'] = color.tag;
+          itemCard.style['--stn-fill'] = color.fill;
+        }
+      }
+
+      if (typeof itemCard.addEventListener === 'function') {
+        itemCard.addEventListener('pointerdown', () => {
+          this.setActiveSentence(idx);
+        });
+        itemCard.addEventListener('focusin', () => {
+          this.setActiveSentence(idx);
+        });
+      }
+
       const hasAudioTime = stn.audioStart !== null && stn.audioEnd !== null;
       const timeStr = hasAudioTime 
         ? `${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}` 
@@ -6562,7 +6820,19 @@ class InputView {
       this.masterWaveform.setSentenceList(appState.sentenceList);
     }
 
-    requestAnimationFrame(() => {
+    // Ensure active sentence highlight is set (retains working sentence or defaults to 0)
+    const initialActiveIdx = (typeof targetIdx === 'number' && targetIdx >= 0 && targetIdx < sentences.length)
+      ? targetIdx
+      : ((typeof this.activeSentenceIndex === 'number' && this.activeSentenceIndex >= 0 && this.activeSentenceIndex < sentences.length)
+        ? this.activeSentenceIndex
+        : 0);
+    this.setActiveSentence(initialActiveIdx);
+
+    const schedulePostRender = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (fn) => setTimeout(fn, 0);
+
+    schedulePostRender(() => {
       // Release temporary min-height lock
       if (this.parsedSentenceList) {
         this.parsedSentenceList.style.minHeight = '';
@@ -6576,6 +6846,7 @@ class InputView {
 
       // If specific sentence index targeted (e.g. after merge or split)
       if (typeof targetIdx === 'number' && targetIdx >= 0) {
+        this.setActiveSentence(targetIdx, { scrollToCard: true });
         const targetCard = this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"]`);
         if (targetCard) {
           if (scrollContext && typeof scrollContext.cardTopBefore === 'number') {
@@ -6588,10 +6859,6 @@ class InputView {
           } else {
             targetCard.scrollIntoView({ behavior: 'auto', block: 'nearest' });
           }
-
-          // Visual confirmation animation
-          targetCard.classList.add('merged-highlight');
-          setTimeout(() => targetCard.classList.remove('merged-highlight'), 1200);
           return;
         }
       }
@@ -6883,6 +7150,10 @@ class InputView {
   }
 
   playOrSpeakSentence(stn, speakBtn) {
+    if (stn && typeof stn.index === 'number') {
+      this.setActiveSentence(stn.index);
+    }
+
     if (speakBtn) {
       const origHtml = speakBtn.innerHTML;
       speakBtn.innerHTML = '<span>🔊 재생 중...</span>';
@@ -7296,6 +7567,8 @@ class InputView {
 
 
 
+
+
 class PracticeView {
   constructor(router) {
     this.router = router;
@@ -7341,6 +7614,11 @@ class PracticeView {
     this.loopCountLabel = document.getElementById('loopCountLabel');
     this.shadowingIndicator = document.getElementById('shadowingIndicator');
 
+    // R Shortcut Rewind & Continuous Playback configuration
+    this.replaySeconds = (typeof StorageService !== 'undefined' && StorageService.getReplaySeconds) ? StorageService.getReplaySeconds() : 1;
+    this.replaySecBtns = document.querySelectorAll('.replay-sec-btn');
+    this.shortcutRLabel = document.getElementById('shortcutRLabel');
+
     // Section 4 (Bottom Dock): Sentence Navigator Elements
     this.sentenceNavigator = document.getElementById('sentenceNavigator');
     this.btnPrevSentence = document.getElementById('btnPrevSentence');
@@ -7374,8 +7652,11 @@ class PracticeView {
       onLoopCountUpdate: (cur, target) => {
         this.updateLoopBadge();
       },
-      onLoopComplete: (target) => {
-        toast.show(`🔁 구간 ${target}회 반복 재생이 완료되었습니다.`);
+      onLoopComplete: (target, typeStr) => {
+        const desc = typeStr || '구간';
+        if (target > 1 || target === Infinity) {
+          toast.show(`🔁 ${desc} ${target}회 반복 재생이 완료되었습니다.`);
+        }
         this.updatePlayPauseIcon(false);
         this.drawWaveform();
       },
@@ -7470,6 +7751,17 @@ class PracticeView {
     // Clear Loop
     if (this.btnClearLoop) {
       this.btnClearLoop.addEventListener('click', () => this.clearSelectedRegion());
+    }
+
+    // R Shortcut Rewind Seconds Buttons
+    if (this.replaySecBtns && this.replaySecBtns.length) {
+      this.updateReplaySecUI(this.replaySeconds);
+      this.replaySecBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sec = parseFloat(btn.getAttribute('data-sec')) || 1;
+          this.setReplaySeconds(sec);
+        });
+      });
     }
 
     // Canvas Events
@@ -7640,8 +7932,24 @@ class PracticeView {
     });
   }
 
+  saveCurrentSentenceAnswers() {
+    const activeStn = appState.getActiveSentence();
+    if (!activeStn || !this.chunksContainer) return;
+    if (!activeStn.userAnswers) activeStn.userAnswers = {};
+
+    const inputs = this.chunksContainer.querySelectorAll('.fels-blank-input');
+    inputs.forEach(input => {
+      const bIdx = parseInt(input.getAttribute('data-blank-idx'), 10);
+      if (!isNaN(bIdx)) {
+        activeStn.userAnswers[bIdx] = input.value;
+      }
+    });
+  }
+
   async loadSentence(idx) {
+    this.saveCurrentSentenceAnswers();
     if (!appState.sentenceList || idx < 0 || idx >= appState.sentenceList.length) return;
+    appState.activeSentenceIndex = idx;
     const targetStn = appState.sentenceList[idx];
 
     // Compute or fetch 3x1 chunk result
@@ -7737,6 +8045,13 @@ class PracticeView {
       return;
     }
 
+    const activeStn = appState.getActiveSentence();
+    if (activeStn && !activeStn.userAnswers) {
+      activeStn.userAnswers = {};
+    }
+
+    let blankIdx = 0;
+
     chunks.forEach((chunk, idx) => {
       // 3D Flip Card (Compact, Headerless, Single-Row)
       const card = document.createElement('div');
@@ -7770,6 +8085,7 @@ class PracticeView {
         const felsInfo = getFelsInfo(word);
 
         if (felsInfo) {
+          const currentBlankIdx = blankIdx++;
           const inputWrap = document.createElement('div');
           inputWrap.className = 'fels-input-wrap';
 
@@ -7779,11 +8095,34 @@ class PracticeView {
           input.setAttribute('data-answer', felsInfo.clean);
           input.setAttribute('data-original', word);
           input.setAttribute('data-category', felsInfo.label);
+          input.setAttribute('data-blank-idx', currentBlankIdx);
           input.placeholder = '[ ]';
           input.style.width = `${Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20))}px`;
           input.style.maxWidth = '80px';
           input.spellcheck = false;
           input.autocomplete = 'off';
+
+          // Restore previously typed answer
+          const savedAnswer = activeStn?.userAnswers?.[currentBlankIdx];
+          if (typeof savedAnswer === 'string') {
+            input.value = savedAnswer;
+            if (activeStn?.userChecked) {
+              const isCorrect = (savedAnswer || '').trim().toLowerCase() === felsInfo.clean.toLowerCase();
+              input.classList.toggle('is-correct', isCorrect);
+              input.classList.toggle('is-wrong', !isCorrect);
+            }
+          }
+
+          input.addEventListener('input', () => {
+            if (activeStn) {
+              if (!activeStn.userAnswers) activeStn.userAnswers = {};
+              activeStn.userAnswers[currentBlankIdx] = input.value;
+            }
+            input.classList.remove('is-correct', 'is-wrong');
+            if (typeof projectService !== 'undefined' && projectService.markDirty) {
+              projectService.markDirty();
+            }
+          });
 
           const trailingPunct = word.match(/[.,!?;:]+$/);
           const punctStr = trailingPunct ? trailingPunct[0] : '';
@@ -7808,12 +8147,7 @@ class PracticeView {
           input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              const nextInput = this.findNextBlank(input);
-              if (nextInput) {
-                nextInput.focus();
-              } else {
-                this.checkFelsAnswers();
-              }
+              this.checkFelsAnswers();
             }
           });
         } else {
@@ -8052,10 +8386,18 @@ class PracticeView {
       if (appState.loopStart !== null && appState.loopEnd !== null) {
         if (this.nativeAudioPlayer.currentTime < appState.loopStart || this.nativeAudioPlayer.currentTime >= appState.loopEnd) {
           this.nativeAudioPlayer.currentTime = appState.loopStart;
+          appState.currentLoopCount = 0;
+          this.updateLoopBadge();
         }
       } else {
         if (this.nativeAudioPlayer.currentTime < stnStart || this.nativeAudioPlayer.currentTime >= stnEnd) {
           this.nativeAudioPlayer.currentTime = stnStart;
+          appState.currentLoopCount = 0;
+          this.updateLoopBadge();
+        } else if (appState.targetLoopCount !== Infinity && appState.currentLoopCount >= appState.targetLoopCount) {
+          this.nativeAudioPlayer.currentTime = stnStart;
+          appState.currentLoopCount = 0;
+          this.updateLoopBadge();
         }
       }
 
@@ -8150,43 +8492,71 @@ class PracticeView {
   clearSelectedRegion() {
     appState.clearLoop();
     this.looperEngine.reset();
-    if (this.loopStatusBadge) this.loopStatusBadge.classList.add('hidden');
+    this.updateLoopBadge();
     this.drawWaveform();
   }
 
-  startRegionLoop() {
-    if (!this.nativeAudioPlayer.src) {
+  setReplaySeconds(sec) {
+    this.replaySeconds = sec;
+    if (typeof StorageService !== 'undefined' && StorageService.setReplaySeconds) {
+      StorageService.setReplaySeconds(sec);
+    }
+    this.updateReplaySecUI(sec);
+    toast.show(`⏪ F3 단축키 되감기 시간이 ${sec}초로 설정되었습니다.`);
+  }
+
+  updateReplaySecUI(sec) {
+    if (this.replaySecBtns) {
+      this.replaySecBtns.forEach(btn => {
+        const bSec = parseFloat(btn.getAttribute('data-sec'));
+        btn.classList.toggle('active', bSec === sec);
+      });
+    }
+    if (this.shortcutRLabel) {
+      this.shortcutRLabel.textContent = `${sec}초 되감기재생`;
+    }
+  }
+
+  /**
+   * Rewinds audio by user-configured seconds and continues playback seamlessly.
+   * Bound to shortcut 'R' on Stage 2 to repeatedly replay unclear speech sections.
+   */
+  rewindAndPlay(customSec) {
+    if (!this.nativeAudioPlayer || !this.nativeAudioPlayer.src) {
       toast.show('⚠️ 재생 가능한 오디오가 없습니다.');
       return;
     }
 
+    const sec = (typeof customSec === 'number' && customSec > 0) ? customSec : (this.replaySeconds || 1);
+    const cur = this.nativeAudioPlayer.currentTime || 0;
     const activeStn = appState.getActiveSentence();
+    const minBound = (activeStn && activeStn.audioStart !== null) ? activeStn.audioStart : 0;
 
-    if (appState.loopStart !== null && appState.loopEnd !== null) {
-      appState.currentLoopCount = 0;
-      this.looperEngine.reset();
-      this.updateLoopBadge();
+    // Jump back by user-configured seconds, bounded by sentence start
+    const targetTime = Math.max(minBound, cur - sec);
 
-      playbackController.claim('practice');
-      this.nativeAudioPlayer.currentTime = appState.loopStart;
-      this.nativeAudioPlayer.play().then(() => {
-        this.updatePlayPauseIcon(true);
-        this.startWaveformPlaybackLoop();
-        if (appState.isSynthesizedAudio && activeStn) {
-          speakText(activeStn.text);
-        }
-      }).catch(e => console.error(e));
+    playbackController.claim('practice');
+    this.nativeAudioPlayer.currentTime = targetTime;
 
-      const countStr = appState.targetLoopCount === Infinity ? '무한' : `${appState.targetLoopCount}회`;
-      toast.show(`🔁 구간 반복 재생 시작: ${formatPreciseTime(appState.loopStart)} ~ ${formatPreciseTime(appState.loopEnd)} (${countStr})`);
-    } else if (activeStn && activeStn.audioStart !== null && activeStn.audioEnd !== null) {
-      this.setLoopRange(activeStn.audioStart, activeStn.audioEnd);
-      toast.show(`🔁 S${appState.activeSentenceIndex + 1} 문장 구간 반복 재생을 시작합니다.`);
-    } else {
-      const dur = this.nativeAudioPlayer.duration || 1;
-      this.setLoopRange(0, dur);
-      toast.show('🔁 전체 오디오 구간 반복 재생을 시작합니다.');
-    }
+    // Reset loop so user gets seamless, uninterrupted continuous playback
+    appState.clearLoop();
+    this.looperEngine.reset();
+    this.updateLoopBadge();
+
+    this.nativeAudioPlayer.play().then(() => {
+      this.updatePlayPauseIcon(true);
+      this.startWaveformPlaybackLoop();
+      if (appState.isSynthesizedAudio && activeStn) {
+        speakText(activeStn.text);
+      }
+    }).catch(e => console.error(e));
+
+    this.drawWaveform();
+    toast.show(`⏪ ${sec}초 되감기 재생 (${formatPreciseTime(targetTime)})`);
+  }
+
+  startRegionLoop() {
+    this.rewindAndPlay();
   }
 
   prevSentence() {
@@ -8256,14 +8626,28 @@ class PracticeView {
       this.toggleFelsMode();
     }
 
+    const activeStn = appState.getActiveSentence();
+    if (activeStn) {
+      activeStn.userChecked = true;
+      if (!activeStn.userAnswers) activeStn.userAnswers = {};
+      if (typeof projectService !== 'undefined' && projectService.markDirty) {
+        projectService.markDirty();
+      }
+    }
+
     let correctCount = 0;
     const totalCount = this.felsBlanks.length;
 
-    this.felsBlanks.forEach(item => {
+    this.felsBlanks.forEach((item, idx) => {
       if (!item.inputEl) return;
       const userVal = (item.inputEl.value || '').trim().toLowerCase();
       const expected = (item.answer || '').toLowerCase();
 
+      if (activeStn) {
+        activeStn.userAnswers[idx] = item.inputEl.value;
+      }
+
+      // Remove any previously rendered answer reveal badges
       const parent = item.inputEl.parentElement;
       if (parent && typeof parent.querySelector === 'function') {
         const oldReveal = parent.querySelector('.fels-answer-reveal');
@@ -8277,34 +8661,32 @@ class PracticeView {
       } else {
         item.inputEl.classList.remove('is-correct');
         item.inputEl.classList.add('is-wrong');
-
-        if (parent) {
-          const displayAnswer = item.original ? item.original.replace(/[.,!?;:]+$/, '') : item.answer;
-          const revealBadge = document.createElement('span');
-          revealBadge.className = 'fels-answer-reveal';
-          revealBadge.textContent = displayAnswer;
-          revealBadge.title = `정답: ${displayAnswer} (${item.category || '약형'})`;
-          parent.appendChild(revealBadge);
-        }
+        // Do NOT show answer reveal badge underneath per user requirement
       }
     });
 
-    const percentage = Math.round((correctCount / totalCount) * 100);
-
-    if (this.felsScoreText && this.felsScoreBar) {
-      this.felsScoreText.innerHTML = `
-        🎯 <strong>채점 결과:</strong> 총 ${totalCount}개 중 <strong>${correctCount}개</strong> 정답 (${percentage}%) 
-        <span style="font-weight: 500; font-size: 0.8rem; margin-left: 8px;">
-          ${percentage === 100 ? '🎉 완벽합니다! 약형 기능어를 모두 청취했습니다.' : '💡 오답 항목 아래 표시된 초록색 정답을 확인해보세요.'}
-        </span>
-      `;
-      this.felsScoreBar.classList.remove('hidden');
+    // Do NOT show score banner per user requirement
+    if (this.felsScoreBar) {
+      this.felsScoreBar.classList.add('hidden');
     }
 
-    toast.show(`채점 완료! 정답: ${correctCount}/${totalCount}개 (${percentage}%)`);
+    if (correctCount === totalCount) {
+      toast.show(`🎉 축하합니다! 모든 빈칸(${totalCount}개) 정답입니다!`);
+    } else {
+      toast.show(`✓ 정답 확인: 맞은 빈칸은 초록색, 틀린 빈칸은 빨간색으로 표시됩니다.`);
+    }
   }
 
   resetFelsInputs() {
+    const activeStn = appState.getActiveSentence();
+    if (activeStn) {
+      activeStn.userAnswers = {};
+      delete activeStn.userChecked;
+      if (typeof projectService !== 'undefined' && projectService.markDirty) {
+        projectService.markDirty();
+      }
+    }
+
     this.felsBlanks.forEach(item => {
       if (!item.inputEl) return;
       item.inputEl.value = '';
@@ -8320,6 +8702,30 @@ class PracticeView {
       this.felsBlanks[0].inputEl.focus();
     }
     toast.show('빈칸이 초기화되었습니다. 다시 입력해 보세요.');
+  }
+
+  toggleTextInputMode() {
+    if (!appState.isFelsMode) {
+      this.toggleFelsMode();
+    }
+
+    const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+    const isInsideBlank = activeEl && activeEl.classList && activeEl.classList.contains('fels-blank-input');
+
+    if (isInsideBlank) {
+      activeEl.blur();
+      toast.show('⌨️ 빈칸 입력 해제 (전역 단축키 활성화)');
+    } else {
+      const blanks = Array.from(this.chunksContainer ? this.chunksContainer.querySelectorAll('.fels-blank-input') : []);
+      if (blanks.length > 0) {
+        const target = blanks.find(b => !(b.value || '').trim()) || blanks[0];
+        target.focus();
+        target.select();
+        toast.show('✏️ 빈칸 입력 모드 (Space: 재생/정지, F3: 되감기, Enter: 정답확인, F4/F5: 문장이동, F2/Esc: 해제)');
+      } else {
+        toast.show('💡 현재 문장에는 약형 빈칸이 없습니다.');
+      }
+    }
   }
 
   toggleFlipAllCards() {
@@ -8477,10 +8883,22 @@ class PracticeView {
 
   updateLoopBadge() {
     if (!this.loopStatusBadge) return;
-    if (appState.loopStart !== null && appState.loopEnd !== null) {
+    const activeStn = appState.getActiveSentence();
+    const hasCustomLoop = appState.loopStart !== null && appState.loopEnd !== null;
+
+    if (hasCustomLoop) {
       this.loopStatusBadge.classList.remove('hidden');
       if (this.loopRangeLabel) {
-        this.loopRangeLabel.textContent = `루프: ${formatPreciseTime(appState.loopStart)} ~ ${formatPreciseTime(appState.loopEnd)}`;
+        this.loopRangeLabel.textContent = `구간 루프: ${formatPreciseTime(appState.loopStart)} ~ ${formatPreciseTime(appState.loopEnd)}`;
+      }
+      if (this.loopCountLabel) {
+        const targetStr = appState.targetLoopCount === Infinity ? '∞' : appState.targetLoopCount;
+        this.loopCountLabel.textContent = `(${Math.min(appState.currentLoopCount + 1, appState.targetLoopCount || 1)}/${targetStr}회)`;
+      }
+    } else if (activeStn && activeStn.audioStart !== null && activeStn.audioEnd !== null && (appState.targetLoopCount > 1 || appState.targetLoopCount === Infinity)) {
+      this.loopStatusBadge.classList.remove('hidden');
+      if (this.loopRangeLabel) {
+        this.loopRangeLabel.textContent = `문장 S${appState.activeSentenceIndex + 1} 루프: ${formatPreciseTime(activeStn.audioStart)} ~ ${formatPreciseTime(activeStn.audioEnd)}`;
       }
       if (this.loopCountLabel) {
         const targetStr = appState.targetLoopCount === Infinity ? '∞' : appState.targetLoopCount;
@@ -8610,6 +9028,7 @@ class PracticeView {
   }
 
   onDeactivated() {
+    this.saveCurrentSentenceAnswers();
     if (this.nativeAudioPlayer && typeof this.nativeAudioPlayer.pause === 'function') {
       try {
         if (!this.nativeAudioPlayer.paused) {
@@ -8735,20 +9154,29 @@ class MemorizeView {
     }
 
     // Auto-fit chunk cards into single lines on window or container resize
+    const handleResize = () => {
+      if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
+        this.fitAllSentenceRows();
+      }
+      if (this.isClassroomModalOpen()) {
+        this.fitClassroomSentenceRows();
+      }
+    };
+
     if (typeof ResizeObserver !== 'undefined' && this.canvasContainer) {
-      this.resizeObserver = new ResizeObserver(() => {
-        if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
-          this.fitAllSentenceRows();
-        }
-      });
+      this.resizeObserver = new ResizeObserver(handleResize);
       this.resizeObserver.observe(this.canvasContainer);
+      if (this.classroomChunksContainer) {
+        this.resizeObserver.observe(this.classroomChunksContainer);
+      }
     } else {
-      window.addEventListener('resize', () => {
-        if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
-          this.fitAllSentenceRows();
-        }
-      });
+      window.addEventListener('resize', handleResize);
     }
+    window.addEventListener('resize', () => {
+      if (this.isClassroomModalOpen()) {
+        this.fitClassroomSentenceRows();
+      }
+    });
   }
 
   setMemorizeMode(mode) {
@@ -9023,7 +9451,11 @@ class MemorizeView {
       const scale = availTextWidth / totalRawTextWidth;
       // Allow scaling down smoothly (down to 0.45rem if needed for very long sentences)
       const scaledFontRem = Math.max(0.45, Math.min(0.92, 0.92 * scale));
-      chunkGrid.style.setProperty('--row-chunk-font-size', `${scaledFontRem.toFixed(3)}rem`);
+      if (typeof chunkGrid.style.setProperty === 'function') {
+        chunkGrid.style.setProperty('--row-chunk-font-size', `${scaledFontRem.toFixed(3)}rem`);
+      } else {
+        chunkGrid.style['--row-chunk-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
+      }
 
       // Allocate card widths: exactly textWidth * scale + fixedCardExtra!
       let remainingTextSpace = availTextWidth;
@@ -9043,7 +9475,11 @@ class MemorizeView {
       });
     } else {
       // Fits comfortably at standard font size
-      chunkGrid.style.setProperty('--row-chunk-font-size', '0.92rem');
+      if (typeof chunkGrid.style.setProperty === 'function') {
+        chunkGrid.style.setProperty('--row-chunk-font-size', '0.92rem');
+      } else {
+        chunkGrid.style['--row-chunk-font-size'] = '0.92rem';
+      }
       cards.forEach((card, idx) => {
         const cardW = rawTextWidths[idx] + fixedCardExtra;
         card.style.flex = '0 0 auto';
@@ -9267,6 +9703,9 @@ class MemorizeView {
       this.classroomModal.classList.remove('hidden');
     }
     window.addEventListener('keydown', this.boundClassroomKeyHandler);
+    requestAnimationFrame(() => {
+      this.fitClassroomSentenceRows();
+    });
     toast.show(`🖥️ 문장 S${sIdx + 1} 교실 대형 화면 열림`);
   }
 
@@ -9508,10 +9947,10 @@ class MemorizeView {
         const koText = (chunk.ko || '').trim();
 
         // Calculate sleek compact width so sentence stays strictly on 1 line
-        const charLen = Math.max(enText.length, Math.ceil(koText.length * 1.4));
-        const estCardW = Math.max(isActive ? 60 : 48, charLen * (isActive ? 13 : 10) + (isActive ? 24 : 16));
+        const charLen = Math.max(enText.length, Math.ceil(koText.length * 1.3));
+        const estCardW = Math.max(isActive ? 36 : 28, charLen * (isActive ? 9 : 7) + (isActive ? 14 : 10));
         card.style.width = `${estCardW}px`;
-        card.style.flex = '0 0 auto';
+        card.style.flex = '0 1 auto';
 
         card.innerHTML = `
           <div class="classroom-card-inner">
@@ -9537,27 +9976,116 @@ class MemorizeView {
       this.classroomChunksContainer.appendChild(rowEl);
     });
 
-    // Precise DOM width adjustment after render
+    // Precise fitting to prevent any horizontal overflow and scrollbars
     requestAnimationFrame(() => {
-      if (!this.classroomChunksContainer) return;
-      const cards = this.classroomChunksContainer.querySelectorAll('.classroom-chunk-card');
-      cards.forEach(c => {
-        const enEl = c.querySelector('.classroom-face-en .classroom-chunk-text');
-        const koEl = c.querySelector('.classroom-face-ko .classroom-chunk-text');
-        const wEn = enEl ? enEl.scrollWidth : 0;
-        const wKo = koEl ? koEl.scrollWidth : 0;
-        const maxTextW = Math.max(wEn, wKo);
-        if (maxTextW > 0) {
-          const isAct = c.classList.contains('active-card');
-          const padding = isAct ? 24 : 16;
-          const targetW = Math.max(isAct ? 60 : 48, maxTextW + padding);
-          const curW = parseFloat(c.style.width || '0');
-          if (targetW > curW) {
-            c.style.width = `${targetW}px`;
-            c.style.minWidth = `${targetW}px`;
+      this.fitClassroomSentenceRows();
+    });
+  }
+
+  fitClassroomSentenceRows() {
+    if (!this.classroomChunksContainer) return;
+    const rows = this.classroomChunksContainer.querySelectorAll('.classroom-sentence-row');
+    rows.forEach(row => {
+      if (row.classList.contains('is-placeholder')) return;
+      const chunksWrap = row.querySelector('.classroom-row-chunks');
+      if (!chunksWrap) return;
+      const cards = Array.from(chunksWrap.querySelectorAll('.classroom-chunk-card'));
+      if (!cards.length) return;
+
+      // Available width inside chunksWrap
+      let availWidth = chunksWrap.clientWidth;
+      if (!availWidth || availWidth <= 0) {
+        if (this.classroomChunksContainer.clientWidth) {
+          availWidth = this.classroomChunksContainer.clientWidth - 32;
+        } else if (this.classroomModal && this.classroomModal.clientWidth) {
+          availWidth = this.classroomModal.clientWidth - 80;
+        } else {
+          availWidth = 1100;
+        }
+      }
+
+      const isActive = row.classList.contains('is-active');
+      const gap = 6;
+      const totalGaps = (cards.length - 1) * gap;
+      // Active: 4px*2 padding + 2px border + 2px buffer = 16px (padding is 4px 7px)
+      // Context: 2px*2 padding + 2px border + 2px buffer = 12px (padding is 2px 5px)
+      const fixedCardExtra = isActive ? 16 : 12;
+      const totalFixedOverhead = (cards.length * fixedCardExtra) + totalGaps;
+      const availTextWidth = Math.max(20, availWidth - totalFixedOverhead - 4);
+
+      const baseFontRem = isActive ? 1.05 : 0.88;
+      const fontScaleFactor = (baseFontRem * 16) / 14.72;
+
+      const rawTextWidths = [];
+      cards.forEach(card => {
+        const enEl = card.querySelector('.classroom-face-en .classroom-chunk-text');
+        const koEl = card.querySelector('.classroom-face-ko .classroom-chunk-text');
+        const enText = enEl ? enEl.textContent.trim() : '';
+        const koText = koEl ? koEl.textContent.trim() : '';
+
+        const wEn = this.measureTextWidth(enText, false) * fontScaleFactor;
+        const wKo = this.measureTextWidth(koText, true) * fontScaleFactor;
+        const maxTextW = Math.max(wEn, wKo, 10);
+        rawTextWidths.push(maxTextW);
+      });
+
+      const totalRawTextWidth = rawTextWidths.reduce((sum, w) => sum + w, 0);
+
+      if (totalRawTextWidth > availTextWidth) {
+        const scale = availTextWidth / totalRawTextWidth;
+        const scaledFontRem = Math.max(0.55, Math.min(baseFontRem, baseFontRem * scale));
+
+        if (isActive) {
+          if (typeof chunksWrap.style.setProperty === 'function') {
+            chunksWrap.style.setProperty('--classroom-font-size', `${scaledFontRem.toFixed(3)}rem`);
+          } else {
+            chunksWrap.style['--classroom-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
+          }
+        } else {
+          if (typeof chunksWrap.style.setProperty === 'function') {
+            chunksWrap.style.setProperty('--classroom-context-font-size', `${scaledFontRem.toFixed(3)}rem`);
+          } else {
+            chunksWrap.style['--classroom-context-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
           }
         }
-      });
+
+        let remaining = availTextWidth;
+        cards.forEach((card, idx) => {
+          let allocated;
+          if (idx === cards.length - 1) {
+            allocated = Math.max(8, remaining);
+          } else {
+            allocated = Math.max(8, Math.floor(rawTextWidths[idx] * scale));
+            remaining -= allocated;
+          }
+          const cardW = allocated + fixedCardExtra;
+          card.style.flex = '0 0 auto';
+          card.style.width = `${cardW}px`;
+          card.style.minWidth = '0px';
+          card.style.maxWidth = 'none';
+        });
+      } else {
+        if (isActive) {
+          if (typeof chunksWrap.style.removeProperty === 'function') {
+            chunksWrap.style.removeProperty('--classroom-font-size');
+          } else {
+            delete chunksWrap.style['--classroom-font-size'];
+          }
+        } else {
+          if (typeof chunksWrap.style.removeProperty === 'function') {
+            chunksWrap.style.removeProperty('--classroom-context-font-size');
+          } else {
+            delete chunksWrap.style['--classroom-context-font-size'];
+          }
+        }
+        cards.forEach((card, idx) => {
+          const cardW = Math.max(isActive ? 36 : 28, Math.round(rawTextWidths[idx]) + fixedCardExtra);
+          card.style.flex = '0 0 auto';
+          card.style.width = `${cardW}px`;
+          card.style.minWidth = '0px';
+          card.style.maxWidth = 'none';
+        });
+      }
     });
   }
 
@@ -9639,21 +10167,34 @@ class CEToolApp {
 
     // 6. Initialize Global Shortcuts (Page 2, Page 3, and Project File operations)
     this.shortcutManager = new ShortcutManager({
+      onPlayPauseInput: () => this.inputView.togglePlayPauseWaveform(),
       onPlayPause: () => this.practiceView.togglePlayPause(),
       onSetStart: () => this.practiceView.setRegionStartFromCurrentTime(),
       onSetEnd: () => this.practiceView.setRegionEndFromCurrentTime(),
       onClearRegion: () => this.practiceView.clearSelectedRegion(),
       onStartLoop: () => this.practiceView.startRegionLoop(),
+      onRewindAndPlay: () => this.practiceView.rewindAndPlay(),
       onPrevSentence: () => this.practiceView.prevSentence(),
       onNextSentence: () => this.practiceView.nextSentence(),
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
+      onToggleTextInput: () => this.practiceView.toggleTextInputMode(),
       onFlipPracticeCard: (num) => this.practiceView.flipCardByIndex(num),
       onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
       onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),
       onOpenProject: () => this.projectService.openProject(this.inputView),
-      onSaveProject: () => this.projectService.saveProject(this.inputView),
-      onSaveProjectAs: () => this.projectService.saveProjectAs(this.inputView),
+      onSaveProject: () => {
+        if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+          this.practiceView.saveCurrentSentenceAnswers();
+        }
+        this.projectService.saveProject(this.inputView);
+      },
+      onSaveProjectAs: () => {
+        if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+          this.practiceView.saveCurrentSentenceAnswers();
+        }
+        this.projectService.saveProjectAs(this.inputView);
+      },
       getCurrentPage: () => this.router.getCurrentPage(),
       isShortcutActive: () => ['practice', 'memorize'].includes(this.router.getCurrentPage())
     });
@@ -9692,8 +10233,18 @@ class CEToolApp {
     const btnSaveAs = document.getElementById('btnProjectSaveAs');
 
     if (btnOpen) btnOpen.addEventListener('click', () => this.projectService.openProject(this.inputView));
-    if (btnSave) btnSave.addEventListener('click', () => this.projectService.saveProject(this.inputView));
-    if (btnSaveAs) btnSaveAs.addEventListener('click', () => this.projectService.saveProjectAs(this.inputView));
+    if (btnSave) btnSave.addEventListener('click', () => {
+      if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+        this.practiceView.saveCurrentSentenceAnswers();
+      }
+      this.projectService.saveProject(this.inputView);
+    });
+    if (btnSaveAs) btnSaveAs.addEventListener('click', () => {
+      if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+        this.practiceView.saveCurrentSentenceAnswers();
+      }
+      this.projectService.saveProjectAs(this.inputView);
+    });
   }
 
   initTheme() {

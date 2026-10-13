@@ -20,6 +20,8 @@ import { playbackController } from '../audio/playback-controller.js';
 import { speakText } from '../audio/tts-synthesizer.js';
 import { toast } from '../ui/toast-manager.js';
 import { splitIntoSentences, distributeChunksSequentially } from '../core/text-splitter.js';
+import { StorageService } from '../services/storage-service.js';
+import { projectService } from '../services/project-service.js';
 
 export class PracticeView {
   constructor(router) {
@@ -66,6 +68,11 @@ export class PracticeView {
     this.loopCountLabel = document.getElementById('loopCountLabel');
     this.shadowingIndicator = document.getElementById('shadowingIndicator');
 
+    // R Shortcut Rewind & Continuous Playback configuration
+    this.replaySeconds = (typeof StorageService !== 'undefined' && StorageService.getReplaySeconds) ? StorageService.getReplaySeconds() : 1;
+    this.replaySecBtns = document.querySelectorAll('.replay-sec-btn');
+    this.shortcutRLabel = document.getElementById('shortcutRLabel');
+
     // Section 4 (Bottom Dock): Sentence Navigator Elements
     this.sentenceNavigator = document.getElementById('sentenceNavigator');
     this.btnPrevSentence = document.getElementById('btnPrevSentence');
@@ -99,8 +106,11 @@ export class PracticeView {
       onLoopCountUpdate: (cur, target) => {
         this.updateLoopBadge();
       },
-      onLoopComplete: (target) => {
-        toast.show(`🔁 구간 ${target}회 반복 재생이 완료되었습니다.`);
+      onLoopComplete: (target, typeStr) => {
+        const desc = typeStr || '구간';
+        if (target > 1 || target === Infinity) {
+          toast.show(`🔁 ${desc} ${target}회 반복 재생이 완료되었습니다.`);
+        }
         this.updatePlayPauseIcon(false);
         this.drawWaveform();
       },
@@ -195,6 +205,17 @@ export class PracticeView {
     // Clear Loop
     if (this.btnClearLoop) {
       this.btnClearLoop.addEventListener('click', () => this.clearSelectedRegion());
+    }
+
+    // R Shortcut Rewind Seconds Buttons
+    if (this.replaySecBtns && this.replaySecBtns.length) {
+      this.updateReplaySecUI(this.replaySeconds);
+      this.replaySecBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sec = parseFloat(btn.getAttribute('data-sec')) || 1;
+          this.setReplaySeconds(sec);
+        });
+      });
     }
 
     // Canvas Events
@@ -365,8 +386,24 @@ export class PracticeView {
     });
   }
 
+  saveCurrentSentenceAnswers() {
+    const activeStn = appState.getActiveSentence();
+    if (!activeStn || !this.chunksContainer) return;
+    if (!activeStn.userAnswers) activeStn.userAnswers = {};
+
+    const inputs = this.chunksContainer.querySelectorAll('.fels-blank-input');
+    inputs.forEach(input => {
+      const bIdx = parseInt(input.getAttribute('data-blank-idx'), 10);
+      if (!isNaN(bIdx)) {
+        activeStn.userAnswers[bIdx] = input.value;
+      }
+    });
+  }
+
   async loadSentence(idx) {
+    this.saveCurrentSentenceAnswers();
     if (!appState.sentenceList || idx < 0 || idx >= appState.sentenceList.length) return;
+    appState.activeSentenceIndex = idx;
     const targetStn = appState.sentenceList[idx];
 
     // Compute or fetch 3x1 chunk result
@@ -462,6 +499,13 @@ export class PracticeView {
       return;
     }
 
+    const activeStn = appState.getActiveSentence();
+    if (activeStn && !activeStn.userAnswers) {
+      activeStn.userAnswers = {};
+    }
+
+    let blankIdx = 0;
+
     chunks.forEach((chunk, idx) => {
       // 3D Flip Card (Compact, Headerless, Single-Row)
       const card = document.createElement('div');
@@ -495,6 +539,7 @@ export class PracticeView {
         const felsInfo = getFelsInfo(word);
 
         if (felsInfo) {
+          const currentBlankIdx = blankIdx++;
           const inputWrap = document.createElement('div');
           inputWrap.className = 'fels-input-wrap';
 
@@ -504,11 +549,34 @@ export class PracticeView {
           input.setAttribute('data-answer', felsInfo.clean);
           input.setAttribute('data-original', word);
           input.setAttribute('data-category', felsInfo.label);
+          input.setAttribute('data-blank-idx', currentBlankIdx);
           input.placeholder = '[ ]';
           input.style.width = `${Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20))}px`;
           input.style.maxWidth = '80px';
           input.spellcheck = false;
           input.autocomplete = 'off';
+
+          // Restore previously typed answer
+          const savedAnswer = activeStn?.userAnswers?.[currentBlankIdx];
+          if (typeof savedAnswer === 'string') {
+            input.value = savedAnswer;
+            if (activeStn?.userChecked) {
+              const isCorrect = (savedAnswer || '').trim().toLowerCase() === felsInfo.clean.toLowerCase();
+              input.classList.toggle('is-correct', isCorrect);
+              input.classList.toggle('is-wrong', !isCorrect);
+            }
+          }
+
+          input.addEventListener('input', () => {
+            if (activeStn) {
+              if (!activeStn.userAnswers) activeStn.userAnswers = {};
+              activeStn.userAnswers[currentBlankIdx] = input.value;
+            }
+            input.classList.remove('is-correct', 'is-wrong');
+            if (typeof projectService !== 'undefined' && projectService.markDirty) {
+              projectService.markDirty();
+            }
+          });
 
           const trailingPunct = word.match(/[.,!?;:]+$/);
           const punctStr = trailingPunct ? trailingPunct[0] : '';
@@ -533,12 +601,7 @@ export class PracticeView {
           input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              const nextInput = this.findNextBlank(input);
-              if (nextInput) {
-                nextInput.focus();
-              } else {
-                this.checkFelsAnswers();
-              }
+              this.checkFelsAnswers();
             }
           });
         } else {
@@ -777,10 +840,18 @@ export class PracticeView {
       if (appState.loopStart !== null && appState.loopEnd !== null) {
         if (this.nativeAudioPlayer.currentTime < appState.loopStart || this.nativeAudioPlayer.currentTime >= appState.loopEnd) {
           this.nativeAudioPlayer.currentTime = appState.loopStart;
+          appState.currentLoopCount = 0;
+          this.updateLoopBadge();
         }
       } else {
         if (this.nativeAudioPlayer.currentTime < stnStart || this.nativeAudioPlayer.currentTime >= stnEnd) {
           this.nativeAudioPlayer.currentTime = stnStart;
+          appState.currentLoopCount = 0;
+          this.updateLoopBadge();
+        } else if (appState.targetLoopCount !== Infinity && appState.currentLoopCount >= appState.targetLoopCount) {
+          this.nativeAudioPlayer.currentTime = stnStart;
+          appState.currentLoopCount = 0;
+          this.updateLoopBadge();
         }
       }
 
@@ -875,43 +946,71 @@ export class PracticeView {
   clearSelectedRegion() {
     appState.clearLoop();
     this.looperEngine.reset();
-    if (this.loopStatusBadge) this.loopStatusBadge.classList.add('hidden');
+    this.updateLoopBadge();
     this.drawWaveform();
   }
 
-  startRegionLoop() {
-    if (!this.nativeAudioPlayer.src) {
+  setReplaySeconds(sec) {
+    this.replaySeconds = sec;
+    if (typeof StorageService !== 'undefined' && StorageService.setReplaySeconds) {
+      StorageService.setReplaySeconds(sec);
+    }
+    this.updateReplaySecUI(sec);
+    toast.show(`⏪ F3 단축키 되감기 시간이 ${sec}초로 설정되었습니다.`);
+  }
+
+  updateReplaySecUI(sec) {
+    if (this.replaySecBtns) {
+      this.replaySecBtns.forEach(btn => {
+        const bSec = parseFloat(btn.getAttribute('data-sec'));
+        btn.classList.toggle('active', bSec === sec);
+      });
+    }
+    if (this.shortcutRLabel) {
+      this.shortcutRLabel.textContent = `${sec}초 되감기재생`;
+    }
+  }
+
+  /**
+   * Rewinds audio by user-configured seconds and continues playback seamlessly.
+   * Bound to shortcut 'R' on Stage 2 to repeatedly replay unclear speech sections.
+   */
+  rewindAndPlay(customSec) {
+    if (!this.nativeAudioPlayer || !this.nativeAudioPlayer.src) {
       toast.show('⚠️ 재생 가능한 오디오가 없습니다.');
       return;
     }
 
+    const sec = (typeof customSec === 'number' && customSec > 0) ? customSec : (this.replaySeconds || 1);
+    const cur = this.nativeAudioPlayer.currentTime || 0;
     const activeStn = appState.getActiveSentence();
+    const minBound = (activeStn && activeStn.audioStart !== null) ? activeStn.audioStart : 0;
 
-    if (appState.loopStart !== null && appState.loopEnd !== null) {
-      appState.currentLoopCount = 0;
-      this.looperEngine.reset();
-      this.updateLoopBadge();
+    // Jump back by user-configured seconds, bounded by sentence start
+    const targetTime = Math.max(minBound, cur - sec);
 
-      playbackController.claim('practice');
-      this.nativeAudioPlayer.currentTime = appState.loopStart;
-      this.nativeAudioPlayer.play().then(() => {
-        this.updatePlayPauseIcon(true);
-        this.startWaveformPlaybackLoop();
-        if (appState.isSynthesizedAudio && activeStn) {
-          speakText(activeStn.text);
-        }
-      }).catch(e => console.error(e));
+    playbackController.claim('practice');
+    this.nativeAudioPlayer.currentTime = targetTime;
 
-      const countStr = appState.targetLoopCount === Infinity ? '무한' : `${appState.targetLoopCount}회`;
-      toast.show(`🔁 구간 반복 재생 시작: ${formatPreciseTime(appState.loopStart)} ~ ${formatPreciseTime(appState.loopEnd)} (${countStr})`);
-    } else if (activeStn && activeStn.audioStart !== null && activeStn.audioEnd !== null) {
-      this.setLoopRange(activeStn.audioStart, activeStn.audioEnd);
-      toast.show(`🔁 S${appState.activeSentenceIndex + 1} 문장 구간 반복 재생을 시작합니다.`);
-    } else {
-      const dur = this.nativeAudioPlayer.duration || 1;
-      this.setLoopRange(0, dur);
-      toast.show('🔁 전체 오디오 구간 반복 재생을 시작합니다.');
-    }
+    // Reset loop so user gets seamless, uninterrupted continuous playback
+    appState.clearLoop();
+    this.looperEngine.reset();
+    this.updateLoopBadge();
+
+    this.nativeAudioPlayer.play().then(() => {
+      this.updatePlayPauseIcon(true);
+      this.startWaveformPlaybackLoop();
+      if (appState.isSynthesizedAudio && activeStn) {
+        speakText(activeStn.text);
+      }
+    }).catch(e => console.error(e));
+
+    this.drawWaveform();
+    toast.show(`⏪ ${sec}초 되감기 재생 (${formatPreciseTime(targetTime)})`);
+  }
+
+  startRegionLoop() {
+    this.rewindAndPlay();
   }
 
   prevSentence() {
@@ -981,14 +1080,28 @@ export class PracticeView {
       this.toggleFelsMode();
     }
 
+    const activeStn = appState.getActiveSentence();
+    if (activeStn) {
+      activeStn.userChecked = true;
+      if (!activeStn.userAnswers) activeStn.userAnswers = {};
+      if (typeof projectService !== 'undefined' && projectService.markDirty) {
+        projectService.markDirty();
+      }
+    }
+
     let correctCount = 0;
     const totalCount = this.felsBlanks.length;
 
-    this.felsBlanks.forEach(item => {
+    this.felsBlanks.forEach((item, idx) => {
       if (!item.inputEl) return;
       const userVal = (item.inputEl.value || '').trim().toLowerCase();
       const expected = (item.answer || '').toLowerCase();
 
+      if (activeStn) {
+        activeStn.userAnswers[idx] = item.inputEl.value;
+      }
+
+      // Remove any previously rendered answer reveal badges
       const parent = item.inputEl.parentElement;
       if (parent && typeof parent.querySelector === 'function') {
         const oldReveal = parent.querySelector('.fels-answer-reveal');
@@ -1002,34 +1115,32 @@ export class PracticeView {
       } else {
         item.inputEl.classList.remove('is-correct');
         item.inputEl.classList.add('is-wrong');
-
-        if (parent) {
-          const displayAnswer = item.original ? item.original.replace(/[.,!?;:]+$/, '') : item.answer;
-          const revealBadge = document.createElement('span');
-          revealBadge.className = 'fels-answer-reveal';
-          revealBadge.textContent = displayAnswer;
-          revealBadge.title = `정답: ${displayAnswer} (${item.category || '약형'})`;
-          parent.appendChild(revealBadge);
-        }
+        // Do NOT show answer reveal badge underneath per user requirement
       }
     });
 
-    const percentage = Math.round((correctCount / totalCount) * 100);
-
-    if (this.felsScoreText && this.felsScoreBar) {
-      this.felsScoreText.innerHTML = `
-        🎯 <strong>채점 결과:</strong> 총 ${totalCount}개 중 <strong>${correctCount}개</strong> 정답 (${percentage}%) 
-        <span style="font-weight: 500; font-size: 0.8rem; margin-left: 8px;">
-          ${percentage === 100 ? '🎉 완벽합니다! 약형 기능어를 모두 청취했습니다.' : '💡 오답 항목 아래 표시된 초록색 정답을 확인해보세요.'}
-        </span>
-      `;
-      this.felsScoreBar.classList.remove('hidden');
+    // Do NOT show score banner per user requirement
+    if (this.felsScoreBar) {
+      this.felsScoreBar.classList.add('hidden');
     }
 
-    toast.show(`채점 완료! 정답: ${correctCount}/${totalCount}개 (${percentage}%)`);
+    if (correctCount === totalCount) {
+      toast.show(`🎉 축하합니다! 모든 빈칸(${totalCount}개) 정답입니다!`);
+    } else {
+      toast.show(`✓ 정답 확인: 맞은 빈칸은 초록색, 틀린 빈칸은 빨간색으로 표시됩니다.`);
+    }
   }
 
   resetFelsInputs() {
+    const activeStn = appState.getActiveSentence();
+    if (activeStn) {
+      activeStn.userAnswers = {};
+      delete activeStn.userChecked;
+      if (typeof projectService !== 'undefined' && projectService.markDirty) {
+        projectService.markDirty();
+      }
+    }
+
     this.felsBlanks.forEach(item => {
       if (!item.inputEl) return;
       item.inputEl.value = '';
@@ -1045,6 +1156,30 @@ export class PracticeView {
       this.felsBlanks[0].inputEl.focus();
     }
     toast.show('빈칸이 초기화되었습니다. 다시 입력해 보세요.');
+  }
+
+  toggleTextInputMode() {
+    if (!appState.isFelsMode) {
+      this.toggleFelsMode();
+    }
+
+    const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+    const isInsideBlank = activeEl && activeEl.classList && activeEl.classList.contains('fels-blank-input');
+
+    if (isInsideBlank) {
+      activeEl.blur();
+      toast.show('⌨️ 빈칸 입력 해제 (전역 단축키 활성화)');
+    } else {
+      const blanks = Array.from(this.chunksContainer ? this.chunksContainer.querySelectorAll('.fels-blank-input') : []);
+      if (blanks.length > 0) {
+        const target = blanks.find(b => !(b.value || '').trim()) || blanks[0];
+        target.focus();
+        target.select();
+        toast.show('✏️ 빈칸 입력 모드 (Space: 재생/정지, F3: 되감기, Enter: 정답확인, F4/F5: 문장이동, F2/Esc: 해제)');
+      } else {
+        toast.show('💡 현재 문장에는 약형 빈칸이 없습니다.');
+      }
+    }
   }
 
   toggleFlipAllCards() {
@@ -1202,10 +1337,22 @@ export class PracticeView {
 
   updateLoopBadge() {
     if (!this.loopStatusBadge) return;
-    if (appState.loopStart !== null && appState.loopEnd !== null) {
+    const activeStn = appState.getActiveSentence();
+    const hasCustomLoop = appState.loopStart !== null && appState.loopEnd !== null;
+
+    if (hasCustomLoop) {
       this.loopStatusBadge.classList.remove('hidden');
       if (this.loopRangeLabel) {
-        this.loopRangeLabel.textContent = `루프: ${formatPreciseTime(appState.loopStart)} ~ ${formatPreciseTime(appState.loopEnd)}`;
+        this.loopRangeLabel.textContent = `구간 루프: ${formatPreciseTime(appState.loopStart)} ~ ${formatPreciseTime(appState.loopEnd)}`;
+      }
+      if (this.loopCountLabel) {
+        const targetStr = appState.targetLoopCount === Infinity ? '∞' : appState.targetLoopCount;
+        this.loopCountLabel.textContent = `(${Math.min(appState.currentLoopCount + 1, appState.targetLoopCount || 1)}/${targetStr}회)`;
+      }
+    } else if (activeStn && activeStn.audioStart !== null && activeStn.audioEnd !== null && (appState.targetLoopCount > 1 || appState.targetLoopCount === Infinity)) {
+      this.loopStatusBadge.classList.remove('hidden');
+      if (this.loopRangeLabel) {
+        this.loopRangeLabel.textContent = `문장 S${appState.activeSentenceIndex + 1} 루프: ${formatPreciseTime(activeStn.audioStart)} ~ ${formatPreciseTime(activeStn.audioEnd)}`;
       }
       if (this.loopCountLabel) {
         const targetStr = appState.targetLoopCount === Infinity ? '∞' : appState.targetLoopCount;
@@ -1335,6 +1482,7 @@ export class PracticeView {
   }
 
   onDeactivated() {
+    this.saveCurrentSentenceAnswers();
     if (this.nativeAudioPlayer && typeof this.nativeAudioPlayer.pause === 'function') {
       try {
         if (!this.nativeAudioPlayer.paused) {

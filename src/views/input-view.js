@@ -26,6 +26,7 @@ import { escapeHtml } from '../utils/dom.js';
 import { projectService } from '../services/project-service.js';
 import { MasterWaveformTimeline } from '../audio/master-waveform.js';
 import { SentenceTrimmerModal } from '../ui/sentence-trimmer-modal.js';
+import { WAVEFORM_SEGMENT_COLORS } from '../config/constants.js';
 
 // Placeholder kept in the 직독직해 slash string for empty chunks so slot positions never shift
 const DIRECT_EMPTY_PLACEHOLDER = '—';
@@ -42,6 +43,7 @@ export class InputView {
     this.isStartingPractice = false;     // re-entrancy guard for the 3 "start practice" buttons
     this.busySentences = new WeakSet();   // sentences with an in-flight chunk re-translation
     this.cachedBase64 = null;             // { file, base64 } — avoid re-encoding the same upload
+    this.activeSentenceIndex = null;      // Currently active sentence being edited/previewed
 
     // DOM Elements - Input Form
     this.container = document.getElementById('view-input');
@@ -127,14 +129,10 @@ export class InputView {
               toast.show(`⏱ 문장 S${idx + 1} 구간: ${start}s ~ ${end}s`);
             }
           }
+          this.setActiveSentence(idx);
         },
         onSegmentSelect: (idx) => {
-          const targetCard = this.parsedSentenceList ? this.parsedSentenceList.querySelector(`[data-stn-idx="${idx}"]`) : null;
-          if (targetCard) {
-            targetCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            targetCard.classList.add('merged-highlight');
-            setTimeout(() => targetCard.classList.remove('merged-highlight'), 1000);
-          }
+          this.setActiveSentence(idx, { scrollToCard: true });
         }
       });
     }
@@ -143,6 +141,79 @@ export class InputView {
 
     this.initEvents();
     this.setMode('text'); // default: script only
+  }
+
+  /**
+   * Sets the currently active sentence being edited, listened to, or dragged.
+   * Keeps persistent waveform-matched emphasis highlight on the card without disappearing.
+   */
+  setActiveSentence(idx, { scrollToCard = false } = {}) {
+    if (typeof idx !== 'number' || idx < 0) return;
+    this.activeSentenceIndex = idx;
+
+    if (this.parsedSentenceList && typeof this.parsedSentenceList.querySelectorAll === 'function') {
+      const cards = this.parsedSentenceList.querySelectorAll('.parsed-sentence-item');
+      if (cards && typeof cards.forEach === 'function') {
+        cards.forEach((card) => {
+          if (!card || typeof card.getAttribute !== 'function') return;
+          const cIdx = parseInt(card.getAttribute('data-stn-idx'), 10);
+          const isActive = (cIdx === idx);
+          if (card.classList && typeof card.classList.toggle === 'function') {
+            card.classList.toggle('is-active', isActive);
+          }
+          if (isActive && scrollToCard && typeof card.scrollIntoView === 'function') {
+            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        });
+      }
+    }
+
+    if (this.masterWaveform && typeof this.masterWaveform.setSelectedSentence === 'function') {
+      this.masterWaveform.setSelectedSentence(idx);
+    }
+  }
+
+  /**
+   * Toggles play/pause for Stage 1 master waveform & segment preview.
+   * Bound to Spacebar shortcut when on Stage 1 input view.
+   */
+  togglePlayPauseWaveform() {
+    const player = this.nativeAudioPlayer || (playbackController && playbackController.getPlayer());
+    const isPlaying = player && !player.paused;
+
+    if (isPlaying) {
+      playbackController.stop();
+      if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+      if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+      return;
+    }
+
+    // If whole-track master playback was previously active, resume whole-track
+    if (playbackController && playbackController.owner === 'input-master') {
+      if (this.btnMasterPlayPause) {
+        this.btnMasterPlayPause.click();
+        return;
+      }
+    }
+
+    const curTime = (player && typeof player.currentTime === 'number') ? player.currentTime : 0;
+
+    // If currently paused, play active sentence segment (resuming from paused position if within sentence)
+    if (typeof this.activeSentenceIndex === 'number' && appState.sentenceList) {
+      const stn = appState.sentenceList.find(s => s.index === this.activeSentenceIndex);
+      if (stn && stn.audioStart !== null && stn.audioEnd !== null) {
+        let startTime = stn.audioStart;
+        if (curTime >= stn.audioStart && curTime < (stn.audioEnd - 0.05)) {
+          startTime = curTime;
+        }
+        playbackController.playSegment(startTime, stn.audioEnd, { owner: 'master-waveform' });
+        return;
+      }
+    }
+
+    if (this.btnMasterPlayPause) {
+      this.btnMasterPlayPause.click();
+    }
   }
 
   initEvents() {
@@ -1126,6 +1197,39 @@ export class InputView {
       itemCard.className = 'parsed-sentence-item';
       itemCard.setAttribute('data-stn-idx', idx);
 
+      const colors = (typeof WAVEFORM_SEGMENT_COLORS !== 'undefined' && Array.isArray(WAVEFORM_SEGMENT_COLORS) && WAVEFORM_SEGMENT_COLORS.length)
+        ? WAVEFORM_SEGMENT_COLORS
+        : [
+            { fill: 'rgba(99, 102, 241, 0.18)', stroke: 'rgba(129, 140, 248, 0.85)', tag: '#818cf8', glow: 'rgba(99, 102, 241, 0.45)', bgTint: 'rgba(99, 102, 241, 0.10)', badgeBg: 'rgba(99, 102, 241, 0.28)' }
+          ];
+      const color = colors[idx % colors.length];
+      if (itemCard.style) {
+        if (typeof itemCard.style.setProperty === 'function') {
+          itemCard.style.setProperty('--stn-stroke', color.stroke);
+          itemCard.style.setProperty('--stn-glow', color.glow || color.stroke);
+          itemCard.style.setProperty('--stn-bgtint', color.bgTint || color.fill);
+          itemCard.style.setProperty('--stn-badge-bg', color.badgeBg || color.fill);
+          itemCard.style.setProperty('--stn-tag', color.tag);
+          itemCard.style.setProperty('--stn-fill', color.fill);
+        } else {
+          itemCard.style['--stn-stroke'] = color.stroke;
+          itemCard.style['--stn-glow'] = color.glow || color.stroke;
+          itemCard.style['--stn-bgtint'] = color.bgTint || color.fill;
+          itemCard.style['--stn-badge-bg'] = color.badgeBg || color.fill;
+          itemCard.style['--stn-tag'] = color.tag;
+          itemCard.style['--stn-fill'] = color.fill;
+        }
+      }
+
+      if (typeof itemCard.addEventListener === 'function') {
+        itemCard.addEventListener('pointerdown', () => {
+          this.setActiveSentence(idx);
+        });
+        itemCard.addEventListener('focusin', () => {
+          this.setActiveSentence(idx);
+        });
+      }
+
       const hasAudioTime = stn.audioStart !== null && stn.audioEnd !== null;
       const timeStr = hasAudioTime 
         ? `${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}` 
@@ -1370,7 +1474,19 @@ export class InputView {
       this.masterWaveform.setSentenceList(appState.sentenceList);
     }
 
-    requestAnimationFrame(() => {
+    // Ensure active sentence highlight is set (retains working sentence or defaults to 0)
+    const initialActiveIdx = (typeof targetIdx === 'number' && targetIdx >= 0 && targetIdx < sentences.length)
+      ? targetIdx
+      : ((typeof this.activeSentenceIndex === 'number' && this.activeSentenceIndex >= 0 && this.activeSentenceIndex < sentences.length)
+        ? this.activeSentenceIndex
+        : 0);
+    this.setActiveSentence(initialActiveIdx);
+
+    const schedulePostRender = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (fn) => setTimeout(fn, 0);
+
+    schedulePostRender(() => {
       // Release temporary min-height lock
       if (this.parsedSentenceList) {
         this.parsedSentenceList.style.minHeight = '';
@@ -1384,6 +1500,7 @@ export class InputView {
 
       // If specific sentence index targeted (e.g. after merge or split)
       if (typeof targetIdx === 'number' && targetIdx >= 0) {
+        this.setActiveSentence(targetIdx, { scrollToCard: true });
         const targetCard = this.parsedSentenceList.querySelector(`[data-stn-idx="${targetIdx}"]`);
         if (targetCard) {
           if (scrollContext && typeof scrollContext.cardTopBefore === 'number') {
@@ -1396,10 +1513,6 @@ export class InputView {
           } else {
             targetCard.scrollIntoView({ behavior: 'auto', block: 'nearest' });
           }
-
-          // Visual confirmation animation
-          targetCard.classList.add('merged-highlight');
-          setTimeout(() => targetCard.classList.remove('merged-highlight'), 1200);
           return;
         }
       }
@@ -1691,6 +1804,10 @@ export class InputView {
   }
 
   playOrSpeakSentence(stn, speakBtn) {
+    if (stn && typeof stn.index === 'number') {
+      this.setActiveSentence(stn.index);
+    }
+
     if (speakBtn) {
       const origHtml = speakBtn.innerHTML;
       speakBtn.innerHTML = '<span>🔊 재생 중...</span>';

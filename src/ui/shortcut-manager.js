@@ -66,13 +66,50 @@ export class ShortcutManager {
     // Typing protection: If user is actively typing in a form field
     if (isTyping) {
       const isFelsBlank = target.classList && target.classList.contains('fels-blank-input');
-      // Alt + Arrow allowed inside FELS blanks for sentence jumping
-      if (isFelsBlank && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        e.preventDefault();
-        if (e.key === 'ArrowLeft' && this.handlers.onPrevSentence) {
-          this.handlers.onPrevSentence();
-        } else if (e.key === 'ArrowRight' && this.handlers.onNextSentence) {
-          this.handlers.onNextSentence();
+      if (isFelsBlank) {
+        // 1. Space: togglePlayPause even while typing inside blank (keeps focus)
+        if (e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          if (this.handlers.onPlayPause) this.handlers.onPlayPause();
+          return;
+        }
+        // 2. F3: rewindAndPlay even while typing inside blank (keeps focus)
+        if (e.key === 'F3') {
+          e.preventDefault();
+          if (this.handlers.onRewindAndPlay) {
+            this.handlers.onRewindAndPlay();
+          } else if (this.handlers.onStartLoop) {
+            this.handlers.onStartLoop();
+          }
+          return;
+        }
+        // 3. F4: prevSentence (앞문장 이동)
+        if (e.key === 'F4') {
+          e.preventDefault();
+          if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
+          return;
+        }
+        // 4. F5: nextSentence (뒷문장 이동, 브라우저 새로고침 방지)
+        if (e.key === 'F5') {
+          e.preventDefault();
+          if (this.handlers.onNextSentence) this.handlers.onNextSentence();
+          return;
+        }
+        // Toggle OFF via F2 or Escape: immediately exit text input mode and blur
+        if (e.key === 'F2' || e.key === 'Escape') {
+          e.preventDefault();
+          target.blur();
+          return;
+        }
+        // Alt + Arrow allowed inside FELS blanks for sentence jumping
+        if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          e.preventDefault();
+          if (e.key === 'ArrowLeft' && this.handlers.onPrevSentence) {
+            this.handlers.onPrevSentence();
+          } else if (e.key === 'ArrowRight' && this.handlers.onNextSentence) {
+            this.handlers.onNextSentence();
+          }
+          return;
         }
       }
       return;
@@ -119,6 +156,21 @@ export class ShortcutManager {
     }
 
     // =========================================================================
+    // PAGE 1: Input View Waveform Shortcuts (Space: Play/Pause Waveform)
+    // =========================================================================
+    if (currentPage === 'input') {
+      const key = e.key;
+      if (key === ' ' || key === 'Spacebar') {
+        e.preventDefault();
+        if (this.handlers.onPlayPauseInput) {
+          this.handlers.onPlayPauseInput();
+        }
+        return;
+      }
+      return;
+    }
+
+    // =========================================================================
     // PAGE 2: Practice View Shortcuts (Space, [, ], \, R, Arrows, S, T)
     // =========================================================================
     if (currentPage !== 'practice') {
@@ -147,7 +199,7 @@ export class ShortcutManager {
 
     const key = e.key;
 
-    // 1. Space: togglePlayPause
+    // 1. Space : togglePlayPause (스페이스바로 재생/정지)
     if (key === ' ' || key === 'Spacebar') {
       e.preventDefault();
       if (this.handlers.onPlayPause) this.handlers.onPlayPause();
@@ -175,22 +227,26 @@ export class ShortcutManager {
       return;
     }
 
-    // 5. R / r : startRegionLoop
-    if (key === 'r' || key === 'R' || key === 'ㄱ') {
+    // 5. F3 : rewindAndPlay (user-configured seconds rewind & continuous playback)
+    if (key === 'F3') {
       e.preventDefault();
-      if (this.handlers.onStartLoop) this.handlers.onStartLoop();
+      if (this.handlers.onRewindAndPlay) {
+        this.handlers.onRewindAndPlay();
+      } else if (this.handlers.onStartLoop) {
+        this.handlers.onStartLoop();
+      }
       return;
     }
 
-    // 6. ArrowLeft : prevSentence
-    if (key === 'ArrowLeft') {
+    // 6. F4 / ArrowLeft : prevSentence (앞문장으로 이동)
+    if (key === 'F4' || key === 'ArrowLeft') {
       e.preventDefault();
       if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
       return;
     }
 
-    // 7. ArrowRight : nextSentence
-    if (key === 'ArrowRight') {
+    // 7. F5 / ArrowRight : nextSentence (뒷문장으로 이동, F5 브라우저 새로고침 방지)
+    if (key === 'F5' || key === 'ArrowRight') {
       e.preventDefault();
       if (this.handlers.onNextSentence) this.handlers.onNextSentence();
       return;
@@ -207,6 +263,13 @@ export class ShortcutManager {
     if (key === 't' || key === 'T' || key === 'ㅅ') {
       e.preventDefault();
       if (this.handlers.onToggleTranslation) this.handlers.onToggleTranslation();
+      return;
+    }
+
+    // 10. F2 : toggleTextInput (약형 빈칸 텍스트 입력 모드 진입/해제)
+    if (key === 'F2') {
+      e.preventDefault();
+      if (this.handlers.onToggleTextInput) this.handlers.onToggleTextInput();
       return;
     }
   }

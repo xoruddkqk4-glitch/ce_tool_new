@@ -103,20 +103,29 @@ export class MemorizeView {
     }
 
     // Auto-fit chunk cards into single lines on window or container resize
+    const handleResize = () => {
+      if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
+        this.fitAllSentenceRows();
+      }
+      if (this.isClassroomModalOpen()) {
+        this.fitClassroomSentenceRows();
+      }
+    };
+
     if (typeof ResizeObserver !== 'undefined' && this.canvasContainer) {
-      this.resizeObserver = new ResizeObserver(() => {
-        if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
-          this.fitAllSentenceRows();
-        }
-      });
+      this.resizeObserver = new ResizeObserver(handleResize);
       this.resizeObserver.observe(this.canvasContainer);
+      if (this.classroomChunksContainer) {
+        this.resizeObserver.observe(this.classroomChunksContainer);
+      }
     } else {
-      window.addEventListener('resize', () => {
-        if (this.canvasContainer && this.canvasContainer.offsetParent !== null) {
-          this.fitAllSentenceRows();
-        }
-      });
+      window.addEventListener('resize', handleResize);
     }
+    window.addEventListener('resize', () => {
+      if (this.isClassroomModalOpen()) {
+        this.fitClassroomSentenceRows();
+      }
+    });
   }
 
   setMemorizeMode(mode) {
@@ -391,7 +400,11 @@ export class MemorizeView {
       const scale = availTextWidth / totalRawTextWidth;
       // Allow scaling down smoothly (down to 0.45rem if needed for very long sentences)
       const scaledFontRem = Math.max(0.45, Math.min(0.92, 0.92 * scale));
-      chunkGrid.style.setProperty('--row-chunk-font-size', `${scaledFontRem.toFixed(3)}rem`);
+      if (typeof chunkGrid.style.setProperty === 'function') {
+        chunkGrid.style.setProperty('--row-chunk-font-size', `${scaledFontRem.toFixed(3)}rem`);
+      } else {
+        chunkGrid.style['--row-chunk-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
+      }
 
       // Allocate card widths: exactly textWidth * scale + fixedCardExtra!
       let remainingTextSpace = availTextWidth;
@@ -411,7 +424,11 @@ export class MemorizeView {
       });
     } else {
       // Fits comfortably at standard font size
-      chunkGrid.style.setProperty('--row-chunk-font-size', '0.92rem');
+      if (typeof chunkGrid.style.setProperty === 'function') {
+        chunkGrid.style.setProperty('--row-chunk-font-size', '0.92rem');
+      } else {
+        chunkGrid.style['--row-chunk-font-size'] = '0.92rem';
+      }
       cards.forEach((card, idx) => {
         const cardW = rawTextWidths[idx] + fixedCardExtra;
         card.style.flex = '0 0 auto';
@@ -635,6 +652,9 @@ export class MemorizeView {
       this.classroomModal.classList.remove('hidden');
     }
     window.addEventListener('keydown', this.boundClassroomKeyHandler);
+    requestAnimationFrame(() => {
+      this.fitClassroomSentenceRows();
+    });
     toast.show(`🖥️ 문장 S${sIdx + 1} 교실 대형 화면 열림`);
   }
 
@@ -876,10 +896,10 @@ export class MemorizeView {
         const koText = (chunk.ko || '').trim();
 
         // Calculate sleek compact width so sentence stays strictly on 1 line
-        const charLen = Math.max(enText.length, Math.ceil(koText.length * 1.4));
-        const estCardW = Math.max(isActive ? 60 : 48, charLen * (isActive ? 13 : 10) + (isActive ? 24 : 16));
+        const charLen = Math.max(enText.length, Math.ceil(koText.length * 1.3));
+        const estCardW = Math.max(isActive ? 36 : 28, charLen * (isActive ? 9 : 7) + (isActive ? 14 : 10));
         card.style.width = `${estCardW}px`;
-        card.style.flex = '0 0 auto';
+        card.style.flex = '0 1 auto';
 
         card.innerHTML = `
           <div class="classroom-card-inner">
@@ -905,27 +925,116 @@ export class MemorizeView {
       this.classroomChunksContainer.appendChild(rowEl);
     });
 
-    // Precise DOM width adjustment after render
+    // Precise fitting to prevent any horizontal overflow and scrollbars
     requestAnimationFrame(() => {
-      if (!this.classroomChunksContainer) return;
-      const cards = this.classroomChunksContainer.querySelectorAll('.classroom-chunk-card');
-      cards.forEach(c => {
-        const enEl = c.querySelector('.classroom-face-en .classroom-chunk-text');
-        const koEl = c.querySelector('.classroom-face-ko .classroom-chunk-text');
-        const wEn = enEl ? enEl.scrollWidth : 0;
-        const wKo = koEl ? koEl.scrollWidth : 0;
-        const maxTextW = Math.max(wEn, wKo);
-        if (maxTextW > 0) {
-          const isAct = c.classList.contains('active-card');
-          const padding = isAct ? 24 : 16;
-          const targetW = Math.max(isAct ? 60 : 48, maxTextW + padding);
-          const curW = parseFloat(c.style.width || '0');
-          if (targetW > curW) {
-            c.style.width = `${targetW}px`;
-            c.style.minWidth = `${targetW}px`;
+      this.fitClassroomSentenceRows();
+    });
+  }
+
+  fitClassroomSentenceRows() {
+    if (!this.classroomChunksContainer) return;
+    const rows = this.classroomChunksContainer.querySelectorAll('.classroom-sentence-row');
+    rows.forEach(row => {
+      if (row.classList.contains('is-placeholder')) return;
+      const chunksWrap = row.querySelector('.classroom-row-chunks');
+      if (!chunksWrap) return;
+      const cards = Array.from(chunksWrap.querySelectorAll('.classroom-chunk-card'));
+      if (!cards.length) return;
+
+      // Available width inside chunksWrap
+      let availWidth = chunksWrap.clientWidth;
+      if (!availWidth || availWidth <= 0) {
+        if (this.classroomChunksContainer.clientWidth) {
+          availWidth = this.classroomChunksContainer.clientWidth - 32;
+        } else if (this.classroomModal && this.classroomModal.clientWidth) {
+          availWidth = this.classroomModal.clientWidth - 80;
+        } else {
+          availWidth = 1100;
+        }
+      }
+
+      const isActive = row.classList.contains('is-active');
+      const gap = 6;
+      const totalGaps = (cards.length - 1) * gap;
+      // Active: 4px*2 padding + 2px border + 2px buffer = 16px (padding is 4px 7px)
+      // Context: 2px*2 padding + 2px border + 2px buffer = 12px (padding is 2px 5px)
+      const fixedCardExtra = isActive ? 16 : 12;
+      const totalFixedOverhead = (cards.length * fixedCardExtra) + totalGaps;
+      const availTextWidth = Math.max(20, availWidth - totalFixedOverhead - 4);
+
+      const baseFontRem = isActive ? 1.05 : 0.88;
+      const fontScaleFactor = (baseFontRem * 16) / 14.72;
+
+      const rawTextWidths = [];
+      cards.forEach(card => {
+        const enEl = card.querySelector('.classroom-face-en .classroom-chunk-text');
+        const koEl = card.querySelector('.classroom-face-ko .classroom-chunk-text');
+        const enText = enEl ? enEl.textContent.trim() : '';
+        const koText = koEl ? koEl.textContent.trim() : '';
+
+        const wEn = this.measureTextWidth(enText, false) * fontScaleFactor;
+        const wKo = this.measureTextWidth(koText, true) * fontScaleFactor;
+        const maxTextW = Math.max(wEn, wKo, 10);
+        rawTextWidths.push(maxTextW);
+      });
+
+      const totalRawTextWidth = rawTextWidths.reduce((sum, w) => sum + w, 0);
+
+      if (totalRawTextWidth > availTextWidth) {
+        const scale = availTextWidth / totalRawTextWidth;
+        const scaledFontRem = Math.max(0.55, Math.min(baseFontRem, baseFontRem * scale));
+
+        if (isActive) {
+          if (typeof chunksWrap.style.setProperty === 'function') {
+            chunksWrap.style.setProperty('--classroom-font-size', `${scaledFontRem.toFixed(3)}rem`);
+          } else {
+            chunksWrap.style['--classroom-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
+          }
+        } else {
+          if (typeof chunksWrap.style.setProperty === 'function') {
+            chunksWrap.style.setProperty('--classroom-context-font-size', `${scaledFontRem.toFixed(3)}rem`);
+          } else {
+            chunksWrap.style['--classroom-context-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
           }
         }
-      });
+
+        let remaining = availTextWidth;
+        cards.forEach((card, idx) => {
+          let allocated;
+          if (idx === cards.length - 1) {
+            allocated = Math.max(8, remaining);
+          } else {
+            allocated = Math.max(8, Math.floor(rawTextWidths[idx] * scale));
+            remaining -= allocated;
+          }
+          const cardW = allocated + fixedCardExtra;
+          card.style.flex = '0 0 auto';
+          card.style.width = `${cardW}px`;
+          card.style.minWidth = '0px';
+          card.style.maxWidth = 'none';
+        });
+      } else {
+        if (isActive) {
+          if (typeof chunksWrap.style.removeProperty === 'function') {
+            chunksWrap.style.removeProperty('--classroom-font-size');
+          } else {
+            delete chunksWrap.style['--classroom-font-size'];
+          }
+        } else {
+          if (typeof chunksWrap.style.removeProperty === 'function') {
+            chunksWrap.style.removeProperty('--classroom-context-font-size');
+          } else {
+            delete chunksWrap.style['--classroom-context-font-size'];
+          }
+        }
+        cards.forEach((card, idx) => {
+          const cardW = Math.max(isActive ? 36 : 28, Math.round(rawTextWidths[idx]) + fixedCardExtra);
+          card.style.flex = '0 0 auto';
+          card.style.width = `${cardW}px`;
+          card.style.minWidth = '0px';
+          card.style.maxWidth = 'none';
+        });
+      }
     });
   }
 

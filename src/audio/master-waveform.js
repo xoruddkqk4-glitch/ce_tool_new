@@ -7,6 +7,7 @@
 
 import { formatTime } from './looper-engine.js';
 import { playbackController } from './playback-controller.js';
+import { WAVEFORM_SEGMENT_COLORS } from '../config/constants.js';
 
 export class MasterWaveformTimeline {
   constructor(canvas, options = {}) {
@@ -32,16 +33,25 @@ export class MasterWaveformTimeline {
     this.isPlaying = false;
     this.animFrameId = null;
 
-    this.colors = [
-      { fill: 'rgba(99, 102, 241, 0.18)', stroke: 'rgba(129, 140, 248, 0.85)', tag: '#818cf8' }, // Indigo
-      { fill: 'rgba(16, 185, 129, 0.18)', stroke: 'rgba(52, 211, 153, 0.85)', tag: '#34d399' }, // Emerald
-      { fill: 'rgba(245, 158, 11, 0.18)', stroke: 'rgba(251, 191, 36, 0.85)', tag: '#fbbf24' }, // Amber
-      { fill: 'rgba(236, 72, 153, 0.18)', stroke: 'rgba(244, 114, 182, 0.85)', tag: '#f472b6' }, // Pink
-      { fill: 'rgba(14, 165, 233, 0.18)', stroke: 'rgba(56, 189, 248, 0.85)', tag: '#38bdf8' }, // Cyan
-      { fill: 'rgba(168, 85, 247, 0.18)', stroke: 'rgba(192, 132, 252, 0.85)', tag: '#c084fc' }  // Purple
-    ];
+    this.selectedSentenceIndex = null;
+    this.colors = (typeof WAVEFORM_SEGMENT_COLORS !== 'undefined' && Array.isArray(WAVEFORM_SEGMENT_COLORS) && WAVEFORM_SEGMENT_COLORS.length)
+      ? WAVEFORM_SEGMENT_COLORS
+      : [
+          { fill: 'rgba(99, 102, 241, 0.18)', stroke: 'rgba(129, 140, 248, 0.85)', tag: '#818cf8' },
+          { fill: 'rgba(16, 185, 129, 0.18)', stroke: 'rgba(52, 211, 153, 0.85)', tag: '#34d399' },
+          { fill: 'rgba(245, 158, 11, 0.18)', stroke: 'rgba(251, 191, 36, 0.85)', tag: '#fbbf24' },
+          { fill: 'rgba(236, 72, 153, 0.18)', stroke: 'rgba(244, 114, 182, 0.85)', tag: '#f472b6' },
+          { fill: 'rgba(14, 165, 233, 0.18)', stroke: 'rgba(56, 189, 248, 0.85)', tag: '#38bdf8' },
+          { fill: 'rgba(168, 85, 247, 0.18)', stroke: 'rgba(192, 132, 252, 0.85)', tag: '#c084fc' }
+        ];
 
     this.initEvents();
+  }
+
+  setSelectedSentence(idx) {
+    if (this.selectedSentenceIndex === idx) return;
+    this.selectedSentenceIndex = idx;
+    this.draw();
   }
 
   setAudioBuffer(audioBuffer) {
@@ -170,43 +180,50 @@ export class MasterWaveformTimeline {
 
       const isHovered = this.hoverInfo && this.hoverInfo.index === stn.index;
       const isDragging = this.activeDrag && this.activeDrag.index === stn.index;
+      const isSelected = this.selectedSentenceIndex === stn.index;
 
-      // Segment Background
-      ctx.fillStyle = (isHovered || isDragging) ? color.fill.replace('0.18', '0.34') : color.fill;
+      // Segment Background (selected stays prominently highlighted)
+      if (isSelected) {
+        ctx.fillStyle = color.fill.replace('0.18', '0.38');
+      } else if (isHovered || isDragging) {
+        ctx.fillStyle = color.fill.replace('0.18', '0.32');
+      } else {
+        ctx.fillStyle = color.fill;
+      }
       ctx.fillRect(startX, 0, segW, h);
 
-      // Top Header Border
+      // Top & Segment Header Border
       ctx.strokeStyle = color.stroke;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = isSelected ? 2.5 : 1.5;
       ctx.strokeRect(startX, 0, segW, h);
 
       // Label Tag: S1 (00:03.2)
-      ctx.fillStyle = color.tag;
-      ctx.font = 'bold 10px sans-serif';
+      ctx.fillStyle = isSelected ? '#ffffff' : color.tag;
+      ctx.font = isSelected ? 'bold 11px sans-serif' : 'bold 10px sans-serif';
       const label = `S${stn.index + 1} (${this.formatSec(stn.audioStart)}~${this.formatSec(stn.audioEnd)})`;
       ctx.fillText(label, startX + 5, 22);
 
       // Left Boundary Handle Line
-      const isStartHovered = isHovered && this.hoverInfo.edge === 'start';
+      const isStartHovered = (isHovered && this.hoverInfo.edge === 'start') || (isDragging && this.activeDrag.edge === 'start');
       ctx.strokeStyle = isStartHovered ? '#ffffff' : color.stroke;
-      ctx.lineWidth = isStartHovered ? 3 : 2;
+      ctx.lineWidth = isStartHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(startX, 0);
       ctx.lineTo(startX, h);
       ctx.stroke();
 
       // Right Boundary Handle Line
-      const isEndHovered = isHovered && this.hoverInfo.edge === 'end';
+      const isEndHovered = (isHovered && this.hoverInfo.edge === 'end') || (isDragging && this.activeDrag.edge === 'end');
       ctx.strokeStyle = isEndHovered ? '#ffffff' : color.stroke;
-      ctx.lineWidth = isEndHovered ? 3 : 2;
+      ctx.lineWidth = isEndHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(endX, 0);
       ctx.lineTo(endX, h);
       ctx.stroke();
 
       // Grab handle diamond indicators
-      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? '#ffffff' : color.tag);
-      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? '#ffffff' : color.tag);
+      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
+      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
     });
 
     // 4. Playhead Line
@@ -432,11 +449,16 @@ export class MasterWaveformTimeline {
           origStart: stn.audioStart,
           origEnd: stn.audioEnd
         };
+        this.setSelectedSentence(stn.index);
+        if (typeof this.options.onSegmentSelect === 'function') {
+          this.options.onSegmentSelect(stn.index);
+        }
       }
     } else if (this.hoverInfo && this.hoverInfo.type === 'segment') {
       // Click inside segment: Play this segment and select it
       const stn = this.sentenceList.find(s => s.index === this.hoverInfo.index);
       if (stn && stn.audioStart !== null && stn.audioEnd !== null) {
+        this.setSelectedSentence(stn.index);
         playbackController.playSegment(stn.audioStart, stn.audioEnd, { owner: 'master-waveform' });
         if (typeof this.options.onSegmentSelect === 'function') {
           this.options.onSegmentSelect(stn.index);

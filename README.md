@@ -551,6 +551,43 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 30/30개 테스트 스위트 100% 통과 (17.5초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
+## [2026-10-13 23:25] 업데이트 이력 (Commit ID: PENDING)
+- **수정 내용**:
+  1. **1단계 전체 오디오 문장 구간 편집기 파형창 강조 상시 유지 & 스페이스바 일시정지/재개 개선 (`src/audio/master-waveform.js`, `src/views/input-view.js`)**:
+     - 문장 작업 중 파형창 배경색과 동일한 강조 효과가 마우스 아웃 후에도 사라지지 않고 상시 유지되도록 렌더링 로직 개선.
+     - 1단계 파형창 오디오 재생 중 스페이스바 입력 시 일시정지(`pause()`), 다시 스페이스바 입력 시 문장 처음이 아닌 '멈춘 지점'부터 자연스럽게 재생이 재개(Resume)되도록 제어 개선 (문장 처음부터 재생은 마우스 클릭으로 분리).
+  2. **3단계 크게 보기 모달창 (Classroom View) 가로 스크롤 방지 및 글자/여백 최적화 (`src/views/memorize-view.js`, `styles/views/memorize-view.css`)**:
+     - 긴 문장이 화면을 벗어나 가로 스크롤바가 생성되지 않도록 반응형 폰트 축소 계산식 및 청크 카드 내부 좌우 패딩을 최적화하여 뷰포트 내 완전 적합 렌더링 보장.
+  3. **2단계 되감기 반복 시간 사용자 커스텀 UI (`0.5초, 1초, 1.5초, 2초`) (`src/views/practice-view.js`, `src/services/storage-service.js`, `index.html`, `styles/components/audio-player.css`)**:
+     - 기존 선택 구간 반복 기능 대신, 사용자가 설정한 시간만큼 뒤로 되돌아가 끊김 없이 다시 들을 수 있는 되감기 재생 기능 구현.
+     - 0.5초, 1초, 1.5초, 2초 선택 버튼 그룹 제공 및 `LocalStorage` 영구 보존 연동.
+  4. **2단계 약형드랩 텍스트 입력 단축키 체계 개편 & 정답 확인 간소화 & 입력 기록 영구 보존 (`src/ui/shortcut-manager.js`, `src/views/practice-view.js`, `src/main.js`, `index.html`)**:
+     - **단축키 체계 완비 (Zero-Conflict)**:
+       - <kbd>Space</kbd>: 재생/일시정지 (약형 빈칸 입력창 안에서 타이핑 중에도 포커스를 유지한 채 즉시 재생/정지 가능).
+       - <kbd>F3</kbd>: 설정 시간 되감기 재생 (빈칸 안에서 타이핑 중에도 포커스 유지한 채 즉시 되감아 청취).
+       - <kbd>F4</kbd>: 앞문장(이전문장) 이동 (기존 <kbd>←</kbd>와 병행 지원).
+       - <kbd>F5</kbd>: 뒷문장(다음문장) 이동 (브라우저 새로고침 방지 `e.preventDefault()` 적용, <kbd>→</kbd>와 병행 지원).
+       - <kbd>F2</kbd>: 빈칸 입력 모드 토글 (진입/해제) 및 <kbd>Esc</kbd> 즉시 해제.
+       - <kbd>Enter</kbd>: 다음 빈칸 이동 대신 즉시 '정답 확인'(`checkFelsAnswers()`) 실행.
+       - 타이핑 혼선을 주는 <kbd>E</kbd> 키 단축키 제외.
+     - **정답 확인 간소화**:
+       - 긴 채점 배너(`#felsScoreBar`) 및 오답 하단 정답 노출 배지(`.fels-answer-reveal`)를 완전 숨김/제거.
+       - 맞은 빈칸은 초록 테두리(`is-correct`), 틀린 빈칸은 빨간 테두리(`is-wrong`)로만 직관적으로 표시.
+     - **문장 전환 및 프로젝트 저장 시 입력값 영구 보존**:
+       - 문장을 앞뒤로 이동해도 이전에 입력했던 각 문장별 빈칸 입력값(`userAnswers`)과 채점 상태(`userChecked`)가 그대로 복원.
+       - 프로젝트 저장 시 `.ceproject` JSON 파일에 문장별 입력값과 채점 상태가 함께 직렬화되어 파일 로드 시 100% 복원.
+  5. **루프 반복(1회, 3회, 5회, 무한) 설정의 문장 전체 적용 (`src/audio/looper-engine.js`, `src/views/practice-view.js`)**:
+     - 선택 구간(A-B)뿐만 아니라 선택 구간이 없는 일반 상태에서도 문장 전체(`audioStart` ~ `audioEnd`)에 `targetLoopCount` 반복 설정이 동일하게 적용.
+     - 문장 끝 도달 시 0.5초 쉐도잉 대기 후 문장 처음부터 설정 회수만큼 반복 재생 및 실시간 회차 배지(`(1/3회)`) 표시.
+  6. **단독 배포 번들 최신화 및 신규 자동화 테스트 스위트 완비 (`tools/build-standalone.js`, `scratch/`)**:
+     - `scratch/test_classroom_no_scroll.js`, `scratch/test_input_view_space_resume.js`, `scratch/test_r_shortcut_seconds.js`, `scratch/test_fels_input_persistence_and_toggle.js`, `scratch/test_sentence_loop_repetition.js` 총 5개 신규 테스트 파일 작성.
+     - `app.js` (368.2 KB), `styles.css` (84.2 KB) 단독 실행 번들 패키징 완료.
+- **검증 결과**:
+  - `npm run check`: 28개 전체 소스 파일 `node --check` 100% 통과.
+  - `npm test`: 전체 35/35개 테스트 스위트 100% 통과 (21.1초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
+
+
 
 
 

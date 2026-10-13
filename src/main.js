@@ -52,21 +52,34 @@ class CEToolApp {
 
     // 6. Initialize Global Shortcuts (Page 2, Page 3, and Project File operations)
     this.shortcutManager = new ShortcutManager({
+      onPlayPauseInput: () => this.inputView.togglePlayPauseWaveform(),
       onPlayPause: () => this.practiceView.togglePlayPause(),
       onSetStart: () => this.practiceView.setRegionStartFromCurrentTime(),
       onSetEnd: () => this.practiceView.setRegionEndFromCurrentTime(),
       onClearRegion: () => this.practiceView.clearSelectedRegion(),
       onStartLoop: () => this.practiceView.startRegionLoop(),
+      onRewindAndPlay: () => this.practiceView.rewindAndPlay(),
       onPrevSentence: () => this.practiceView.prevSentence(),
       onNextSentence: () => this.practiceView.nextSentence(),
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
+      onToggleTextInput: () => this.practiceView.toggleTextInputMode(),
       onFlipPracticeCard: (num) => this.practiceView.flipCardByIndex(num),
       onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
       onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),
       onOpenProject: () => this.projectService.openProject(this.inputView),
-      onSaveProject: () => this.projectService.saveProject(this.inputView),
-      onSaveProjectAs: () => this.projectService.saveProjectAs(this.inputView),
+      onSaveProject: () => {
+        if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+          this.practiceView.saveCurrentSentenceAnswers();
+        }
+        this.projectService.saveProject(this.inputView);
+      },
+      onSaveProjectAs: () => {
+        if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+          this.practiceView.saveCurrentSentenceAnswers();
+        }
+        this.projectService.saveProjectAs(this.inputView);
+      },
       getCurrentPage: () => this.router.getCurrentPage(),
       isShortcutActive: () => ['practice', 'memorize'].includes(this.router.getCurrentPage())
     });
@@ -105,8 +118,18 @@ class CEToolApp {
     const btnSaveAs = document.getElementById('btnProjectSaveAs');
 
     if (btnOpen) btnOpen.addEventListener('click', () => this.projectService.openProject(this.inputView));
-    if (btnSave) btnSave.addEventListener('click', () => this.projectService.saveProject(this.inputView));
-    if (btnSaveAs) btnSaveAs.addEventListener('click', () => this.projectService.saveProjectAs(this.inputView));
+    if (btnSave) btnSave.addEventListener('click', () => {
+      if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+        this.practiceView.saveCurrentSentenceAnswers();
+      }
+      this.projectService.saveProject(this.inputView);
+    });
+    if (btnSaveAs) btnSaveAs.addEventListener('click', () => {
+      if (this.practiceView && typeof this.practiceView.saveCurrentSentenceAnswers === 'function') {
+        this.practiceView.saveCurrentSentenceAnswers();
+      }
+      this.projectService.saveProjectAs(this.inputView);
+    });
   }
 
   initTheme() {

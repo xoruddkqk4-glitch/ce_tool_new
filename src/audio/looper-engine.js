@@ -49,55 +49,64 @@ export class LooperEngine {
     const cur = player.currentTime;
     const { loopStart, loopEnd, targetLoopCount, isShadowingWaiting, isAutoAdvance } = this.appState;
 
-    if (loopStart !== null && loopEnd !== null && !isShadowingWaiting) {
-      if (cur >= loopEnd) {
-        player.pause();
-        this.appState.currentLoopCount++;
-        this.callbacks.onLoopCountUpdate(this.appState.currentLoopCount, targetLoopCount);
+    if (isShadowingWaiting) return;
 
-        if (targetLoopCount !== Infinity && this.appState.currentLoopCount >= targetLoopCount) {
-          this.callbacks.onLoopComplete(targetLoopCount);
-          this.callbacks.onPlayStateChange(false);
+    const activeStn = this.appState.getActiveSentence();
+    const hasCustomLoop = (loopStart !== null && loopEnd !== null);
 
-          if (isAutoAdvance) {
-            setTimeout(() => {
-              this.callbacks.onAutoAdvance();
-            }, 800);
-          }
-        } else {
-          // 0.5s shadowing pause delay
-          this.appState.isShadowingWaiting = true;
-          this.callbacks.onShadowingWait(true);
+    let effectiveStart = null;
+    let effectiveEnd = null;
 
-          clearTimeout(this.shadowTimer);
-          this.shadowTimer = setTimeout(() => {
-            this.appState.isShadowingWaiting = false;
-            this.callbacks.onShadowingWait(false);
+    if (hasCustomLoop) {
+      effectiveStart = loopStart;
+      effectiveEnd = loopEnd;
+    } else if (activeStn && activeStn.audioEnd !== null) {
+      effectiveStart = (activeStn.audioStart !== null ? activeStn.audioStart : 0);
+      effectiveEnd = activeStn.audioEnd;
+    }
 
-            if (this.appState.loopStart !== null) {
-              player.currentTime = this.appState.loopStart;
-              player.play().then(() => {
-                this.callbacks.onPlayStateChange(true);
-                // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
-                this.callbacks.onLoopRestart();
-              }).catch(e => console.error(e));
-            }
-          }, CONSTANTS.SHADOWING_PAUSE_MS);
+    if (effectiveStart === null || effectiveEnd === null) return;
+
+    if (cur >= effectiveEnd) {
+      player.pause();
+      this.appState.currentLoopCount++;
+      this.callbacks.onLoopCountUpdate(this.appState.currentLoopCount, targetLoopCount);
+
+      if (targetLoopCount !== Infinity && this.appState.currentLoopCount >= targetLoopCount) {
+        const typeStr = hasCustomLoop ? '선택 구간' : `문장 S${this.appState.activeSentenceIndex + 1}`;
+        this.callbacks.onLoopComplete(targetLoopCount, typeStr);
+        this.callbacks.onPlayStateChange(false);
+
+        if (isAutoAdvance) {
+          setTimeout(() => {
+            this.callbacks.onAutoAdvance();
+          }, 800);
         }
-      }
-    } else {
-      // Bound strictly to current sentence
-      const activeStn = this.appState.getActiveSentence();
-      if (activeStn && activeStn.audioEnd !== null && !isShadowingWaiting) {
-        if (cur >= activeStn.audioEnd) {
-          player.pause();
-          this.callbacks.onPlayStateChange(false);
-          if (isAutoAdvance) {
-            setTimeout(() => {
-              this.callbacks.onAutoAdvance();
-            }, 600);
+      } else {
+        // 0.5s shadowing pause delay between loop iterations
+        this.appState.isShadowingWaiting = true;
+        this.callbacks.onShadowingWait(true);
+
+        clearTimeout(this.shadowTimer);
+        this.shadowTimer = setTimeout(() => {
+          this.appState.isShadowingWaiting = false;
+          this.callbacks.onShadowingWait(false);
+
+          const curCustom = (this.appState.loopStart !== null && this.appState.loopEnd !== null);
+          const curStn = this.appState.getActiveSentence();
+          const restartTime = curCustom
+            ? this.appState.loopStart
+            : (curStn && curStn.audioStart !== null ? curStn.audioStart : effectiveStart);
+
+          if (restartTime !== null && this.audioPlayer) {
+            this.audioPlayer.currentTime = restartTime;
+            this.audioPlayer.play().then(() => {
+              this.callbacks.onPlayStateChange(true);
+              // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
+              this.callbacks.onLoopRestart();
+            }).catch(e => console.error(e));
           }
-        }
+        }, CONSTANTS.SHADOWING_PAUSE_MS);
       }
     }
   }
