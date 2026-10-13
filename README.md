@@ -472,7 +472,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 27/27개 전체 테스트 스위트 100% 통과 (16.0초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 통과).
 
-## [2026-10-13 19:38] 업데이트 이력 (Commit ID: <커밋 후 업데이트>)
+## [2026-10-13 19:38] 업데이트 이력 (Commit ID: 969c153)
 - **수정 내용**:
   1. **Page 3 스크립트 암기 청크 카드 내부 앞뒤 여백 최소화 (`styles/views/memorize-view.css`)**:
      - `.memorize-face` 내부 좌우 패딩을 기존 `4px 8px`에서 `2px 4px`로 대폭 축소하여 텍스트 앞뒤 불필요한 공백 제거.
