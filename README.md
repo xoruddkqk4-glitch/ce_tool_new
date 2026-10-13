@@ -551,7 +551,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 30/30개 테스트 스위트 100% 통과 (17.5초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
-## [2026-10-13 23:25] 업데이트 이력 (Commit ID: PENDING)
+## [2026-10-13 23:25] 업데이트 이력 (Commit ID: fbb7fae)
 - **수정 내용**:
   1. **1단계 전체 오디오 문장 구간 편집기 파형창 강조 상시 유지 & 스페이스바 일시정지/재개 개선 (`src/audio/master-waveform.js`, `src/views/input-view.js`)**:
      - 문장 작업 중 파형창 배경색과 동일한 강조 효과가 마우스 아웃 후에도 사라지지 않고 상시 유지되도록 렌더링 로직 개선.
