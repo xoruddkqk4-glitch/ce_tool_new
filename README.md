@@ -523,7 +523,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 28/28개 테스트 스위트 100% 통과 (14.3초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
-## [2026-10-13 20:50] 업데이트 이력 (Commit ID: pending)
+## [2026-10-13 20:50] 업데이트 이력 (Commit ID: efc5a65)
 - **수정 내용**:
   1. **1단계 전체 오디오 문장 구간 편집기 파형 창 상단 고정 (Sticky Header, `styles/views/input-view.css`)**:
      - `.master-waveform-panel`에 `position: sticky; top: 66px; z-index: 95;`와 고해상도 백드롭 블러(`backdrop-filter: blur(20px)`) 및 딥 섀도우를 적용.
