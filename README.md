@@ -639,6 +639,35 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 43/43개 테스트 스위트 100% 통과 (28.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
+## [2026-10-14 14:40] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **멀티 AI 서비스 4개 프로바이더 확장 (Google Gemini, OpenAI, Claude, OpenRouter)**:
+     - `StorageService`에 제공자별 개별 저장소 키(`ce_tool_gemini_key`, `ce_tool_openai_key`, `ce_tool_claude_key`, `ce_tool_openrouter_key`)를 신설하여 사용자가 제공자를 전환해도 모든 API 키가 독립적으로 영구 보존되도록 구현.
+     - 하위 호환성을 위해 레거시 `#apiKeyInput` 동기화 및 기존 테스트 스위트 100% 호환 보장.
+     - `AIService`에서 Claude(Anthropic Messages API 및 `anthropic-dangerous-direct-browser-access: true`)와 OpenRouter(`openrouter.ai/api/v1/chat/completions`, `HTTP-Referer`, `X-Title` 헤더) 직접 호출 및 후보 모델 자동 라우팅 완비.
+  2. **설정창 스크롤 및 '저장하기' 버튼 고정 (화면 잘림 해결)**:
+     - `.modal-card`에 `max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); margin: auto;` 적용.
+     - `.modal-header`와 `.modal-footer`에 `flex-shrink: 0`을 부여하여 스크롤 시에도 헤더와 하단 '저장하기' 버튼이 항상 화면에 고정 노출.
+     - `.modal-body`에 `flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;`와 다크/라이트 모드 전용 씬 스크롤바를 적용하여 어떤 화면 해상도에서도 부드럽게 스크롤 가능.
+  3. **각 AI 제공자별 '연결 테스트' 버튼 및 실시간 상태 진단 기능 추가**:
+     - 설정창 내 Gemini, OpenAI, Claude, OpenRouter 각 API 키 입력창 우측에 `[연결 테스트]` 버튼(`#btnTestGemini`, `#btnTestOpenAI`, `#btnTestClaude`, `#btnTestOpenRouter`) 및 상태 피드백 영역 배치.
+     - `aiService.testConnection(provider, apiKey)`: 토큰 과금 없이 즉시 인증 상태를 진단(Gemini models, OpenAI models, Claude 인증 핑, OpenRouter auth/key).
+     - 키 미입력 시 안내 및 자동 포커스, 진단 중 `확인 중...` 비활성화, 성공 시 녹색 배지(`✓ 연결 성공`), 실패 시 붉은색 배지(`✕ 연결 실패: [사유]`) 및 토스트 피드백 제공.
+  4. **오디오 STT 구글 서버 과부하(503 High Demand) 자동 복구 시스템 구축**:
+     - Gemini 서버 일시 과부하 시 발생하는 `503 Service Unavailable / This model is currently experiencing high demand` 에러를 감지하지 못하고 즉시 중단되던 결함 수정.
+     - `postToGemini`에 `isServerOverloaded` 감지 로직을 추가하고 `CONSTANTS.GEMINI_CANDIDATE_MODELS`를 7단계(`gemini-3.8-flash` ~ `gemini-1.5-flash`)로 확장하여, 특정 모델 폭주 시 대기 없이 다음 후보 모델로 즉시 자동 전환되어 음성 추출 완수.
+  5. **텍스트 멀티 AI 자동 우회(Auto-Failover) 옵션 구현**:
+     - 설정창에 `[✓] 한도 초과 및 일시 오류 시 등록된 다른 AI로 자동 우회 (Auto-Failover)` 옵션(`#autoFailoverCheckbox`) 신규 탑재.
+     - 텍스트 번역 및 직독직해(청킹) 시 주 AI가 429 Quota 한도 초과나 일시 에러를 반환하면, 등록된 다른 유효한 AI(OpenAI, Claude, OpenRouter, Gemini)로 즉시 바통을 넘겨 무중단으로 작업을 완료하도록 구현.
+  6. **단독 배포 번들 및 44개 전체 테스트 통과**:
+     - `scratch/test_multi_api_keys.js` 신규 작성 (8개 종합 테스트 스위트: 다중 키 보존, UI 배지, OpenRouter 라우팅, 4대 API 연결 테스트, Gemini 503 복구, 멀티 AI Auto-Failover).
+     - `tools/build-standalone.js`를 통해 `styles.css` (107.9 KB) 및 `app.js` (416.9 KB) 재빌드 완료.
+- **검증 결과**:
+  - `npm run check`: 28개 파일 구문 검사 100% 통과.
+  - `npm test`: 전체 44/44개 테스트 스위트 100% 통과 (25.1초).
+  - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
+
+
 
 
 

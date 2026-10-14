@@ -502,23 +502,89 @@
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label>AI 서비스 제공자</label>
+            <label>기본 AI 서비스 제공자</label>
             <div class="provider-options">
               <label class="radio-label">
                 <input type="radio" name="aiProvider" value="gemini" checked>
-                <span>Google Gemini (권장 / 멀티모달 오디오 STT)</span>
+                <span>✨ Google Gemini (권장 / 멀티모달 오디오 STT)</span>
               </label>
               <label class="radio-label">
                 <input type="radio" name="aiProvider" value="openai">
-                <span>OpenAI (GPT-4o mini)</span>
+                <span>🟢 OpenAI (GPT-4o mini)</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="aiProvider" value="claude">
+                <span>🟣 Anthropic Claude (Claude 3.5 Sonnet / Haiku)</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="aiProvider" value="openrouter">
+                <span>🌐 OpenRouter (통합 AI 라우팅 / 모든 모델)</span>
               </label>
             </div>
           </div>
 
-          <div class="form-group">
-            <label for="apiKeyInput">API 키</label>
-            <input type="password" id="apiKeyInput" class="form-input" placeholder="AI API 키를 입력하세요">
-            <span class="field-hint">브라우저 로컬 저장소(localStorage)에만 안전하게 보관됩니다.</span>
+          <div class="form-group failover-group">
+            <label class="checkbox-label failover-checkbox-label">
+              <input type="checkbox" id="autoFailoverCheckbox" checked>
+              <span class="failover-title">🔄 한도 초과 및 일시 오류 시 등록된 다른 AI로 자동 우회 (Auto-Failover)</span>
+            </label>
+            <span class="field-hint" style="margin-left: 24px;">주 AI에 Quota 초과(429)나 서버 일시 과부하가 발생하면 등록된 다른 정상 API 키로 자동 전환하여 끊김 없이 작업을 완수합니다.</span>
+          </div>
+
+          <div class="form-group api-keys-container">
+            <label>API 키 설정 (제공자별 개별 저장)</label>
+
+            <div class="api-key-field-wrap" data-provider="gemini">
+              <div class="api-key-label-row">
+                <span class="api-provider-name">✨ Google Gemini API 키</span>
+                <span class="api-key-status-badge" id="geminiKeyBadge">미입력</span>
+              </div>
+              <div class="api-key-input-row">
+                <input type="password" id="geminiApiKeyInput" class="form-input api-key-field" placeholder="AIzaSy... (Gemini API 키)" autocomplete="off">
+                <button type="button" class="btn-test-connection" id="btnTestGemini" title="Google Gemini API 연결 확인">연결 테스트</button>
+              </div>
+              <div class="api-test-result hidden" id="geminiTestResult"></div>
+            </div>
+
+            <div class="api-key-field-wrap" data-provider="openai">
+              <div class="api-key-label-row">
+                <span class="api-provider-name">🟢 OpenAI API 키</span>
+                <span class="api-key-status-badge" id="openaiKeyBadge">미입력</span>
+              </div>
+              <div class="api-key-input-row">
+                <input type="password" id="openaiApiKeyInput" class="form-input api-key-field" placeholder="sk-proj-... (OpenAI API 키)" autocomplete="off">
+                <button type="button" class="btn-test-connection" id="btnTestOpenAI" title="OpenAI API 연결 확인">연결 테스트</button>
+              </div>
+              <div class="api-test-result hidden" id="openaiTestResult"></div>
+            </div>
+
+            <div class="api-key-field-wrap" data-provider="claude">
+              <div class="api-key-label-row">
+                <span class="api-provider-name">🟣 Anthropic Claude API 키</span>
+                <span class="api-key-status-badge" id="claudeKeyBadge">미입력</span>
+              </div>
+              <div class="api-key-input-row">
+                <input type="password" id="claudeApiKeyInput" class="form-input api-key-field" placeholder="sk-ant-... (Claude API 키)" autocomplete="off">
+                <button type="button" class="btn-test-connection" id="btnTestClaude" title="Claude API 연결 확인">연결 테스트</button>
+              </div>
+              <div class="api-test-result hidden" id="claudeTestResult"></div>
+            </div>
+
+            <div class="api-key-field-wrap" data-provider="openrouter">
+              <div class="api-key-label-row">
+                <span class="api-provider-name">🌐 OpenRouter API 키</span>
+                <span class="api-key-status-badge" id="openrouterKeyBadge">미입력</span>
+              </div>
+              <div class="api-key-input-row">
+                <input type="password" id="openrouterApiKeyInput" class="form-input api-key-field" placeholder="sk-or-v1-... (OpenRouter API 키)" autocomplete="off">
+                <button type="button" class="btn-test-connection" id="btnTestOpenRouter" title="OpenRouter API 연결 확인">연결 테스트</button>
+              </div>
+              <div class="api-test-result hidden" id="openrouterTestResult"></div>
+            </div>
+
+            <!-- Compatibility fallback input -->
+            <input type="hidden" id="apiKeyInput">
+            <span class="field-hint">모든 API 키는 브라우저 로컬 저장소(localStorage)에만 안전하게 보관됩니다.</span>
           </div>
 
           <div class="form-group">

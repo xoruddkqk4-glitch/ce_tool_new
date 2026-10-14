@@ -39,7 +39,48 @@ export class StorageService {
     return safeGetWithLegacy('ce_tool_provider', 'chunklingo_provider', 'gemini');
   }
 
-  static getApiKey() {
+  static getGeminiKey() {
+    const k = safeGet('ce_tool_gemini_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'gemini') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getOpenAIKey() {
+    const k = safeGet('ce_tool_openai_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'openai') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getClaudeKey() {
+    const k = safeGet('ce_tool_claude_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'claude') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getOpenRouterKey() {
+    const k = safeGet('ce_tool_openrouter_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'openrouter') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getApiKey(provider = null) {
+    const p = provider || this.getProvider();
+    if (p === 'gemini') return this.getGeminiKey();
+    if (p === 'openai') return this.getOpenAIKey();
+    if (p === 'claude') return this.getClaudeKey();
+    if (p === 'openrouter') return this.getOpenRouterKey();
     return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
   }
 
@@ -47,10 +88,27 @@ export class StorageService {
     return safeGetWithLegacy('ce_tool_prompt', 'chunklingo_prompt', '');
   }
 
-  static saveApiSettings(provider, apiKey, customPrompt) {
+  static getAutoFailover() {
+    const val = safeGet('ce_tool_auto_failover', null);
+    if (val === null) return true; // Enabled by default for resilience
+    return val === 'true' || val === true;
+  }
+
+  static saveAutoFailover(enabled) {
+    safeSet('ce_tool_auto_failover', enabled ? 'true' : 'false');
+  }
+
+  static saveApiSettings(provider, apiKey, customPrompt, extraKeys = {}) {
     safeSet('ce_tool_provider', provider);
     safeSet('ce_tool_api_key', apiKey);
     safeSet('ce_tool_prompt', customPrompt);
+    if (extraKeys.geminiKey !== undefined) safeSet('ce_tool_gemini_key', extraKeys.geminiKey);
+    if (extraKeys.openaiKey !== undefined) safeSet('ce_tool_openai_key', extraKeys.openaiKey);
+    if (extraKeys.claudeKey !== undefined) safeSet('ce_tool_claude_key', extraKeys.claudeKey);
+    if (extraKeys.openrouterKey !== undefined) safeSet('ce_tool_openrouter_key', extraKeys.openrouterKey);
+    if (extraKeys.autoFailover !== undefined) {
+      safeSet('ce_tool_auto_failover', extraKeys.autoFailover ? 'true' : 'false');
+    }
     // Legacy chunklingo_* keys are intentionally NOT written anymore (and not deleted:
     // file:// pages share one localStorage origin, so another app may still own them).
   }

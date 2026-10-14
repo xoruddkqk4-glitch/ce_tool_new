@@ -35,7 +35,10 @@ const CONSTANTS = {
     'gemini-3.8-flash',
     'gemini-3.5-flash',
     'gemini-3.1-pro-preview',
-    'gemini-2.5-flash'
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.5-pro',
+    'gemini-1.5-flash'
   ]
 };
 
@@ -1329,7 +1332,48 @@ class StorageService {
     return safeGetWithLegacy('ce_tool_provider', 'chunklingo_provider', 'gemini');
   }
 
-  static getApiKey() {
+  static getGeminiKey() {
+    const k = safeGet('ce_tool_gemini_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'gemini') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getOpenAIKey() {
+    const k = safeGet('ce_tool_openai_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'openai') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getClaudeKey() {
+    const k = safeGet('ce_tool_claude_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'claude') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getOpenRouterKey() {
+    const k = safeGet('ce_tool_openrouter_key', null);
+    if (k !== null) return k;
+    if (this.getProvider() === 'openrouter') {
+      return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
+    }
+    return '';
+  }
+
+  static getApiKey(provider = null) {
+    const p = provider || this.getProvider();
+    if (p === 'gemini') return this.getGeminiKey();
+    if (p === 'openai') return this.getOpenAIKey();
+    if (p === 'claude') return this.getClaudeKey();
+    if (p === 'openrouter') return this.getOpenRouterKey();
     return safeGetWithLegacy('ce_tool_api_key', 'chunklingo_api_key', '');
   }
 
@@ -1337,10 +1381,27 @@ class StorageService {
     return safeGetWithLegacy('ce_tool_prompt', 'chunklingo_prompt', '');
   }
 
-  static saveApiSettings(provider, apiKey, customPrompt) {
+  static getAutoFailover() {
+    const val = safeGet('ce_tool_auto_failover', null);
+    if (val === null) return true; // Enabled by default for resilience
+    return val === 'true' || val === true;
+  }
+
+  static saveAutoFailover(enabled) {
+    safeSet('ce_tool_auto_failover', enabled ? 'true' : 'false');
+  }
+
+  static saveApiSettings(provider, apiKey, customPrompt, extraKeys = {}) {
     safeSet('ce_tool_provider', provider);
     safeSet('ce_tool_api_key', apiKey);
     safeSet('ce_tool_prompt', customPrompt);
+    if (extraKeys.geminiKey !== undefined) safeSet('ce_tool_gemini_key', extraKeys.geminiKey);
+    if (extraKeys.openaiKey !== undefined) safeSet('ce_tool_openai_key', extraKeys.openaiKey);
+    if (extraKeys.claudeKey !== undefined) safeSet('ce_tool_claude_key', extraKeys.claudeKey);
+    if (extraKeys.openrouterKey !== undefined) safeSet('ce_tool_openrouter_key', extraKeys.openrouterKey);
+    if (extraKeys.autoFailover !== undefined) {
+      safeSet('ce_tool_auto_failover', extraKeys.autoFailover ? 'true' : 'false');
+    }
     // Legacy chunklingo_* keys are intentionally NOT written anymore (and not deleted:
     // file:// pages share one localStorage origin, so another app may still own them).
   }
@@ -1467,23 +1528,48 @@ function runWithFreeTranslateLimit(task) {
 class AIService {
   constructor() {
     this.provider = StorageService.getProvider();
-    this.apiKey = StorageService.getApiKey();
+    this.geminiKey = StorageService.getGeminiKey();
+    this.openaiKey = StorageService.getOpenAIKey();
+    this.claudeKey = StorageService.getClaudeKey();
+    this.openrouterKey = StorageService.getOpenRouterKey();
+    this.apiKey = this.getKeyForProvider(this.provider);
     this.customPrompt = StorageService.getCustomPrompt();
+    this.autoFailover = StorageService.getAutoFailover();
     this.activeGeminiModel = null;
     this.quotaExceededUntil = 0;
   }
 
-  saveSettings(provider, apiKey, customPrompt) {
+  saveSettings(provider, apiKey, customPrompt, extraKeys = {}) {
     this.provider = provider;
-    this.apiKey = apiKey;
+    if (extraKeys.geminiKey !== undefined) this.geminiKey = extraKeys.geminiKey;
+    if (extraKeys.openaiKey !== undefined) this.openaiKey = extraKeys.openaiKey;
+    if (extraKeys.claudeKey !== undefined) this.claudeKey = extraKeys.claudeKey;
+    if (extraKeys.openrouterKey !== undefined) this.openrouterKey = extraKeys.openrouterKey;
+    if (extraKeys.autoFailover !== undefined) this.autoFailover = !!extraKeys.autoFailover;
+    this.apiKey = this.getKeyForProvider(provider) || apiKey;
     this.customPrompt = customPrompt;
     this.activeGeminiModel = null; // Reset cached model on settings update
     this.quotaExceededUntil = 0;
-    StorageService.saveApiSettings(provider, apiKey, customPrompt);
+    StorageService.saveApiSettings(provider, this.apiKey, customPrompt, {
+      geminiKey: this.geminiKey,
+      openaiKey: this.openaiKey,
+      claudeKey: this.claudeKey,
+      openrouterKey: this.openrouterKey,
+      autoFailover: this.autoFailover
+    });
   }
 
-  hasKey() {
-    return !!(this.apiKey && this.apiKey.trim());
+  getKeyForProvider(provider = this.provider) {
+    if (provider === 'gemini') return this.geminiKey || (this.provider === 'gemini' ? this.apiKey : '');
+    if (provider === 'openai') return this.openaiKey || (this.provider === 'openai' ? this.apiKey : '');
+    if (provider === 'claude') return this.claudeKey || (this.provider === 'claude' ? this.apiKey : '');
+    if (provider === 'openrouter') return this.openrouterKey || (this.provider === 'openrouter' ? this.apiKey : '');
+    return this.apiKey || '';
+  }
+
+  hasKey(provider = this.provider) {
+    const k = this.getKeyForProvider(provider);
+    return !!(k && k.trim());
   }
 
   isQuotaExceededCoolingDown() {
@@ -1502,14 +1588,15 @@ class AIService {
 
     try {
       // API key goes in the x-goog-api-key header (not the URL) so it never lands in logs / history
+      const geminiKey = this.getKeyForProvider('gemini');
       const listUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
-      const res = await fetchWithTimeout(listUrl, { headers: { 'x-goog-api-key': this.apiKey } });
+      const res = await fetchWithTimeout(listUrl, { headers: { 'x-goog-api-key': geminiKey } });
       if (res.ok) {
         const data = await res.json();
         const available = (data.models || [])
           .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
           .map(m => m.name.replace(/^models\//, ''))
-          .filter(m => !m.includes('2.5-pro') && !m.includes('1.5-') && !m.includes('2.0-flash'));
+          .filter(m => !m.includes('1.0'));
 
         for (const cand of priorityOrder) {
           if (available.includes(cand)) {
@@ -1564,13 +1651,14 @@ class AIService {
 
     let lastError = null;
     let anyQuotaExceeded = false;
+    const geminiKey = this.getKeyForProvider('gemini');
 
     for (const model of uniqueCandidates) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
       try {
         const response = await fetchWithTimeout(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
           body: JSON.stringify(payload)
         }, timeoutMs);
 
@@ -1595,6 +1683,16 @@ class AIService {
           errMsg.includes('Rate limit') ||
           errMsg.includes('Too Many Requests');
 
+        const isServerOverloaded = 
+          response.status === 503 ||
+          response.status === 500 ||
+          errMsg.includes('high demand') ||
+          errMsg.includes('experiencing high demand') ||
+          errMsg.includes('UNAVAILABLE') ||
+          errMsg.includes('temporarily unavailable') ||
+          errMsg.includes('overloaded') ||
+          errMsg.includes('Service Unavailable');
+
         const isUnavailableOrRetired = 
           response.status === 404 ||
           errMsg.includes('not found') ||
@@ -1607,6 +1705,14 @@ class AIService {
         if (isQuota) {
           anyQuotaExceeded = true;
           console.warn(`Gemini model ${model} hit quota/rate limit (${errMsg}). Trying next candidate model...`);
+          continue;
+        }
+
+        if (isServerOverloaded) {
+          if (this.activeGeminiModel === model) {
+            this.activeGeminiModel = null;
+          }
+          console.warn(`Gemini model ${model} experiencing high demand / overload (${errMsg}). Trying next candidate model...`);
           continue;
         }
 
@@ -1624,6 +1730,15 @@ class AIService {
       } catch (fetchErr) {
         const msg = fetchErr.message || '';
         const isQuota = fetchErr.status === 429 || msg.includes('Quota exceeded') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429');
+        const isServerOverloaded = 
+          fetchErr.status === 503 ||
+          fetchErr.status === 500 ||
+          msg.includes('high demand') ||
+          msg.includes('experiencing high demand') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('temporarily unavailable') ||
+          msg.includes('overloaded') ||
+          msg.includes('Service Unavailable');
         const isUnavailableOrRetired = 
           fetchErr.status === 404 ||
           msg.includes('not found') ||
@@ -1634,6 +1749,13 @@ class AIService {
           msg.includes('retired');
 
         if (isQuota) anyQuotaExceeded = true;
+        if (isServerOverloaded) {
+          if (this.activeGeminiModel === model) {
+            this.activeGeminiModel = null;
+          }
+          console.warn(`Gemini model ${model} fetch failed with high demand (${msg}). Trying next candidate...`);
+          continue;
+        }
         if (isUnavailableOrRetired) {
           if (this.activeGeminiModel === model) {
             this.activeGeminiModel = null;
@@ -1661,16 +1783,28 @@ class AIService {
     throw lastError || new Error('사용 가능한 Gemini 모델을 찾을 수 없습니다. API 키 상태를 확인하세요.');
   }
 
-  async translate(text) {
-    if (!this.hasKey()) {
-      throw new Error('AI API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘에서 API 키를 입력하세요.');
+  getCandidateProviders() {
+    const all = ['gemini', 'openai', 'claude', 'openrouter'];
+    const withKeys = all.filter(p => this.hasKey(p));
+    if (!this.autoFailover) {
+      return this.hasKey(this.provider) ? [this.provider] : (withKeys.length ? [withKeys[0]] : []);
     }
-    if (this.isQuotaExceededCoolingDown()) {
-      const waitSec = Math.max(1, Math.ceil((this.quotaExceededUntil - Date.now()) / 1000));
-      const quotaErr = new Error(`Gemini API 사용량 한도(Quota)가 일시적으로 초과되었습니다. (약 ${waitSec}초 후 재시도 가능)`);
-      quotaErr.isQuotaExceeded = true;
-      quotaErr.status = 429;
-      throw quotaErr;
+    const list = [this.provider, ...withKeys.filter(p => p !== this.provider)];
+    return [...new Set(list)].filter(p => this.hasKey(p));
+  }
+
+  async callTextProvider(provider, text, systemPrompt) {
+    if (provider === 'gemini') return this.callGemini(text, systemPrompt);
+    if (provider === 'openai') return this.callOpenAI(text, systemPrompt);
+    if (provider === 'claude') return this.callClaude(text, systemPrompt);
+    if (provider === 'openrouter') return this.callOpenRouter(text, systemPrompt);
+    return this.callGemini(text, systemPrompt);
+  }
+
+  async translate(text) {
+    const candidates = this.getCandidateProviders();
+    if (!candidates.length) {
+      throw new Error('AI API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘에서 API 키를 입력하세요.');
     }
 
     const systemPrompt = `You are an expert English-Korean linguist specialized in syntax chunking and natural translation.
@@ -1689,11 +1823,26 @@ Respond ONLY with valid, raw JSON in this structure (no markdown fences, no extr
 }
 ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}`;
 
-    if (this.provider === 'gemini') {
-      return this.callGemini(text, systemPrompt);
-    } else {
-      return this.callOpenAI(text, systemPrompt);
+    let lastError = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const p = candidates[i];
+      if (p === 'gemini' && this.isQuotaExceededCoolingDown()) {
+        continue;
+      }
+      try {
+        const result = await this.callTextProvider(p, text, systemPrompt);
+        if (p !== this.provider && this.autoFailover) {
+          console.warn(`[Auto-Failover] 주 AI(${this.provider}) 장애로 ${p} 모델로 자동 우회 처리 완료`);
+        }
+        return result;
+      } catch (err) {
+        console.warn(`[AIService] ${p} 요청 실패:`, err.message || err);
+        lastError = err;
+        if (!this.autoFailover) break;
+      }
     }
+
+    throw lastError || new Error('사용 가능한 AI 모델이 없습니다. API 키 상태를 확인하세요.');
   }
 
   /**
@@ -1779,19 +1928,21 @@ CRITICAL RULES:
 {
   "chunks": [ "한국어 직독직해 1", "한국어 직독직해 2", ... ]
 }`;
-        if (this.provider === 'gemini') {
-          const res = await this.callGemini(englishSentence || cleanChunks.join(' '), prompt);
-          if (res && Array.isArray(res.chunks) && res.chunks.length === cleanChunks.length) {
-            return res.chunks.map(s => String(s).trim());
-          }
-        } else {
-          const res = await this.callOpenAI(englishSentence || cleanChunks.join(' '), prompt);
-          if (res && Array.isArray(res.chunks) && res.chunks.length === cleanChunks.length) {
-            return res.chunks.map(s => String(s).trim());
+        const candidates = this.getCandidateProviders();
+        for (const p of candidates) {
+          if (p === 'gemini' && this.isQuotaExceededCoolingDown()) continue;
+          try {
+            const res = await this.callTextProvider(p, englishSentence || cleanChunks.join(' '), prompt);
+            if (res && Array.isArray(res.chunks) && res.chunks.length === cleanChunks.length) {
+              return res.chunks.map(s => String(s).trim());
+            }
+          } catch (aiErr) {
+            console.warn(`AI direct chunk generation fallback on ${p}:`, aiErr.message || aiErr);
+            if (!this.autoFailover) break;
           }
         }
-      } catch (aiErr) {
-        console.warn('AI direct chunk generation fallback:', aiErr);
+      } catch (outerErr) {
+        console.warn('AI direct chunk generation outer error:', outerErr);
       }
     }
 
@@ -1972,7 +2123,8 @@ CRITICAL RULES:
    * AI-powered Audio & Script Forced Alignment using Gemini Multimodal Audio
    */
   async alignAudioWithScript(base64Audio, mimeType, sentences) {
-    if (!this.hasKey() || this.provider !== 'gemini' || !base64Audio || this.isQuotaExceededCoolingDown()) {
+    const geminiKey = this.getKeyForProvider('gemini');
+    if (!geminiKey || !base64Audio || this.isQuotaExceededCoolingDown()) {
       return null;
     }
 
@@ -2044,8 +2196,9 @@ Respond ONLY with valid JSON:
    * Transcribe Audio and generate 3x1 translation simultaneously using Gemini Multimodal Audio
    */
   async transcribeAndTranslateAudio(base64Audio, mimeType) {
+    const geminiKey = this.getKeyForProvider('gemini');
     if (!this.hasKey()) {
-      throw new Error('음성 인식을 위해 AI API 키가 필요합니다. 설정에서 Gemini 또는 OpenAI API 키를 입력하세요.');
+      throw new Error('음성 인식을 위해 AI API 키가 필요합니다. 설정에서 Gemini 또는 OpenAI, Claude API 키를 입력하세요.');
     }
 
     const prompt = `Listen to this English audio carefully.
@@ -2075,7 +2228,7 @@ Respond ONLY with valid JSON:
   ]
 }`;
 
-    if (this.provider === 'gemini') {
+    if (this.provider === 'gemini' || geminiKey) {
       const payload = {
         contents: [
           {
@@ -2099,7 +2252,7 @@ Respond ONLY with valid JSON:
 
       return await this.postToGemini(payload, AI_AUDIO_TIMEOUT_MS);
     } else {
-      throw new Error('OpenAI 모드에서는 Gemini API 키를 권장합니다. (Gemini는 오디오 멀티모달 네이티브 지원)');
+      throw new Error('오디오 STT 및 타임스탬프 분석은 Google Gemini API 키가 필요합니다. 설정창에서 Gemini API 키를 입력해 주세요.');
     }
   }
 
@@ -2121,6 +2274,8 @@ Respond ONLY with valid JSON:
   }
 
   async callOpenAI(text, systemPrompt) {
+    const openaiKey = this.getKeyForProvider('openai') || this.apiKey;
+    if (!openaiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다.');
     const url = 'https://api.openai.com/v1/chat/completions';
     const payload = {
       model: 'gpt-4o-mini',
@@ -2136,7 +2291,7 @@ Respond ONLY with valid JSON:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
+        'Authorization': `Bearer ${openaiKey}`
       },
       body: JSON.stringify(payload)
     });
@@ -2151,6 +2306,248 @@ Respond ONLY with valid JSON:
     if (!content) throw new Error('OpenAI 응답 내용이 비어 있습니다.');
 
     return parseJsonLoose(content);
+  }
+
+  async callClaude(text, systemPrompt) {
+    const claudeKey = this.getKeyForProvider('claude') || this.apiKey;
+    if (!claudeKey) throw new Error('Claude API 키가 설정되지 않았습니다.');
+
+    const candidateModels = [
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+      'claude-3-sonnet-20240229',
+      'claude-3-haiku-20240307'
+    ];
+
+    let lastError = null;
+    for (const model of candidateModels) {
+      try {
+        const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': claudeKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [
+              { role: 'user', content: `English Sentence: "${text}"` }
+            ]
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const content = data.content?.[0]?.text;
+          if (!content) throw new Error('Claude 응답 내용이 비어 있습니다.');
+          return parseJsonLoose(content);
+        }
+
+        const err = await response.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status ${response.status}`;
+        lastError = new Error(errMsg);
+
+        if (response.status === 404 || errMsg.includes('not_found') || errMsg.includes('model')) {
+          continue;
+        }
+        throw lastError;
+      } catch (fetchErr) {
+        if (fetchErr.message && (fetchErr.message.includes('not_found') || fetchErr.message.includes('model'))) {
+          lastError = fetchErr;
+          continue;
+        }
+        throw fetchErr;
+      }
+    }
+    throw lastError || new Error('Claude API 요청에 실패했습니다.');
+  }
+
+  async callOpenRouter(text, systemPrompt) {
+    const openrouterKey = this.getKeyForProvider('openrouter') || this.apiKey;
+    if (!openrouterKey) throw new Error('OpenRouter API 키가 설정되지 않았습니다.');
+
+    const candidateModels = [
+      'anthropic/claude-3.5-sonnet',
+      'openai/gpt-4o-mini',
+      'google/gemini-2.0-flash-001',
+      'google/gemini-flash-1.5',
+      'meta-llama/llama-3.3-70b-instruct'
+    ];
+
+    let lastError = null;
+    for (const model of candidateModels) {
+      try {
+        const response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${openrouterKey}`,
+            'HTTP-Referer': (typeof window !== 'undefined' && window.location ? window.location.origin : 'https://github.com/xoruddkqk4-glitch/ce_tool_new'),
+            'X-Title': 'CE Tool'
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: `English Sentence: "${text}"` }
+            ],
+            temperature: 0.1,
+            response_format: { type: 'json_object' }
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const content = data.choices?.[0]?.message?.content;
+          if (!content) throw new Error('OpenRouter 응답 내용이 비어 있습니다.');
+          return parseJsonLoose(content);
+        }
+
+        const err = await response.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status ${response.status}`;
+        lastError = new Error(errMsg);
+
+        if (response.status === 404 || errMsg.includes('not_found') || errMsg.includes('model')) {
+          continue;
+        }
+        throw lastError;
+      } catch (fetchErr) {
+        if (fetchErr.message && (fetchErr.message.includes('not_found') || fetchErr.message.includes('model'))) {
+          lastError = fetchErr;
+          continue;
+        }
+        throw fetchErr;
+      }
+    }
+    throw lastError || new Error('OpenRouter API 요청에 실패했습니다.');
+  }
+
+  /**
+   * Test connection to a specific AI provider with the given API key.
+   * Returns { success: boolean, message: string }
+   */
+  async testConnection(provider, apiKey) {
+    const key = (apiKey || this.getKeyForProvider(provider) || '').trim();
+    if (!key) {
+      return { success: false, message: 'API 키가 입력되지 않았습니다.' };
+    }
+
+    try {
+      if (provider === 'gemini') {
+        const url = 'https://generativelanguage.googleapis.com/v1beta/models';
+        const res = await fetchWithTimeout(url, {
+          method: 'GET',
+          headers: { 'x-goog-api-key': key }
+        }, 12000);
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const count = Array.isArray(data.models) ? data.models.length : 0;
+          return { success: true, message: `연결 성공 (사용 가능 모델: ${count}개)` };
+        }
+        const err = await res.json().catch(() => ({}));
+        const msg = err.error?.message || `HTTP ${res.status}`;
+        return { success: false, message: `연결 실패: ${msg}` };
+      }
+
+      if (provider === 'openai') {
+        const url = 'https://api.openai.com/v1/models';
+        const res = await fetchWithTimeout(url, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${key}` }
+        }, 12000);
+        if (res.ok) {
+          return { success: true, message: '연결 성공 (OpenAI API 정상 인증)' };
+        }
+        const err = await res.json().catch(() => ({}));
+        const msg = err.error?.message || `HTTP ${res.status}`;
+        return { success: false, message: `연결 실패: ${msg}` };
+      }
+
+      if (provider === 'claude') {
+        try {
+          const res = await fetchWithTimeout('https://api.anthropic.com/v1/models', {
+            method: 'GET',
+            headers: {
+              'x-api-key': key,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true'
+            }
+          }, 10000);
+          if (res.ok) {
+            return { success: true, message: '연결 성공 (Anthropic Claude 정상 인증)' };
+          }
+          if (res.status === 401 || res.status === 403) {
+            const err = await res.json().catch(() => ({}));
+            const msg = err.error?.message || `인증 실패 (HTTP ${res.status})`;
+            return { success: false, message: `연결 실패: ${msg}` };
+          }
+        } catch (mErr) {
+          // Fallback to minimal messages ping
+        }
+
+        const msgRes = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model: 'claude-3-5-haiku-20241022',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'ping' }]
+          })
+        }, 15000);
+
+        if (msgRes.ok) {
+          return { success: true, message: '연결 성공 (Anthropic Claude 정상 인증)' };
+        }
+        const err = await msgRes.json().catch(() => ({}));
+        const msg = err.error?.message || `HTTP ${msgRes.status}`;
+        return { success: false, message: `연결 실패: ${msg}` };
+      }
+
+      if (provider === 'openrouter') {
+        const origin = (typeof window !== 'undefined' && window.location ? window.location.origin : 'https://github.com/xoruddkqk4-glitch/ce_tool_new');
+        const res = await fetchWithTimeout('https://openrouter.ai/api/v1/auth/key', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${key}`,
+            'HTTP-Referer': origin,
+            'X-Title': 'CE Tool'
+          }
+        }, 12000);
+
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const label = data.data?.label ? ` (${data.data.label})` : '';
+          return { success: true, message: `연결 성공 (OpenRouter 정상 인증${label})` };
+        }
+
+        if (res.status === 404) {
+          const mRes = await fetchWithTimeout('https://openrouter.ai/api/v1/models', {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${key}` }
+          }, 12000);
+          if (mRes.ok) {
+            return { success: true, message: '연결 성공 (OpenRouter 정상 인증)' };
+          }
+        }
+
+        const err = await res.json().catch(() => ({}));
+        const msg = err.error?.message || `HTTP ${res.status}`;
+        return { success: false, message: `연결 실패: ${msg}` };
+      }
+
+      return { success: false, message: `지원되지 않는 제공자: ${provider}` };
+    } catch (e) {
+      return { success: false, message: `연결 오류: ${e.message || e}` };
+    }
   }
 }
 
@@ -4632,7 +5029,24 @@ class SettingsModal {
     this.btnCloseModal = document.getElementById('btnCloseModal');
     this.btnSaveSettings = document.getElementById('btnSaveSettings');
     this.providerRadios = document.querySelectorAll('input[name="aiProvider"]');
+    this.geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
+    this.openaiApiKeyInput = document.getElementById('openaiApiKeyInput');
+    this.claudeApiKeyInput = document.getElementById('claudeApiKeyInput');
+    this.openrouterApiKeyInput = document.getElementById('openrouterApiKeyInput');
     this.apiKeyInput = document.getElementById('apiKeyInput');
+    this.geminiKeyBadge = document.getElementById('geminiKeyBadge');
+    this.openaiKeyBadge = document.getElementById('openaiKeyBadge');
+    this.claudeKeyBadge = document.getElementById('claudeKeyBadge');
+    this.openrouterKeyBadge = document.getElementById('openrouterKeyBadge');
+    this.btnTestGemini = document.getElementById('btnTestGemini');
+    this.btnTestOpenAI = document.getElementById('btnTestOpenAI');
+    this.btnTestClaude = document.getElementById('btnTestClaude');
+    this.btnTestOpenRouter = document.getElementById('btnTestOpenRouter');
+    this.geminiTestResult = document.getElementById('geminiTestResult');
+    this.openaiTestResult = document.getElementById('openaiTestResult');
+    this.claudeTestResult = document.getElementById('claudeTestResult');
+    this.openrouterTestResult = document.getElementById('openrouterTestResult');
+    this.autoFailoverCheckbox = document.getElementById('autoFailoverCheckbox');
     this.customPromptInput = document.getElementById('customPrompt');
     this.engineBadge = document.getElementById('engineBadge');
 
@@ -4659,6 +5073,57 @@ class SettingsModal {
     if (this.btnSaveSettings) {
       this.btnSaveSettings.addEventListener('click', () => this.save());
     }
+
+    // Connection test button listeners
+    const testConfigs = [
+      { btn: this.btnTestGemini, input: this.geminiApiKeyInput, result: this.geminiTestResult, provider: 'gemini', name: 'Google Gemini' },
+      { btn: this.btnTestOpenAI, input: this.openaiApiKeyInput, result: this.openaiTestResult, provider: 'openai', name: 'OpenAI' },
+      { btn: this.btnTestClaude, input: this.claudeApiKeyInput, result: this.claudeTestResult, provider: 'claude', name: 'Anthropic Claude' },
+      { btn: this.btnTestOpenRouter, input: this.openrouterApiKeyInput, result: this.openrouterTestResult, provider: 'openrouter', name: 'OpenRouter' }
+    ];
+
+    testConfigs.forEach(({ btn, input, result, provider, name }) => {
+      if (btn) {
+        btn.addEventListener('click', () => {
+          this.runConnectionTest(provider, input, btn, result, name);
+        });
+      }
+    });
+
+    // Provider radio selection change
+    this.providerRadios.forEach(radio => {
+      radio.addEventListener('change', () => {
+        if (radio.checked) {
+          this.updateActiveFieldHighlight(radio.value);
+          this.syncCompatibilityInput(radio.value);
+        }
+      });
+    });
+
+    // Input listeners to update badges in real-time
+    const keyInputs = [
+      { input: this.geminiApiKeyInput, provider: 'gemini', result: this.geminiTestResult },
+      { input: this.openaiApiKeyInput, provider: 'openai', result: this.openaiTestResult },
+      { input: this.claudeApiKeyInput, provider: 'claude', result: this.claudeTestResult },
+      { input: this.openrouterApiKeyInput, provider: 'openrouter', result: this.openrouterTestResult }
+    ];
+
+    keyInputs.forEach(({ input, provider, result }) => {
+      if (input) {
+        input.addEventListener('input', () => {
+          this.updateBadges();
+          const selected = this.getSelectedProvider();
+          if (selected === provider) {
+            this.syncCompatibilityInput(provider);
+          }
+          if (result && result.classList.contains('error') && input.value.trim()) {
+            result.classList.add('hidden');
+            result.textContent = '';
+          }
+        });
+      }
+    });
+
     // Escape closes the modal
     if (typeof document.addEventListener === 'function') {
       document.addEventListener('keydown', (e) => {
@@ -4669,8 +5134,129 @@ class SettingsModal {
     }
   }
 
+  getSelectedProvider() {
+    let sel = 'gemini';
+    this.providerRadios.forEach(r => {
+      if (r.checked) sel = r.value;
+    });
+    return sel;
+  }
+
+  syncCompatibilityInput(selectedProvider) {
+    if (!this.apiKeyInput) return;
+    if (selectedProvider === 'gemini') {
+      this.apiKeyInput.value = this.geminiApiKeyInput ? this.geminiApiKeyInput.value.trim() : '';
+    } else if (selectedProvider === 'openai') {
+      this.apiKeyInput.value = this.openaiApiKeyInput ? this.openaiApiKeyInput.value.trim() : '';
+    } else if (selectedProvider === 'claude') {
+      this.apiKeyInput.value = this.claudeApiKeyInput ? this.claudeApiKeyInput.value.trim() : '';
+    } else if (selectedProvider === 'openrouter') {
+      this.apiKeyInput.value = this.openrouterApiKeyInput ? this.openrouterApiKeyInput.value.trim() : '';
+    }
+  }
+
+  updateBadges() {
+    const geminiVal = this.geminiApiKeyInput ? this.geminiApiKeyInput.value.trim() : '';
+    const openaiVal = this.openaiApiKeyInput ? this.openaiApiKeyInput.value.trim() : '';
+    const claudeVal = this.claudeApiKeyInput ? this.claudeApiKeyInput.value.trim() : '';
+    const openrouterVal = this.openrouterApiKeyInput ? this.openrouterApiKeyInput.value.trim() : '';
+
+    if (this.geminiKeyBadge) {
+      this.geminiKeyBadge.textContent = geminiVal ? '등록됨' : '미입력';
+      this.geminiKeyBadge.className = `api-key-status-badge ${geminiVal ? 'has-key' : 'no-key'}`;
+    }
+    if (this.openaiKeyBadge) {
+      this.openaiKeyBadge.textContent = openaiVal ? '등록됨' : '미입력';
+      this.openaiKeyBadge.className = `api-key-status-badge ${openaiVal ? 'has-key' : 'no-key'}`;
+    }
+    if (this.claudeKeyBadge) {
+      this.claudeKeyBadge.textContent = claudeVal ? '등록됨' : '미입력';
+      this.claudeKeyBadge.className = `api-key-status-badge ${claudeVal ? 'has-key' : 'no-key'}`;
+    }
+    if (this.openrouterKeyBadge) {
+      this.openrouterKeyBadge.textContent = openrouterVal ? '등록됨' : '미입력';
+      this.openrouterKeyBadge.className = `api-key-status-badge ${openrouterVal ? 'has-key' : 'no-key'}`;
+    }
+  }
+
+  updateActiveFieldHighlight(selectedProvider) {
+    if (!this.modal || typeof this.modal.querySelectorAll !== 'function') return;
+    const wraps = this.modal.querySelectorAll('.api-key-field-wrap');
+    wraps.forEach(wrap => {
+      const p = wrap.getAttribute('data-provider');
+      wrap.classList.toggle('is-active-provider', p === selectedProvider);
+    });
+  }
+
+  clearTestResults() {
+    [this.geminiTestResult, this.openaiTestResult, this.claudeTestResult, this.openrouterTestResult].forEach(el => {
+      if (el) {
+        el.textContent = '';
+        el.className = 'api-test-result hidden';
+      }
+    });
+  }
+
+  async runConnectionTest(provider, inputEl, btnEl, resultEl, name) {
+    const key = inputEl ? inputEl.value.trim() : '';
+    if (!key) {
+      if (resultEl) {
+        resultEl.textContent = '⚠️ API 키를 먼저 입력해주세요.';
+        resultEl.className = 'api-test-result error';
+        resultEl.classList.remove('hidden');
+      }
+      toast.show(`⚠️ ${name} API 키를 먼저 입력해주세요.`);
+      if (inputEl && typeof inputEl.focus === 'function') inputEl.focus();
+      return;
+    }
+
+    const originalText = btnEl ? btnEl.textContent : '연결 테스트';
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = '확인 중...';
+    }
+    if (resultEl) {
+      resultEl.textContent = '🔄 연결 확인 중...';
+      resultEl.className = 'api-test-result info';
+      resultEl.classList.remove('hidden');
+    }
+
+    try {
+      const outcome = await aiService.testConnection(provider, key);
+      if (outcome.success) {
+        if (resultEl) {
+          resultEl.textContent = `✓ ${outcome.message}`;
+          resultEl.className = 'api-test-result success';
+          resultEl.classList.remove('hidden');
+        }
+        toast.show(`✅ ${name}: ${outcome.message}`);
+      } else {
+        if (resultEl) {
+          resultEl.textContent = `✕ ${outcome.message}`;
+          resultEl.className = 'api-test-result error';
+          resultEl.classList.remove('hidden');
+        }
+        toast.show(`❌ ${name}: ${outcome.message}`);
+      }
+    } catch (err) {
+      const msg = err.message || String(err);
+      if (resultEl) {
+        resultEl.textContent = `✕ 연결 오류: ${msg}`;
+        resultEl.className = 'api-test-result error';
+        resultEl.classList.remove('hidden');
+      }
+      toast.show(`❌ ${name} 연결 오류: ${msg}`);
+    } finally {
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.textContent = originalText;
+      }
+    }
+  }
+
   open() {
     this.populate();
+    this.clearTestResults();
     if (this.modal) this.modal.classList.remove('hidden');
   }
 
@@ -4679,26 +5265,50 @@ class SettingsModal {
   }
 
   populate() {
-    const provider = aiService.provider;
+    const provider = aiService.provider || 'gemini';
     this.providerRadios.forEach(r => {
       r.checked = (r.value === provider);
     });
-    if (this.apiKeyInput) this.apiKeyInput.value = aiService.apiKey || '';
+
+    if (this.geminiApiKeyInput) this.geminiApiKeyInput.value = aiService.geminiKey || '';
+    if (this.openaiApiKeyInput) this.openaiApiKeyInput.value = aiService.openaiKey || '';
+    if (this.claudeApiKeyInput) this.claudeApiKeyInput.value = aiService.claudeKey || '';
+    if (this.openrouterApiKeyInput) this.openrouterApiKeyInput.value = aiService.openrouterKey || '';
+    if (this.apiKeyInput) this.apiKeyInput.value = aiService.getKeyForProvider(provider) || '';
     if (this.customPromptInput) this.customPromptInput.value = aiService.customPrompt || '';
+    if (this.autoFailoverCheckbox) this.autoFailoverCheckbox.checked = (aiService.autoFailover !== false);
+
+    this.updateBadges();
+    this.updateActiveFieldHighlight(provider);
   }
 
   save() {
-    let selProvider = 'gemini';
-    this.providerRadios.forEach(r => {
-      if (r.checked) selProvider = r.value;
-    });
-    const key = this.apiKeyInput ? this.apiKeyInput.value.trim() : '';
+    const selProvider = this.getSelectedProvider();
+    const geminiKey = this.geminiApiKeyInput ? this.geminiApiKeyInput.value.trim() : '';
+    const openaiKey = this.openaiApiKeyInput ? this.openaiApiKeyInput.value.trim() : '';
+    const claudeKey = this.claudeApiKeyInput ? this.claudeApiKeyInput.value.trim() : '';
+    const openrouterKey = this.openrouterApiKeyInput ? this.openrouterApiKeyInput.value.trim() : '';
     const prompt = this.customPromptInput ? this.customPromptInput.value.trim() : '';
+    const autoFailover = this.autoFailoverCheckbox ? this.autoFailoverCheckbox.checked : true;
 
-    aiService.saveSettings(selProvider, key, prompt);
+    let activeKey = geminiKey;
+    if (selProvider === 'openai') activeKey = openaiKey;
+    else if (selProvider === 'claude') activeKey = claudeKey;
+    else if (selProvider === 'openrouter') activeKey = openrouterKey;
+
+    this.syncCompatibilityInput(selProvider);
+
+    aiService.saveSettings(selProvider, activeKey, prompt, {
+      geminiKey,
+      openaiKey,
+      claudeKey,
+      openrouterKey,
+      autoFailover
+    });
+
     this.updateEngineBadge();
     this.close();
-    toast.show('✅ AI 설정이 저장되었습니다.');
+    toast.show('✅ AI 설정 및 API 키가 저장되었습니다.');
   }
 
   updateEngineBadge() {
@@ -4706,9 +5316,18 @@ class SettingsModal {
     const provider = aiService.provider;
     const hasKey = aiService.hasKey();
     if (hasKey) {
-      // callOpenAI() uses gpt-4o-mini, so the badge must not claim GPT-4o
-      const icon = provider === 'gemini' ? '✨' : '🟢';
-      const label = provider === 'gemini' ? 'Gemini AI' : 'OpenAI';
+      let icon = '✨';
+      let label = 'Gemini AI';
+      if (provider === 'openai') {
+        icon = '🟢';
+        label = 'OpenAI';
+      } else if (provider === 'claude') {
+        icon = '🟣';
+        label = 'Claude';
+      } else if (provider === 'openrouter') {
+        icon = '🌐';
+        label = 'OpenRouter';
+      }
       this.engineBadge.innerHTML = `<span class="badge-icon">${icon}</span><span class="badge-label">${label}</span>`;
       this.engineBadge.className = 'engine-badge ai-active';
       this.engineBadge.title = `AI 엔진 활성: ${label} (클릭하여 설정)`;
