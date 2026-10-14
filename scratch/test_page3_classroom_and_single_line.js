@@ -231,56 +231,59 @@ const rows = canvas.querySelectorAll('.memorize-sentence-row');
 assert.strictEqual(rows.length, 3, 'Page 3 canvas must render 3 sentence rows');
 console.log('✓ Page 3 canvas initialized with 3 sentence rows');
 
-// 4. Test Flip Synchronization between Full View and Classroom Modal
-console.log('\n[Check 4] Testing front/back flip synchronization...');
-// Case A: In full view, cards are NOT flipped (English on front)
-app.appState.memorizeAllFlipped = false;
+// 4. Test Korean Card Front & Zero English Initial Exposure in Classroom Modal
+console.log('\n[Check 4] Testing Korean front cards & hidden English answer in Classroom modal...');
 app.memorizeView.openClassroomModal(1); // Open on Sentence S2
-assert.strictEqual(app.memorizeView.areClassroomCardsFlipped, false, 'Classroom modal must open with English when full view is English');
-console.log('✓ English front state synchronized: full view = English ➔ classroom modal = English');
+assert.strictEqual(app.memorizeView.areClassroomCardsFlipped, false, 'Classroom modal must open with Korean front (unflipped)');
 
-// Case B: In full view, cards ARE flipped (Korean on front)
-app.memorizeView.closeClassroomModal();
-app.memorizeView.toggleFlipAllCards(); // Flip all to Korean
-assert.strictEqual(app.appState.memorizeAllFlipped, true);
-
-app.memorizeView.openClassroomModal(1); // Re-open on Sentence S2
-assert.strictEqual(app.memorizeView.areClassroomCardsFlipped, true, 'Classroom modal must open with Korean when full view is Korean');
-console.log('✓ Korean front state synchronized: full view = Korean ➔ classroom modal = Korean');
-
-// 5. Test 3-Sentence Classroom Modal Display (Selected is Center)
-console.log('\n[Check 5] Verifying 3 sentences in Classroom modal with center active sentence...');
 const modalChunksContainer = mockDoc.getElementById('classroomChunksContainer');
 let classroomRows = modalChunksContainer.querySelectorAll('.classroom-sentence-row');
-assert.strictEqual(classroomRows.length, 3, 'Classroom modal must display exactly 3 sentence rows');
+assert.strictEqual(classroomRows.length, 1, 'Classroom modal must display exactly 1 sentence row');
 
-// Verify row types: prev (S1), active (S2), next (S3)
-assert(classroomRows[0].classList.contains('row-prev'), 'Row 0 must be previous sentence');
-assert(classroomRows[1].classList.contains('row-active') && classroomRows[1].classList.contains('is-active'), 'Row 1 must be active center sentence');
-assert(classroomRows[2].classList.contains('row-next'), 'Row 2 must be next sentence');
+const activeRow = classroomRows[0];
+assert(activeRow.classList.contains('is-active'), 'The single row must be active');
 
-// Verify active center sentence has shortcut badges on its cards
-const activeRow = classroomRows[1];
+// Verify Page 3 canvas header has NO English sentence exposed
+assert(!rows[0].children[0].innerHTML.includes('The recommendation is that'), 'Page 3 canvas header must NOT display English sentence text');
+
+// Verify modal row header contains NO translation text (pure chunk card focus)
+const previewEl = activeRow.querySelector('.classroom-row-preview');
+assert(previewEl, 'Row preview element must exist');
+assert.strictEqual(previewEl.textContent, '', 'Classroom modal row header must have no translation text');
+
+// Verify card front is Korean, back is English
 const cards = activeRow.querySelectorAll('.classroom-chunk-card');
-assert(cards.length > 0, 'Active center row must have chunk cards');
-assert(cards[0].innerHTML.includes('classroom-key-badge'), 'Active center row cards must have shortcut key badges');
+assert.strictEqual(cards.length, 2, 'Sentence S2 must have 2 chunk cards');
+assert(cards[0].innerHTML.includes('classroom-face-ko'), 'Card must have Korean face');
+assert(cards[0].innerHTML.includes('classroom-face-en'), 'Card must have English face');
+assert(!cards[0].classList.contains('flipped'), 'Card must NOT be flipped by default');
 
-console.log('✓ Center active sentence verified: Row 1 is center active with shortcut badges');
+console.log('✓ Korean front cards verified: English answer is hidden, modal header has no sentence text');
 
-// Test S1 edge case (First sentence selected)
-console.log('\n[Check 6] Testing edge case S1 selected (placeholder on top)...');
+// 5. Test Flipping to Reveal English Answer
+console.log('\n[Check 5] Verifying flip interaction to reveal English answer...');
+app.memorizeView.flipAllClassroomCards();
+assert.strictEqual(app.memorizeView.areClassroomCardsFlipped, true, 'Cards must be marked flipped');
+assert(cards[0].classList.contains('flipped'), 'Card 0 must have .flipped class');
+
+// Flip back to Korean
+app.memorizeView.flipAllClassroomCards();
+assert.strictEqual(app.memorizeView.areClassroomCardsFlipped, false, 'Cards must flip back to Korean');
+assert(!cards[0].classList.contains('flipped'), 'Card 0 must remove .flipped class');
+console.log('✓ Flip toggle verified: flips to English answer and back to Korean front');
+
+// 6. Test Sentence Navigation (Previous / Next Sentence)
+console.log('\n[Check 6] Testing sentence navigation (S2 -> S1)...');
 app.memorizeView.prevClassroomSentence(); // Navigate from S2 to S1
 assert.strictEqual(app.memorizeView.classroomIndex, 0);
 
 classroomRows = modalChunksContainer.querySelectorAll('.classroom-sentence-row');
-assert.strictEqual(classroomRows.length, 3);
-assert(classroomRows[0].classList.contains('is-placeholder'), 'Row 0 must be placeholder before S1');
-assert(classroomRows[1].classList.contains('is-active'), 'Row 1 must be S1 (still center!)');
-assert(classroomRows[2].classList.contains('row-next'), 'Row 2 must be S2');
-console.log('✓ Edge case verified: S1 is center, Row 0 is starting placeholder');
+assert.strictEqual(classroomRows.length, 1, 'Classroom modal must still display exactly 1 sentence');
 
-// Test flip state persistence during sentence navigation
-assert.strictEqual(app.memorizeView.areClassroomCardsFlipped, true, 'Flip state must persist when navigating sentences inside classroom modal');
-console.log('✓ Flip state preserved across sentence navigation in classroom modal');
+const s1Preview = classroomRows[0].querySelector('.classroom-row-preview');
+assert.strictEqual(s1Preview.textContent, '', 'S1 modal header must also be empty');
+assert.strictEqual(app.memorizeView.areClassroomCardsFlipped, false, 'Moving to next/prev sentence must reset to Korean front');
+
+console.log('✓ Sentence navigation verified: Exactly 1 sentence displayed and Korean front reset');
 
 console.log('\n🎉 ALL PAGE 3 & CLASSROOM MODAL TESTS PASSED 100%!');

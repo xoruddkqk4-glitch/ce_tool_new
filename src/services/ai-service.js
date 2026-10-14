@@ -80,6 +80,7 @@ export class AIService {
     this.apiKey = StorageService.getApiKey();
     this.customPrompt = StorageService.getCustomPrompt();
     this.activeGeminiModel = null;
+    this.quotaExceededUntil = 0;
   }
 
   saveSettings(provider, apiKey, customPrompt) {
@@ -87,11 +88,16 @@ export class AIService {
     this.apiKey = apiKey;
     this.customPrompt = customPrompt;
     this.activeGeminiModel = null; // Reset cached model on settings update
+    this.quotaExceededUntil = 0;
     StorageService.saveApiSettings(provider, apiKey, customPrompt);
   }
 
   hasKey() {
     return !!(this.apiKey && this.apiKey.trim());
+  }
+
+  isQuotaExceededCoolingDown() {
+    return this.provider === 'gemini' && Date.now() < (this.quotaExceededUntil || 0);
   }
 
   /**
@@ -112,7 +118,8 @@ export class AIService {
         const data = await res.json();
         const available = (data.models || [])
           .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-          .map(m => m.name.replace(/^models\//, ''));
+          .map(m => m.name.replace(/^models\//, ''))
+          .filter(m => !m.includes('2.5-pro') && !m.includes('1.5-') && !m.includes('2.0-flash'));
 
         for (const cand of priorityOrder) {
           if (available.includes(cand)) {
@@ -121,10 +128,16 @@ export class AIService {
           }
         }
 
-        const flashModel = available.find(m => m.includes('flash'));
+        const flashModel = available.find(m => m.includes('3.8-flash') || m.includes('3.5-flash') || (m.includes('flash') && !m.includes('1.5') && !m.includes('2.0')));
         if (flashModel) {
           this.activeGeminiModel = flashModel;
           return flashModel;
+        }
+
+        const proModel = available.find(m => m.includes('3.1-pro') || (m.includes('pro') && !m.includes('2.5-pro')));
+        if (proModel) {
+          this.activeGeminiModel = proModel;
+          return proModel;
         }
 
         if (available.length > 0) {
@@ -136,14 +149,22 @@ export class AIService {
       console.warn('Gemini ListModels query failed, falling back to priority candidates:', e);
     }
 
-    this.activeGeminiModel = 'gemini-2.5-flash';
+    this.activeGeminiModel = CONSTANTS.GEMINI_CANDIDATE_MODELS[0] || 'gemini-3.8-flash';
     return this.activeGeminiModel;
   }
 
   /**
-   * Resilient POST to Gemini API with automatic candidate model fallback on 404/retirement
+   * Resilient POST to Gemini API with automatic candidate model fallback on 404/retirement and 429/quota limits
    */
   async postToGemini(payload, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+    if (this.isQuotaExceededCoolingDown()) {
+      const waitSec = Math.max(1, Math.ceil((this.quotaExceededUntil - Date.now()) / 1000));
+      const quotaErr = new Error(`Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. (약 ${waitSec}초 후 재시도 가능)`);
+      quotaErr.isQuotaExceeded = true;
+      quotaErr.status = 429;
+      throw quotaErr;
+    }
+
     const preferred = await this.resolveGeminiModel();
     const candidateList = [
       preferred,
@@ -152,6 +173,7 @@ export class AIService {
     const uniqueCandidates = [...new Set(candidateList)];
 
     let lastError = null;
+    let anyQuotaExceeded = false;
 
     for (const model of uniqueCandidates) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -164,6 +186,7 @@ export class AIService {
 
         if (response.ok) {
           this.activeGeminiModel = model; // Cache working model
+          this.quotaExceededUntil = 0; // Successfully reset cooldown
           const data = await response.json();
           const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!content) throw new Error('Gemini 응답 내용이 비어 있습니다.');
@@ -174,20 +197,75 @@ export class AIService {
         const errMsg = err.error?.message || `Status ${response.status}`;
         lastError = new Error(errMsg);
 
-        // If model is retired or not found (404), seamlessly try next candidate model
-        if (response.status === 404 || errMsg.includes('not found') || errMsg.includes('not supported')) {
-          console.warn(`Gemini model ${model} not available (${errMsg}). Trying next model candidate...`);
+        const isQuota = response.status === 429 ||
+          errMsg.includes('Quota exceeded') ||
+          errMsg.includes('RESOURCE_EXHAUSTED') ||
+          errMsg.includes('rate-limit') ||
+          errMsg.includes('rate limit') ||
+          errMsg.includes('Rate limit') ||
+          errMsg.includes('Too Many Requests');
+
+        const isUnavailableOrRetired = 
+          response.status === 404 ||
+          errMsg.includes('not found') ||
+          errMsg.includes('not supported') ||
+          errMsg.includes('no longer available') ||
+          errMsg.includes('not available') ||
+          errMsg.includes('deprecated') ||
+          errMsg.includes('retired');
+
+        if (isQuota) {
+          anyQuotaExceeded = true;
+          console.warn(`Gemini model ${model} hit quota/rate limit (${errMsg}). Trying next candidate model...`);
+          continue;
+        }
+
+        // If model is retired, not available to new users, or not found (404), seamlessly try next candidate model
+        if (isUnavailableOrRetired) {
+          if (this.activeGeminiModel === model) {
+            this.activeGeminiModel = null;
+          }
+          console.warn(`Gemini model ${model} not available or retired (${errMsg}). Trying next model candidate...`);
           continue;
         } else {
-          // For quota, auth, or bad request errors, throw immediately
+          // For auth or invalid request errors, throw immediately
           throw lastError;
         }
       } catch (fetchErr) {
-        if (fetchErr.message && !fetchErr.message.includes('not found') && !fetchErr.message.includes('not supported') && !fetchErr.message.includes('404')) {
+        const msg = fetchErr.message || '';
+        const isQuota = fetchErr.status === 429 || msg.includes('Quota exceeded') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429');
+        const isUnavailableOrRetired = 
+          fetchErr.status === 404 ||
+          msg.includes('not found') ||
+          msg.includes('not supported') ||
+          msg.includes('no longer available') ||
+          msg.includes('not available') ||
+          msg.includes('deprecated') ||
+          msg.includes('retired');
+
+        if (isQuota) anyQuotaExceeded = true;
+        if (isUnavailableOrRetired) {
+          if (this.activeGeminiModel === model) {
+            this.activeGeminiModel = null;
+          }
+          console.warn(`Gemini model ${model} not available or retired (${msg}). Trying next candidate...`);
+          continue;
+        }
+        if (!isQuota) {
           throw fetchErr;
         }
         lastError = fetchErr;
       }
+    }
+
+    if (anyQuotaExceeded) {
+      // Cooldown for 60 seconds so parallel tasks do not freeze the UI hammering rate-limited endpoints
+      this.quotaExceededUntil = Date.now() + 60000;
+      const quotaErr = new Error('Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. 잠시 후(약 1분 뒤) 다시 시도해 주세요.');
+      quotaErr.isQuotaExceeded = true;
+      quotaErr.status = 429;
+      quotaErr.originalError = lastError;
+      throw quotaErr;
     }
 
     throw lastError || new Error('사용 가능한 Gemini 모델을 찾을 수 없습니다. API 키 상태를 확인하세요.');
@@ -196,6 +274,13 @@ export class AIService {
   async translate(text) {
     if (!this.hasKey()) {
       throw new Error('AI API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘에서 API 키를 입력하세요.');
+    }
+    if (this.isQuotaExceededCoolingDown()) {
+      const waitSec = Math.max(1, Math.ceil((this.quotaExceededUntil - Date.now()) / 1000));
+      const quotaErr = new Error(`Gemini API 사용량 한도(Quota)가 일시적으로 초과되었습니다. (약 ${waitSec}초 후 재시도 가능)`);
+      quotaErr.isQuotaExceeded = true;
+      quotaErr.status = 429;
+      throw quotaErr;
     }
 
     const systemPrompt = `You are an expert English-Korean linguist specialized in syntax chunking and natural translation.
@@ -226,13 +311,13 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
    */
   async translateNatural(text) {
     if (!text || !text.trim()) return '';
-    // If user has AI key configured, attempt full AI translate
-    if (this.hasKey()) {
+    // If user has AI key configured, attempt full AI translate only if not in quota cooldown
+    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
       try {
         const res = await this.translate(text);
         if (res && res.natural) return res.natural;
       } catch (e) {
-        console.warn('AI translation failed, trying free translate:', e);
+        console.warn('AI translation failed, trying free translate:', e.message || e);
       }
     }
 
@@ -241,7 +326,7 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
       const translated = await this.fetchFreeTranslation(text.trim());
       if (translated) return translated;
     } catch (e) {
-      console.warn('Public translation endpoint error:', e);
+      console.warn('Public translation endpoint error:', e.message || e);
     }
 
     return null;
@@ -280,7 +365,7 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
     }
 
     // 1. If AI API key is configured (Gemini / OpenAI), use prompt to partition natural Korean
-    if (this.hasKey()) {
+    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
       try {
         const prompt = `You are an expert English-Korean linguist specialized in sequential interpretation (직독직해).
 We have an English sentence: "${englishSentence || cleanChunks.join(' ')}"
@@ -497,7 +582,7 @@ CRITICAL RULES:
    * AI-powered Audio & Script Forced Alignment using Gemini Multimodal Audio
    */
   async alignAudioWithScript(base64Audio, mimeType, sentences) {
-    if (!this.hasKey() || this.provider !== 'gemini' || !base64Audio) {
+    if (!this.hasKey() || this.provider !== 'gemini' || !base64Audio || this.isQuotaExceededCoolingDown()) {
       return null;
     }
 

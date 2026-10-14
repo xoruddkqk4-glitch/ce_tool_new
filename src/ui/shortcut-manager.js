@@ -15,11 +15,15 @@ export class ShortcutManager {
   }
 
   init() {
-    window.addEventListener('keydown', this.boundKeyHandler);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', this.boundKeyHandler);
+    }
   }
 
   destroy() {
-    window.removeEventListener('keydown', this.boundKeyHandler);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', this.boundKeyHandler);
+    }
   }
 
   /** True while a modal dialog is visible — global shortcuts must not drive the player behind it. */
@@ -73,32 +77,28 @@ export class ShortcutManager {
           if (this.handlers.onPlayPause) this.handlers.onPlayPause();
           return;
         }
-        // 2. F3: rewindAndPlay even while typing inside blank (keeps focus)
-        if (e.key === 'F3') {
-          e.preventDefault();
-          if (this.handlers.onRewindAndPlay) {
-            this.handlers.onRewindAndPlay();
-          } else if (this.handlers.onStartLoop) {
-            this.handlers.onStartLoop();
-          }
-          return;
-        }
-        // 3. F4: prevSentence (앞문장 이동)
-        if (e.key === 'F4') {
+        // 2. F6: prevSentence (앞문장 이동)
+        if (e.key === 'F6') {
           e.preventDefault();
           if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
           return;
         }
-        // 4. F5: nextSentence (뒷문장 이동, 브라우저 새로고침 방지)
-        if (e.key === 'F5') {
+        // 3. F7: nextSentence (뒷문장 이동)
+        if (e.key === 'F7') {
           e.preventDefault();
           if (this.handlers.onNextSentence) this.handlers.onNextSentence();
           return;
         }
-        // Toggle OFF via F2 or Escape: immediately exit text input mode and blur
-        if (e.key === 'F2' || e.key === 'Escape') {
+        // 4. Toggle OFF via F5 or Escape: immediately exit text input mode and blur
+        if (e.key === 'F5' || e.key === 'Escape') {
           e.preventDefault();
           target.blur();
+          return;
+        }
+        // 5. F11: togglePlayAllSentences (전체 문장 재생)
+        if (e.key === 'F11') {
+          e.preventDefault();
+          if (this.handlers.onTogglePlayAllSentences) this.handlers.onTogglePlayAllSentences();
           return;
         }
         // Alt + Arrow allowed inside FELS blanks for sentence jumping
@@ -227,50 +227,55 @@ export class ShortcutManager {
       return;
     }
 
-    // 5. F3 : rewindAndPlay (user-configured seconds rewind & continuous playback)
-    if (key === 'F3') {
-      e.preventDefault();
-      if (this.handlers.onRewindAndPlay) {
-        this.handlers.onRewindAndPlay();
-      } else if (this.handlers.onStartLoop) {
-        this.handlers.onStartLoop();
-      }
-      return;
-    }
-
-    // 6. F4 / ArrowLeft : prevSentence (앞문장으로 이동)
-    if (key === 'F4' || key === 'ArrowLeft') {
+    // 5. F6 / ArrowLeft : prevSentence (앞문장으로 이동)
+    if (key === 'F6' || key === 'ArrowLeft') {
       e.preventDefault();
       if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
       return;
     }
 
-    // 7. F5 / ArrowRight : nextSentence (뒷문장으로 이동, F5 브라우저 새로고침 방지)
-    if (key === 'F5' || key === 'ArrowRight') {
+    // 6. F7 / ArrowRight : nextSentence (뒷문장으로 이동)
+    if (key === 'F7' || key === 'ArrowRight') {
       e.preventDefault();
       if (this.handlers.onNextSentence) this.handlers.onNextSentence();
       return;
     }
 
-    // 8. S / s : toggleFelsMode
+    // 7. S / s : toggleFelsMode
     if (key === 's' || key === 'S' || key === 'ㄴ') {
       e.preventDefault();
       if (this.handlers.onToggleFels) this.handlers.onToggleFels();
       return;
     }
 
-    // 9. T / t : toggleTranslation
+    // 8. T / t : toggleTranslation
     if (key === 't' || key === 'T' || key === 'ㅅ') {
       e.preventDefault();
       if (this.handlers.onToggleTranslation) this.handlers.onToggleTranslation();
       return;
     }
 
-    // 10. F2 : toggleTextInput (약형 빈칸 텍스트 입력 모드 진입/해제)
-    if (key === 'F2') {
+    // 9. F5 : toggleTextInput (약형 빈칸 텍스트 입력 모드 진입/해제, F5 브라우저 새로고침 방지)
+    if (key === 'F5') {
       e.preventDefault();
       if (this.handlers.onToggleTextInput) this.handlers.onToggleTextInput();
       return;
+    }
+
+    // 10. F11 : togglePlayAllSentences (전체 문장 연속 재생, F11 브라우저 전체화면 방지)
+    if (key === 'F11') {
+      e.preventDefault();
+      if (this.handlers.onTogglePlayAllSentences) this.handlers.onTogglePlayAllSentences();
+      return;
+    }
+
+    // 11. Enter : In FELS mode on Page 2, check answers or advance to next sentence if all correct
+    if (key === 'Enter') {
+      if (this.handlers.onEnterPractice) {
+        e.preventDefault();
+        this.handlers.onEnterPractice();
+        return;
+      }
     }
   }
 }

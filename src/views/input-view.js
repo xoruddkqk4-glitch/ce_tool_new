@@ -504,9 +504,7 @@ export class InputView {
   }
 
   getTranslateButtonLabel(mode = appState.currentMode) {
-    if (mode === 'both') return '3x1 생성 및 음성 연동';
-    if (mode === 'audio') return '🎙️ 음성에서 스크립트 추출 및 3x1 생성';
-    return '3x1 해석 및 FELS 생성';
+    return '약형드랩 생성';
   }
 
   /** Gemini inline audio is only attempted for real uploads within the size limit. */
@@ -790,7 +788,11 @@ export class InputView {
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 완료! 아래에서 청크와 해석을 확인하세요.`);
       } catch (err) {
         console.error(err);
-        toast.show(`❌ 음성 추출 오류: ${err.message}`);
+        if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
+          toast.show('⚠️ Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. 잠시 후(약 1분 뒤) 다시 시도하시거나, 스크립트 직접 입력 모드를 이용해 주세요.');
+        } else {
+          toast.show(`❌ 음성 추출 오류: ${err.message}`);
+        }
       } finally {
         this.setLoading(false);
       }
@@ -885,10 +887,18 @@ export class InputView {
 
       // Render Results Panel on Page 1
       this.renderParsedResults({ scrollToSection: true });
-      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
+      if (aiService.isQuotaExceededCoolingDown()) {
+        toast.show('ℹ️ Gemini API 사용량 일시 초과로 내장 규칙 엔진 및 무료 번역으로 자동 전환하여 생성을 완료했습니다.');
+      } else {
+        toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
+      }
     } catch (err) {
       console.error('Translation error:', err);
-      toast.show(`❌ 오류: ${err.message}`);
+      if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
+        toast.show('⚠️ Gemini API 사용량 한도가 초과되어 내장 규칙 엔진 결과로 자동 전환합니다.');
+      } else {
+        toast.show(`❌ 오류: ${err.message}`);
+      }
     } finally {
       this.setLoading(false);
     }
@@ -921,7 +931,11 @@ export class InputView {
       }
     } catch (err) {
       console.error('Auto sync error:', err);
-      toast.show(`❌ 자동 Sync 오류: ${err.message}`);
+      if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429')))) {
+        toast.show('⚠️ Gemini API 사용량 한도로 인해 로컬 오디오 분석(VAD) 알고리즘으로 동기화했습니다.');
+      } else {
+        toast.show(`❌ 자동 Sync 오류: ${err.message}`);
+      }
     }
   }
 
@@ -2173,10 +2187,17 @@ export class InputView {
     if (this.btnTranslateText) {
       this.btnTranslateText.textContent = isLoading ? '처리 중...' : this.getTranslateButtonLabel(appState.currentMode);
     }
-    const icon = typeof this.btnTranslate.querySelector === 'function' ? this.btnTranslate.querySelector('svg') : null;
-    if (icon && icon.classList) {
-      if (isLoading) icon.classList.add('spin-icon');
-      else icon.classList.remove('spin-icon');
+    const arrowIcon = this.btnTranslate.querySelector('.btn-icon-arrow');
+    const spinnerIcon = this.btnTranslate.querySelector('.btn-icon-spinner');
+    if (arrowIcon && spinnerIcon) {
+      arrowIcon.classList.toggle('hidden', !!isLoading);
+      spinnerIcon.classList.toggle('hidden', !isLoading);
+    } else {
+      const icon = typeof this.btnTranslate.querySelector === 'function' ? this.btnTranslate.querySelector('svg') : null;
+      if (icon && icon.classList) {
+        if (isLoading) icon.classList.add('spin-icon');
+        else icon.classList.remove('spin-icon');
+      }
     }
   }
 

@@ -126,3 +126,36 @@
     max-width: 80px;
   }
 }
+
+/* Light Theme Overrides for Project Toolbar */
+[data-theme="light"] .header-project-toolbar {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+[data-theme="light"] .project-btn {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .project-btn:hover {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0284c7;
+}
+
+[data-theme="light"] .project-status-pill {
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+}
+
+[data-theme="light"] .pill-name {
+  color: #0f172a;
+}
+
+[data-theme="light"] .pill-status {
+  color: #64748b;
+}

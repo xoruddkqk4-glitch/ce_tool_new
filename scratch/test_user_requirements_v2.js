@@ -51,10 +51,11 @@ assert(modeSelector.includes('id="btnTranslate"'), '#btnTranslate must be placed
 assert(modeSelector.includes('btn-dark-green'), '#btnTranslate must have btn-dark-green class');
 assert(cssContent.includes('#15803d') || cssContent.includes('#166534'), 'btn-dark-green must use dark green gradient/palette');
 
-const inputActionsBar = htmlContent.substring(htmlContent.indexOf('class="input-actions-bar"'), htmlContent.indexOf('id="parsedResultsSection"'));
-assert(inputActionsBar.includes('id="btnStartPractice"'), '#btnStartPractice must be placed in input-actions-bar');
-assert(inputActionsBar.includes('이 데이터로 2단계 약형 연습 시작'), '#btnStartPractice text must be "이 데이터로 2단계 약형 연습 시작"');
-console.log('✓ Confirmed: #btnTranslate is beside "script만" with dark green style; #btnStartPractice is at input-actions-bar');
+assert(!htmlContent.includes('id="btnStartPractice"'), '#btnStartPractice in input box must be removed per user request');
+const resultsFooter = htmlContent.substring(htmlContent.indexOf('class="results-footer-bar"'), htmlContent.indexOf('id="view-practice"'));
+assert(resultsFooter.includes('id="btnBottomStartPractice"'), '#btnBottomStartPractice must be in results-footer-bar');
+assert(resultsFooter.includes('이 데이터로 약형드랩 연습'), '#btnBottomStartPractice text must be "이 데이터로 약형드랩 연습"');
+console.log('✓ Confirmed: #btnStartPractice removed from input card; #btnBottomStartPractice updated to "이 데이터로 약형드랩 연습"');
 
 // [Req 1] Waveform Dynamic Peaks Verification
 console.log('\n[Check 6] Verifying Waveform Dynamic Peaks Generation (Never a Flat Line)...');
@@ -228,12 +229,12 @@ assert(minPeak < 0.15, 'Waveform must have low pause/dip floors');
 assert(maxPeak > 0.65, 'Waveform must have high dynamic syllabic peaks');
 assert(maxPeak - minPeak > 0.5, 'Waveform must exhibit wide dynamic contrast (not a flat bar)');
 
-// Test btnStartPractice from Page 1
-console.log('\n[Check 7] Testing navigation via #btnStartPractice on Page 1...');
+// Test btnBottomStartPractice from Page 1
+console.log('\n[Check 7] Testing navigation via #btnBottomStartPractice on Page 1...');
 app.inputView.inputEnglish.value = 'She visited Paris last summer.';
-const btnStartPractice = mockDoc.getElementById('btnStartPractice');
-assert(btnStartPractice, '#btnStartPractice must exist');
-btnStartPractice.click();
+const btnBottomStartPractice = mockDoc.getElementById('btnBottomStartPractice');
+assert(btnBottomStartPractice, '#btnBottomStartPractice must exist');
+btnBottomStartPractice.click();
 // startPracticeHandler is async (awaits handleTranslate before navigating)
 for (let i = 0; i < 100 && app.router.currentPage !== 'practice'; i++) {
   await new Promise(r => setTimeout(r, 20));
@@ -241,6 +242,6 @@ for (let i = 0; i < 100 && app.router.currentPage !== 'practice'; i++) {
 
 assert.strictEqual(app.router.currentPage, 'practice', 'Must navigate to practice page');
 assert(app.appState.sentenceList.length > 0, 'Sentence must be automatically prepared');
-console.log('✓ Confirmed: #btnStartPractice successfully initiates 2-step practice directly from Page 1');
+console.log('✓ Confirmed: #btnBottomStartPractice successfully initiates 2-step practice directly from Page 1');
 
 console.log('\n🎉 ALL 8 USER REQUIREMENTS (V2) 100% VERIFIED AND WORKING!');

@@ -13,18 +13,21 @@ console.log('\n[Check 1] Verifying Panel Ordering in index.html...');
 const practiceViewIdx = htmlContent.indexOf('id="view-practice"');
 const rowChunksIdx = htmlContent.indexOf('id="rowChunks"');
 const audioPlayerIdx = htmlContent.indexOf('id="audioPlayerSection"');
-const rowNaturalIdx = htmlContent.indexOf('id="rowNatural"');
 const endPracticeViewIdx = htmlContent.indexOf('id="view-memorize"');
 
 assert(practiceViewIdx !== -1, '#view-practice must exist');
 assert(rowChunksIdx > practiceViewIdx && rowChunksIdx < audioPlayerIdx, '#rowChunks must come first in #view-practice');
-assert(audioPlayerIdx > rowChunksIdx && audioPlayerIdx < rowNaturalIdx, '#audioPlayerSection must come second in #view-practice');
-assert(rowNaturalIdx > audioPlayerIdx && rowNaturalIdx < endPracticeViewIdx, '#rowNatural must come third in #view-practice');
+assert(audioPlayerIdx > rowChunksIdx && audioPlayerIdx < endPracticeViewIdx, '#audioPlayerSection must come second in #view-practice');
+
+// Verify #rowNatural is deleted from #view-practice, and translationModal popup exists
+const practiceViewContent = htmlContent.substring(practiceViewIdx, endPracticeViewIdx);
+assert(!practiceViewContent.includes('id="rowNatural"'), '#rowNatural inline section must be removed from #view-practice');
+assert(htmlContent.includes('id="translationModal"'), '#translationModal popup must exist');
 
 // Check no duplicate audio player
 const secondAudioIdx = htmlContent.indexOf('id="audioPlayerSection"', audioPlayerIdx + 1);
 assert.strictEqual(secondAudioIdx, -1, 'No duplicate audio player section allowed in index.html');
-console.log('✓ Strict 3-panel ordering confirmed: #rowChunks ➔ #audioPlayerSection ➔ #rowNatural');
+console.log('✓ Clean 2-panel ordering in practice view confirmed: #rowChunks ➔ #audioPlayerSection; #translationModal is a popup');
 
 // 2. Verify Educational Icon
 console.log('\n[Check 2] Verifying Educational Icon for 청크 학습 카드...');

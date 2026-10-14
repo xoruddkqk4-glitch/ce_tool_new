@@ -64,6 +64,8 @@ class CEToolApp {
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
       onToggleTextInput: () => this.practiceView.toggleTextInputMode(),
+      onTogglePlayAllSentences: () => this.practiceView.togglePlayAllSentences(),
+      onEnterPractice: () => this.practiceView.handleFelsInputEnter(),
       onFlipPracticeCard: (num) => this.practiceView.flipCardByIndex(num),
       onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
       onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),

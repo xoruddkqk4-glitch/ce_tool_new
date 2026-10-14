@@ -59,7 +59,7 @@
         </button>
         <button class="nav-tab-btn" data-page="practice" type="button">
           <span class="tab-step">2</span>
-          <span class="tab-label">문장 약형 연습</span>
+          <span class="tab-label">약형드랩 연습</span>
         </button>
         <button class="nav-tab-btn" data-page="memorize" type="button">
           <span class="tab-step">3</span>
@@ -68,10 +68,6 @@
       </nav>
 
       <div class="header-actions">
-        <span id="engineBadge" class="engine-badge rule-active" title="엔진 설정 열기">
-          <span class="badge-icon">⚙️</span>
-          <span class="badge-label">규칙 엔진</span>
-        </span>
         <button id="btnSettings" class="icon-btn" title="AI API 환경설정" type="button">⚙️</button>
         <button id="btnThemeToggle" class="icon-btn" title="테마 전환" type="button">☀️</button>
       </div>
@@ -99,12 +95,16 @@
             <button class="mode-tab active" data-mode="text" type="button">
               <span>✍️ script만 (텍스트)</span>
             </button>
-            <button id="btnTranslate" class="primary-btn btn-dark-green" type="button" title="3x1 해석 및 FELS 생성 (Ctrl+Enter)">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <button id="btnTranslate" class="primary-btn btn-dark-green" type="button" title="약형드랩 생성 (Ctrl+Enter)">
+              <svg class="btn-icon-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M5 12h14"></path>
                 <path d="m12 5 7 7-7 7"></path>
               </svg>
-              <span id="btnTranslateText">3×1 해석 및 FELS 생성</span>
+              <svg class="btn-icon-spinner hidden" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="2.8" stroke-opacity="0.25"></circle>
+                <path d="M12 2.5a9.5 9.5 0 0 1 9.5 9.5" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"></path>
+              </svg>
+              <span id="btnTranslateText">약형드랩 생성</span>
               <kbd class="btn-kbd">Ctrl+↵</kbd>
             </button>
           </div>
@@ -149,12 +149,6 @@
             </div>
           </div>
 
-          <!-- Action Button: 2단계 약형 연습 시작 -->
-          <div class="input-actions-bar" style="margin-top: 18px;">
-            <button id="btnStartPractice" class="primary-btn btn-start-practice" type="button" title="이 데이터로 2단계 문장 약형 연습 시작">
-              <span>🚀 이 데이터로 2단계 약형 연습 시작 ➔</span>
-            </button>
-          </div>
         </div>
 
         <!-- ================================================================= -->
@@ -177,7 +171,7 @@
               <button id="btnPrintHandout" class="action-pill-btn btn-secondary-pill" type="button" title="학생용 A4 1장 약형드랩 유인물 인쇄 또는 다운로드">
                 <span>📄 A4 유인물 인쇄 / 다운로드</span>
               </button>
-              <button id="btnHeaderStartPractice" class="action-pill-btn btn-primary-pill" type="button" title="2단계 문장 약형 연습 시작">
+              <button id="btnHeaderStartPractice" class="action-pill-btn btn-primary-pill" type="button" title="약형드랩 연습 시작">
                 <span>🚀 2단계 연습 시작 ➔</span>
               </button>
             </div>
@@ -222,8 +216,8 @@
             <button id="btnBottomPrintHandout" class="secondary-btn" type="button">
               📄 학생용 A4 1장 약형드랩 유인물 인쇄 / 다운로드
             </button>
-            <button id="btnBottomStartPractice" class="primary-btn" type="button">
-              🚀 이 데이터로 2단계 문장 약형 연습 시작 ➔
+            <button id="btnBottomStartPractice" class="primary-btn" type="button" title="이 데이터로 약형드랩 연습">
+              <span>🚀 이 데이터로 약형드랩 연습 ➔</span>
             </button>
           </div>
         </div>
@@ -241,16 +235,21 @@
         <!-- ④ [상단 고정 도킹] 문장 자동 분류 네비게이터 (#sentenceNavigator) -->
         <nav id="sentenceNavigator" class="sentence-navigator-bar">
           <div class="nav-controls-left">
-            <button id="btnPrevSentence" class="stn-nav-btn" title="이전 문장 (← 키)" type="button">
+            <button id="btnPrevSentence" class="stn-nav-btn" title="이전 문장 (F6, ← 키)" type="button">
               <span>◀ 이전 문장</span>
-              <kbd>←</kbd>
+              <kbd>F6</kbd>
             </button>
             <span class="stn-count-indicator">
               <span id="currentSentenceNum" class="current">1</span> / <span id="totalSentenceNum">1</span>
             </span>
-            <button id="btnNextSentence" class="stn-nav-btn" title="다음 문장 (→ 키)" type="button">
-              <kbd>→</kbd>
+            <button id="btnNextSentence" class="stn-nav-btn" title="다음 문장 (F7, → 키)" type="button">
+              <kbd>F7</kbd>
               <span>다음 문장 ▶</span>
+            </button>
+            <button id="btnTogglePlayAllSentences" class="stn-playall-btn" title="전체 문장 연속 재생 (F11)" type="button">
+              <span id="playAllIcon">▶</span>
+              <span id="playAllText">전체 재생</span>
+              <kbd>F11</kbd>
             </button>
           </div>
 
@@ -260,9 +259,9 @@
           </div>
 
           <div class="nav-settings-right">
-            <button id="btnResetSentenceInputs" class="stn-reset-btn" title="현재 문장의 [ ] 빈칸 입력 데이터 초기화" type="button">
+            <button id="btnResetSentenceInputs" class="stn-reset-btn" title="모든 문장의 [ ] 빈칸 입력 데이터 전체 초기화" type="button">
               <span class="btn-icon">🔄</span>
-              <span>[ ] 초기화</span>
+              <span>전체 [ ] 초기화</span>
             </button>
           </div>
         </nav>
@@ -284,14 +283,13 @@
                 <span id="felsModeLabel">원문 보기</span>
                 <kbd class="btn-kbd">S</kbd>
               </button>
-              <button id="btnResetFels" class="action-pill-btn" title="빈칸 입력을 비우고 다시 풀기" type="button">
-                <span>🔄 다시 풀기</span>
+              <button id="btnResetFels" class="action-pill-btn" title="현재 문장의 [ ] 빈칸 입력 초기화" type="button">
+                <span>🔄 현재 [ ] 초기화</span>
               </button>
               <button id="btnFlipAllCards" class="action-pill-btn" title="모든 카드를 일괄 뒤집기" type="button">
                 <span id="flipAllIcon">🔄</span>
                 <span id="flipAllLabel">해석 뒷면</span>
               </button>
-              <button class="icon-btn speak-btn" data-target="en" title="영문 음성 듣기" type="button">🔊</button>
             </div>
           </div>
 
@@ -359,26 +357,76 @@
             </div>
           </div>
 
-          <!-- Looper HUD Footer -->
+          <!-- Looper HUD Footer (User Settings: Section Silent, Rewind, Repeat Count) -->
           <div class="waveform-hud-footer">
             <div class="looper-controls-left">
-              <span class="looper-label">🔁 루프 반복:</span>
-              <div class="looper-count-group">
-                <button class="looper-count-btn" data-count="1" type="button">1회</button>
-                <button class="looper-count-btn active" data-count="3" type="button">3회</button>
-                <button class="looper-count-btn" data-count="5" type="button">5회</button>
-                <button class="looper-count-btn" data-count="infinite" type="button">∞</button>
+              <!-- 1. 섹션 간격 (0초 ~ 4초, 0.5초 간격, 디폴트 1초) -->
+              <div class="hud-setting-item">
+                <label for="selectSectionSilent" class="hud-setting-label">⏱️ 섹션 간격:</label>
+                <select id="selectSectionSilent" class="hud-dropdown-select" title="반복 재생 시 무음 대기 간격 (0초~4초)">
+                  <option value="0">0초</option>
+                  <option value="0.5">0.5초</option>
+                  <option value="1" selected>1.0초</option>
+                  <option value="1.5">1.5초</option>
+                  <option value="2">2.0초</option>
+                  <option value="2.5">2.5초</option>
+                  <option value="3">3.0초</option>
+                  <option value="3.5">3.5초</option>
+                  <option value="4">4.0초</option>
+                </select>
               </div>
-              <button id="btnClearLoop" class="clear-loop-btn" title="반복 구간 해제 (\ 키)" type="button">✕ 구간 해제</button>
 
               <span class="replay-divider">|</span>
-              <span class="replay-label">⏪ F3 되감기:</span>
-              <div class="replay-btn-group" id="replayBtnGroup">
-                <button class="replay-sec-btn" data-sec="0.5" type="button" title="F3 키 누르면 0.5초 뒤로 되돌아가 연속 재생">0.5초</button>
-                <button class="replay-sec-btn active" data-sec="1" type="button" title="F3 키 누르면 1초 뒤로 되돌아가 연속 재생">1초</button>
-                <button class="replay-sec-btn" data-sec="1.5" type="button" title="F3 키 누르면 1.5초 뒤로 되돌아가 연속 재생">1.5초</button>
-                <button class="replay-sec-btn" data-sec="2" type="button" title="F3 키 누르면 2초 뒤로 되돌아가 연속 재생">2초</button>
+
+              <!-- 2. 되감기 (0초 ~ 2초, 0.1초 간격, 디폴트 0.5초) -->
+              <div class="hud-setting-item">
+                <label for="selectRewindSeconds" class="hud-setting-label">⏪ 되감기:</label>
+                <select id="selectRewindSeconds" class="hud-dropdown-select" title="Space바 일시정지 후 재생 시 자동 되감기 시간 (0.0초~2.0초)">
+                  <option value="0">0.0초</option>
+                  <option value="0.1">0.1초</option>
+                  <option value="0.2">0.2초</option>
+                  <option value="0.3">0.3초</option>
+                  <option value="0.4">0.4초</option>
+                  <option value="0.5" selected>0.5초</option>
+                  <option value="0.6">0.6초</option>
+                  <option value="0.7">0.7초</option>
+                  <option value="0.8">0.8초</option>
+                  <option value="0.9">0.9초</option>
+                  <option value="1">1.0초</option>
+                  <option value="1.1">1.1초</option>
+                  <option value="1.2">1.2초</option>
+                  <option value="1.3">1.3초</option>
+                  <option value="1.4">1.4초</option>
+                  <option value="1.5">1.5초</option>
+                  <option value="1.6">1.6초</option>
+                  <option value="1.7">1.7초</option>
+                  <option value="1.8">1.8초</option>
+                  <option value="1.9">1.9초</option>
+                  <option value="2">2.0초</option>
+                </select>
               </div>
+
+              <span class="replay-divider">|</span>
+
+              <!-- 3. 반복 횟수 (1회 ~ 10회, 무한반복, 디폴트 3회) -->
+              <div class="hud-setting-item">
+                <label for="selectLoopCount" class="hud-setting-label">🔁 반복 횟수:</label>
+                <select id="selectLoopCount" class="hud-dropdown-select" title="문장 또는 선택 구간 반복 횟수">
+                  <option value="1">1회</option>
+                  <option value="2">2회</option>
+                  <option value="3" selected>3회</option>
+                  <option value="4">4회</option>
+                  <option value="5">5회</option>
+                  <option value="6">6회</option>
+                  <option value="7">7회</option>
+                  <option value="8">8회</option>
+                  <option value="9">9회</option>
+                  <option value="10">10회</option>
+                  <option value="infinite">무한반복</option>
+                </select>
+              </div>
+
+              <button id="btnClearLoop" class="clear-loop-btn" title="반복 구간 해제 (\ 키)" type="button">✕ 구간 해제</button>
             </div>
 
             <div id="loopStatusBadge" class="loop-status-badge hidden">
@@ -391,40 +439,16 @@
           <!-- 9 Unified Keyboard Shortcuts Bar -->
           <div class="audio-shortcut-bar">
             <span style="font-weight: 700; color: #00ffcc;">⌨️ 전역 단축키:</span>
-            <span class="shortcut-item"><kbd>Space</kbd> 재생/정지</span>
+            <span class="shortcut-item"><kbd>Space</kbd> 재생/정지(되감기)</span>
             <span class="shortcut-item"><kbd>[</kbd> 시작점</span>
             <span class="shortcut-item"><kbd>]</kbd> 끝점&amp;재생</span>
             <span class="shortcut-item"><kbd>\</kbd>(￦) 구간해제</span>
-            <span class="shortcut-item"><kbd>F3</kbd> <span id="shortcutRLabel">1초 되감기재생</span></span>
-            <span class="shortcut-item"><kbd>F4</kbd>(←) 이전문장</span>
-            <span class="shortcut-item"><kbd>F5</kbd>(→) 다음문장</span>
+            <span class="shortcut-item"><kbd>F5</kbd> 빈칸입력</span>
+            <span class="shortcut-item"><kbd>F6</kbd>(←) 이전문장</span>
+            <span class="shortcut-item"><kbd>F7</kbd>(→) 다음문장</span>
+            <span class="shortcut-item"><kbd>F11</kbd> 전체문장재생</span>
             <span class="shortcut-item"><kbd>S</kbd> 약형/대본</span>
-            <span class="shortcut-item"><kbd>T</kbd> 해석토글</span>
-            <span class="shortcut-item"><kbd>F2</kbd> 빈칸입력</span>
-          </div>
-        </section>
-
-        <!-- ③ [하단] 우리말 해석 (#rowNatural) - 기본 숨김 -->
-        <section id="rowNatural" class="glass-card output-row">
-          <div class="row-header">
-            <div class="row-title-area">
-              <span class="row-icon">🇰🇷</span>
-              <h3 class="row-title">우리말 해석</h3>
-              <span class="action-pill-btn" style="pointer-events: none; opacity: 0.6; font-size: 0.72rem;">기본 숨김</span>
-            </div>
-            <div class="row-actions">
-              <button class="action-pill-btn" data-target="rowNatural" title="우리말 해석 보이기/숨기기 (T 키)" type="button">
-                <span>👁️ 보이기/숨기기</span>
-                <kbd class="btn-kbd">T</kbd>
-              </button>
-              <button class="icon-btn speak-btn" data-target="natural" title="우리말 음성 듣기" type="button">🔊</button>
-            </div>
-          </div>
-          <div class="row-content is-masked">
-            <p id="txtNatural" class="row-text">한글 어순과 맞춤법에 맞는 완성된 우리말 문장이 표시됩니다.</p>
-            <div id="maskCoverNatural" class="row-mask-cover">
-              <span>🔒 우리말 해석이 숨겨져 있습니다 (클릭하거나 <kbd>T</kbd> 키를 눌러 확인)</span>
-            </div>
+            <span class="shortcut-item"><kbd>T</kbd> 해석 팝업</span>
           </div>
         </section>
 
@@ -450,6 +474,9 @@
             </button>
             <button id="btnFlipAllMemorize" class="action-pill-btn" type="button">
               <span>🔄 전체 뒤집기</span>
+            </button>
+            <button id="btnOpenClassroomModal" class="action-pill-btn btn-primary-pill" type="button" title="교실 대형 화면으로 크게 보기 (모달)">
+              <span>🔍 크게 보기</span>
             </button>
             <span id="memorizeStatsBadge" class="action-pill-btn" style="pointer-events: none; opacity: 0.85;">총 0개 문장</span>
           </div>
@@ -505,6 +532,29 @@
       </div>
     </div>
 
+    <!-- Natural Korean Translation Popup Modal for Page 2 (#translationModal) -->
+    <div id="translationModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="translationModalTitle">
+      <div class="modal-card translation-modal-card">
+        <div class="modal-header">
+          <div class="modal-title-group" style="display: flex; align-items: center; gap: 10px;">
+            <span id="translationModalBadge" class="classroom-stn-badge" style="font-size: 0.85rem; padding: 2px 8px;">S1</span>
+            <h3 id="translationModalTitle" class="modal-title" style="margin: 0; font-size: 1.15rem;">우리말 해석</h3>
+          </div>
+          <div class="modal-header-actions" style="display: flex; align-items: center; gap: 8px;">
+            <button id="btnTranslationSpeak" class="icon-btn" type="button" title="우리말 음성 듣기">🔊</button>
+            <button id="btnCloseTranslationModal" class="icon-btn modal-close-btn" type="button" title="닫기 (T 또는 ESC)">✕</button>
+          </div>
+        </div>
+        <div class="modal-body" style="padding: 24px 20px;">
+          <p id="txtNatural" class="translation-modal-text">한글 어순과 맞춤법에 맞는 완성된 우리말 문장이 표시됩니다.</p>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px;">
+          <span style="font-size: 0.8rem; color: #94a3b8;">💡 <strong>단축키:</strong> [T] 키 또는 [ESC]를 눌러 닫을 수 있습니다.</span>
+          <button id="btnConfirmTranslationModal" class="action-pill-btn" type="button">닫기 (ESC)</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Classroom Large Presentation Modal for Page 3 (교실 수업용 대형 문장 모달) -->
     <div id="classroomModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="classroomModalTitle">
       <div class="modal-card classroom-modal-card">
@@ -521,8 +571,8 @@
               <span class="classroom-play-icon">▶</span>
               <span class="classroom-play-label">음성 듣기</span>
             </button>
-            <button id="btnClassroomFlipAll" class="action-pill-btn" type="button" title="모든 청크 뒤집기 (F)">
-              <span>🔄 전체 뒤집기</span>
+            <button id="btnClassroomFlipAll" class="action-pill-btn" type="button" title="정답 영어 확인 / 우리말 앞면 전환 (F)">
+              <span>🔤 정답 영어 보기</span>
             </button>
             <button id="btnClassroomPrev" class="icon-btn" type="button" title="이전 문장 (←)">◀</button>
             <button id="btnClassroomNext" class="icon-btn" type="button" title="다음 문장 (→)">▶</button>

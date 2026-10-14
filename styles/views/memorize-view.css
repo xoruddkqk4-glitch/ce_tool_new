@@ -91,16 +91,20 @@
   color: var(--text-muted);
 }
 
-/* Sentence Row */
+/* Sentence Row - Single Compact Row: Play Button + Chunks */
 .memorize-sentence-row {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: 10px;
   background: var(--glass-bg);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  margin-bottom: 6px;
   transition: var(--transition);
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .memorize-sentence-row:hover {
@@ -115,49 +119,19 @@
   background: rgba(16, 28, 48, 0.98);
 }
 
-.memorize-sentence-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.memorize-stn-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  background: rgba(99, 102, 241, 0.2);
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  color: var(--primary-light);
-  font-size: 0.8rem;
-  font-weight: 800;
-  font-family: monospace;
-  transition: var(--transition);
-}
-
-.memorize-stn-badge:hover {
-  background: var(--primary);
-  color: #fff;
-}
-
-.memorize-stn-preview {
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  flex: 1;
-}
-
 .memorize-stn-play {
-  width: 28px;
-  height: 28px;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 255, 204, 0.12);
+  border: 1px solid rgba(0, 255, 204, 0.35);
   color: #00ffcc;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
+  cursor: pointer;
   transition: var(--transition);
 }
 
@@ -165,6 +139,7 @@
   background: #00ffcc;
   color: #090e17;
   transform: scale(1.1);
+  box-shadow: 0 0 10px rgba(0, 255, 204, 0.4);
 }
 
 /* Chunk Grid - Strict single-line, NO horizontal scroll, dynamically auto-scaled */
@@ -174,12 +149,14 @@
   flex-wrap: nowrap !important;
   align-items: center;
   justify-content: flex-start;
-  gap: 4px;
+  gap: var(--row-chunk-gap, 5px);
   overflow-x: hidden !important;
   overflow-y: hidden;
   scrollbar-width: none !important;
   -ms-overflow-style: none;
-  padding: 2px 0 4px 0;
+  padding: 0;
+  flex: 1 1 0;
+  min-width: 0;
   width: 100%;
   box-sizing: border-box;
 }
@@ -227,7 +204,7 @@
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   border-radius: var(--radius-md);
-  padding: 2px 4px;
+  padding: 2px var(--row-chunk-pad-x, 8px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -593,10 +570,10 @@
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap !important;
-  gap: 6px;
+  gap: var(--classroom-chunk-gap, 6px);
   align-items: center;
   justify-content: flex-start;
-  padding: 2px 0 4px 0;
+  padding: 4px 0;
   overflow-x: hidden;
   width: 100%;
   box-sizing: border-box;
@@ -606,10 +583,9 @@
 .classroom-chunk-card {
   perspective: 1000px;
   position: relative;
-  height: 56px;
-  min-height: 56px;
-  flex: 0 1 auto;
-  width: max-content;
+  height: 62px;
+  min-height: 62px;
+  flex: 0 0 auto;
   min-width: 36px;
   cursor: pointer;
   user-select: none;
@@ -617,8 +593,8 @@
 }
 
 .classroom-chunk-card.context-card {
-  height: 44px;
-  min-height: 44px;
+  height: 48px;
+  min-height: 48px;
   min-width: 28px;
 }
 
@@ -641,18 +617,18 @@
 
 .classroom-key-badge {
   position: absolute;
-  top: 3px;
-  left: 4px;
+  top: 4px;
+  left: 5px;
   z-index: 10;
   pointer-events: none;
   transform: translateZ(10px);
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 4px;
   background: rgba(99, 102, 241, 0.4);
   border: 1px solid rgba(99, 102, 241, 0.7);
   color: #c7d2fe;
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 800;
   font-family: monospace;
   display: flex;
@@ -668,6 +644,7 @@
   -webkit-backface-visibility: hidden;
   border-radius: var(--radius-md);
   padding: 4px 7px;
+  padding: 4px var(--classroom-card-pad-x, 7px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -678,29 +655,13 @@
 }
 
 .context-card .classroom-face {
-  padding: 2px 5px;
+  padding: 4px var(--classroom-card-pad-x, 6px);
 }
 
-/* Front: Large English */
-.classroom-face-en {
-  background: linear-gradient(135deg, rgba(30, 45, 78, 0.95), rgba(18, 28, 50, 0.95));
-  border: 1.5px solid rgba(99, 102, 241, 0.4);
-}
-
-.active-card .classroom-face-en {
-  border-color: rgba(99, 102, 241, 0.75);
-  box-shadow: 0 0 16px rgba(99, 102, 241, 0.3);
-}
-
-.classroom-chunk-card:hover .classroom-face-en {
-  border-color: rgba(99, 102, 241, 0.9);
-}
-
-/* Back: Large Korean Translation */
+/* Front: Large Korean Translation */
 .classroom-face-ko {
   background: linear-gradient(135deg, rgba(14, 40, 46, 0.95), rgba(8, 25, 29, 0.95));
   border: 1.5px solid rgba(6, 182, 212, 0.45);
-  transform: rotateY(180deg);
 }
 
 .active-card .classroom-face-ko {
@@ -710,6 +671,22 @@
 
 .classroom-chunk-card:hover .classroom-face-ko {
   border-color: rgba(6, 182, 212, 0.9);
+}
+
+/* Back: Large English Answer */
+.classroom-face-en {
+  background: linear-gradient(135deg, rgba(30, 45, 78, 0.95), rgba(18, 28, 50, 0.95));
+  border: 1.5px solid rgba(99, 102, 241, 0.4);
+  transform: rotateY(180deg);
+}
+
+.active-card .classroom-face-en {
+  border-color: rgba(99, 102, 241, 0.75);
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.3);
+}
+
+.classroom-chunk-card:hover .classroom-face-en {
+  border-color: rgba(99, 102, 241, 0.9);
 }
 
 .classroom-chunk-text {
@@ -808,29 +785,181 @@
   color: #e2e8f0;
 }
 
-/* Day Mode (Light Theme): Ensure Page 3 and Classroom Chunk Card Text is Bright */
-[data-theme="light"] .memorize-chunk-card,
-[data-theme="light"] .memorize-chunk-card .memorize-face-en,
-[data-theme="light"] .memorize-chunk-card .chunk-en-text,
-[data-theme="light"] .classroom-chunk-card .classroom-face-en,
+/* ==========================================================================
+   Day Mode (Light Theme) Refined Design for Page 3 & Classroom Modal
+   ========================================================================== */
+
+/* Top Controls Card & Mode Buttons */
+[data-theme="light"] .memorize-controls-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+}
+
+[data-theme="light"] .memorize-mode-btn {
+  color: #64748b;
+}
+
+[data-theme="light"] .memorize-mode-btn.active {
+  background: #4f46e5;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3);
+}
+
+[data-theme="light"] .memorize-continuous-play-btn {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25);
+}
+
+[data-theme="light"] .memorize-controls-card .action-pill-btn {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+
+[data-theme="light"] .memorize-controls-card .action-pill-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+/* Page 3 Sentence Rows */
+[data-theme="light"] .memorize-sentence-row {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
+[data-theme="light"] .memorize-sentence-row:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .memorize-sentence-row.is-active,
+[data-theme="light"] .memorize-sentence-row.is-playing {
+  background: #f8faff;
+  border-color: #6366f1;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.15);
+}
+
+[data-theme="light"] .memorize-sentence-row .row-play-btn {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  color: #4f46e5;
+  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.15);
+}
+
+[data-theme="light"] .memorize-sentence-row .row-play-btn:hover {
+  background: #4f46e5;
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(79, 70, 229, 0.35);
+}
+
+/* Page 3 Chunk Cards: Crisp, Modern Light Theme */
+[data-theme="light"] .memorize-chunk-card .memorize-face-en {
+  background: linear-gradient(145deg, #ffffff 0%, #f8faff 100%) !important;
+  border: 1.5px solid #cbd5e1 !important;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.05) !important;
+}
+
+[data-theme="light"] .memorize-chunk-card:hover .memorize-face-en {
+  border-color: #6366f1 !important;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18) !important;
+}
+
+[data-theme="light"] .memorize-chunk-card .chunk-en-text {
+  color: #0f172a !important;
+  text-shadow: none !important;
+  font-weight: 700;
+}
+
+[data-theme="light"] .memorize-chunk-card .memorize-face-ko {
+  background: linear-gradient(145deg, #f0fdfa 0%, #e6fffa 100%) !important;
+  border: 1.5px solid #99f6e4 !important;
+  box-shadow: 0 2px 5px rgba(13, 148, 136, 0.06) !important;
+}
+
+[data-theme="light"] .memorize-chunk-card:hover .memorize-face-ko {
+  border-color: #0d9488 !important;
+  box-shadow: 0 4px 14px rgba(13, 148, 136, 0.2) !important;
+}
+
+[data-theme="light"] .memorize-chunk-card .chunk-ko-text {
+  color: #0f766e !important;
+  text-shadow: none !important;
+  font-weight: 700;
+}
+
+[data-theme="light"] .memorize-chunk-card .memorize-key-badge {
+  color: #4338ca !important;
+  background: #eef2ff !important;
+  border: 1px solid #c7d2fe !important;
+}
+
+[data-theme="light"] .memorize-chunk-card:hover .memorize-key-badge,
+[data-theme="light"] .memorize-chunk-card.flipped .memorize-key-badge {
+  color: #ffffff !important;
+  background: #0d9488 !important;
+  border-color: #14b8a6 !important;
+}
+
+/* Classroom Large Presentation Modal in Light Mode */
+[data-theme="light"] .classroom-modal-card {
+  background: #ffffff !important;
+  border: 2px solid #c7d2fe !important;
+  box-shadow: 0 25px 70px rgba(15, 23, 42, 0.18), 0 0 30px rgba(99, 102, 241, 0.15) !important;
+}
+
+[data-theme="light"] .classroom-modal-header {
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+[data-theme="light"] .classroom-modal-header .modal-title,
+[data-theme="light"] .classroom-time-hud {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .classroom-chunk-card .classroom-face-en {
+  background: linear-gradient(145deg, #ffffff 0%, #f8faff 100%) !important;
+  border: 1.5px solid #cbd5e1 !important;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.06) !important;
+}
+
 [data-theme="light"] .classroom-chunk-card .classroom-face-en .classroom-chunk-text {
-  color: #ffffff !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  color: #0f172a !important;
+  text-shadow: none !important;
 }
 
-[data-theme="light"] .memorize-chunk-card .memorize-face-ko,
-[data-theme="light"] .memorize-chunk-card .chunk-ko-text,
-[data-theme="light"] .classroom-chunk-card .classroom-face-ko,
+[data-theme="light"] .classroom-chunk-card .classroom-face-ko {
+  background: linear-gradient(145deg, #f0fdfa 0%, #e6fffa 100%) !important;
+  border: 1.5px solid #99f6e4 !important;
+  box-shadow: 0 3px 8px rgba(13, 148, 136, 0.08) !important;
+}
+
 [data-theme="light"] .classroom-chunk-card .classroom-face-ko .classroom-chunk-text {
-  color: #67e8f9 !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  color: #0f766e !important;
+  text-shadow: none !important;
 }
 
-[data-theme="light"] .memorize-chunk-card .memorize-key-badge,
 [data-theme="light"] .classroom-chunk-card .classroom-key-badge {
-  color: #ffffff !important;
-  background: rgba(99, 102, 241, 0.6) !important;
-  border-color: rgba(99, 102, 241, 0.9) !important;
+  color: #4338ca !important;
+  background: #eef2ff !important;
+  border: 1px solid #c7d2fe !important;
+}
+
+[data-theme="light"] .classroom-modal-footer {
+  background: #f8fafc !important;
+  border-top: 1px solid #e2e8f0 !important;
+}
+
+[data-theme="light"] .classroom-tips {
+  color: #64748b !important;
+}
+
+[data-theme="light"] .classroom-tips strong {
+  color: #0f172a !important;
 }
 
 

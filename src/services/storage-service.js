@@ -64,11 +64,31 @@ export class StorageService {
   }
 
   static getReplaySeconds() {
-    const val = parseFloat(safeGet('ce_tool_replay_seconds', '1'));
-    return (!isNaN(val) && [0.5, 1, 1.5, 2].includes(val)) ? val : 1;
+    const val = parseFloat(safeGet('ce_tool_replay_seconds', '0.5'));
+    return (!isNaN(val) && val >= 0 && val <= 2) ? Math.round(val * 10) / 10 : 0.5;
   }
 
   static setReplaySeconds(sec) {
     safeSet('ce_tool_replay_seconds', String(sec));
+  }
+
+  static getSectionSilentSeconds() {
+    const val = parseFloat(safeGet('ce_tool_section_silent_seconds', '1.0'));
+    return (!isNaN(val) && val >= 0 && val <= 4) ? Math.round(val * 10) / 10 : 1.0;
+  }
+
+  static setSectionSilentSeconds(sec) {
+    safeSet('ce_tool_section_silent_seconds', String(sec));
+  }
+
+  static getTargetLoopCount() {
+    const raw = safeGet('ce_tool_target_loop_count', '3');
+    if (raw === 'infinite') return Infinity;
+    const val = parseInt(raw, 10);
+    return (!isNaN(val) && val >= 1 && val <= 10) ? val : 3;
+  }
+
+  static setTargetLoopCount(count) {
+    safeSet('ce_tool_target_loop_count', count === Infinity ? 'infinite' : String(count));
   }
 }

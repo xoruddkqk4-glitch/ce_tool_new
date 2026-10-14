@@ -28,6 +28,7 @@ export class MemorizeView {
     this.modeButtons = document.querySelectorAll('.memorize-mode-btn');
     this.btnPlayAllScript = document.getElementById('btnPlayAllScript');
     this.btnFlipAllMemorize = document.getElementById('btnFlipAllMemorize');
+    this.btnOpenClassroomModal = document.getElementById('btnOpenClassroomModal');
     this.memorizeStatsBadge = document.getElementById('memorizeStatsBadge');
 
     this.isPlayingAll = false;
@@ -69,6 +70,16 @@ export class MemorizeView {
     // Flip All Cards Button
     if (this.btnFlipAllMemorize) {
       this.btnFlipAllMemorize.addEventListener('click', () => this.toggleFlipAllCards());
+    }
+
+    // Classroom Large Modal Open Button (Next to 전체 뒤집기)
+    if (this.btnOpenClassroomModal) {
+      this.btnOpenClassroomModal.addEventListener('click', () => {
+        const idx = (typeof this.activeRowIndex === 'number' && this.activeRowIndex >= 0)
+          ? this.activeRowIndex
+          : (appState.activeSentenceIndex || 0);
+        this.openClassroomModal(idx);
+      });
     }
 
     // Listen to sentence updates
@@ -186,61 +197,25 @@ export class MemorizeView {
       }
 
       sRow.addEventListener('click', (e) => {
-        if (e.target.closest('.memorize-stn-badge') || e.target.closest('.memorize-stn-play')) return;
+        if (e.target.closest('.memorize-stn-play')) return;
         this.setActiveRow(sIdx);
       });
-
-      // Sentence Header (S1, S2, jump to practice, expand classroom modal)
-      const sHeader = document.createElement('div');
-      sHeader.className = 'memorize-sentence-header';
-      sHeader.innerHTML = `
-        <button class="memorize-stn-badge" title="문장 S${sIdx + 1} 2페이지 약형 연습으로 이동">
-          <span>S${sIdx + 1}</span>
-          <span class="jump-icon">↗</span>
-        </button>
-        <span class="memorize-stn-preview" title="클릭하여 교실 대형 화면으로 보기">${escapeHtml(stn.text)}</span>
-        <button class="memorize-stn-expand-btn" title="교실 대형 화면으로 크게 보기 (모달)">🔍 크게 보기</button>
-        <button class="memorize-stn-play" title="이 문장 듣기">▶</button>
-      `;
-
-      // Jump to practice
-      const badgeBtn = sHeader.querySelector('.memorize-stn-badge');
-      if (badgeBtn) {
-        badgeBtn.addEventListener('click', () => {
-          appState.setActiveSentenceIndex(sIdx);
-          this.router.navigateTo('practice');
-        });
-      }
-
-      // Expand to classroom modal
-      const expandBtn = sHeader.querySelector('.memorize-stn-expand-btn');
-      if (expandBtn) {
-        expandBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.openClassroomModal(sIdx);
-        });
-      }
-
-      const previewSpan = sHeader.querySelector('.memorize-stn-preview');
-      if (previewSpan) {
-        previewSpan.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.openClassroomModal(sIdx);
-        });
-      }
 
       // Double-click row to open classroom modal
       sRow.addEventListener('dblclick', () => {
         this.openClassroomModal(sIdx);
       });
 
-      // Play this sentence
-      const playBtn = sHeader.querySelector('.memorize-stn-play');
-      if (playBtn) {
-        playBtn.addEventListener('click', () => {
-          this.playSingleSentence(sIdx);
-        });
-      }
+      // Play this sentence button on the SAME row as the script
+      const playBtn = document.createElement('button');
+      playBtn.className = 'memorize-stn-play';
+      playBtn.title = '이 문장 듣기';
+      playBtn.textContent = '▶';
+      playBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setActiveRow(sIdx);
+        this.playSingleSentence(sIdx);
+      });
 
       // Chunk Grid for this sentence
       const chunkGrid = document.createElement('div');
@@ -291,7 +266,7 @@ export class MemorizeView {
         chunkGrid.appendChild(cCard);
       });
 
-      sRow.appendChild(sHeader);
+      sRow.appendChild(playBtn);
       sRow.appendChild(chunkGrid);
       this.canvasContainer.appendChild(sRow);
     });
@@ -373,13 +348,8 @@ export class MemorizeView {
     const gridWidth = chunkGrid.clientWidth;
     if (!gridWidth || gridWidth <= 0) return;
 
-    const gap = 4; // matches CSS gap: 4px
-    const totalGaps = (cards.length - 1) * gap;
-
-    // Fixed horizontal overhead per card: 4px left + 4px right padding + 2px border + 2px safety buffer = 12px
-    const fixedCardExtra = 12;
-    const totalFixedOverhead = cards.length * fixedCardExtra + totalGaps;
-    const availTextWidth = Math.max(20, gridWidth - totalFixedOverhead - 4);
+    const baseGap = 5; // matches CSS gap: 5px
+    const totalGaps = (cards.length - 1) * baseGap;
 
     // Measure raw unscaled text width of each card at base font size (0.92rem)
     const rawTextWidths = [];
@@ -389,48 +359,73 @@ export class MemorizeView {
 
       const wEn = this.measureTextWidth(enText, false);
       const wKo = this.measureTextWidth(koText, true);
-      const maxTextW = Math.max(wEn, wKo, 10);
+      const maxTextW = Math.max(wEn, wKo, 14);
       rawTextWidths.push(maxTextW);
     });
 
     const totalRawTextWidth = rawTextWidths.reduce((sum, w) => sum + w, 0);
+    const availTotal = Math.max(20, gridWidth - totalGaps - 4);
+    const baseOverhead = cards.length * 16;
+    const baseRequired = totalRawTextWidth + baseOverhead;
+    const scaleRatio = availTotal / Math.max(1, baseRequired);
 
-    if (totalRawTextWidth > availTextWidth) {
-      // Must scale down font size so that the text of ALL cards fits without clipping or ellipsis
-      const scale = availTextWidth / totalRawTextWidth;
-      // Allow scaling down smoothly (down to 0.45rem if needed for very long sentences)
-      const scaledFontRem = Math.max(0.45, Math.min(0.92, 0.92 * scale));
+    const setCssVar = (prop, val) => {
       if (typeof chunkGrid.style.setProperty === 'function') {
-        chunkGrid.style.setProperty('--row-chunk-font-size', `${scaledFontRem.toFixed(3)}rem`);
+        chunkGrid.style.setProperty(prop, val);
       } else {
-        chunkGrid.style['--row-chunk-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
+        chunkGrid.style[prop] = val;
       }
+    };
 
-      // Allocate card widths: exactly textWidth * scale + fixedCardExtra!
-      let remainingTextSpace = availTextWidth;
+    if (scaleRatio < 1.0) {
+      // Long sentence: scale down font size & padding so that all cards fit in 1 line
+      const clampedScale = Math.max(0.48, scaleRatio);
+      const scaledFontRem = (0.92 * clampedScale).toFixed(3);
+      const padX = Math.max(2, Math.round(6 * clampedScale));
+      const chunkGap = Math.max(2, Math.round(baseGap * clampedScale));
+
+      setCssVar('--row-chunk-font-size', `${scaledFontRem}rem`);
+      setCssVar('--row-chunk-pad-x', `${padX}px`);
+      setCssVar('--row-chunk-gap', `${chunkGap}px`);
+
+      const availForContent = Math.max(20, availTotal - cards.length * (2 * padX));
+      let remainingSpace = availForContent;
       cards.forEach((card, idx) => {
         let allocatedTextW;
         if (idx === cards.length - 1) {
-          allocatedTextW = Math.max(10, remainingTextSpace);
+          allocatedTextW = Math.max(10, remainingSpace);
         } else {
-          allocatedTextW = Math.max(10, Math.floor(rawTextWidths[idx] * scale));
-          remainingTextSpace -= allocatedTextW;
+          allocatedTextW = Math.max(10, Math.floor(availForContent * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+          remainingSpace -= allocatedTextW;
         }
-        const cardW = allocatedTextW + fixedCardExtra;
+        const cardW = allocatedTextW + (2 * padX);
         card.style.flex = '0 0 auto';
         card.style.width = `${cardW}px`;
         card.style.minWidth = '0px';
-        card.style.maxWidth = 'none'; // NEVER clamp maxWidth so text is never cut off
+        card.style.maxWidth = 'none';
       });
     } else {
-      // Fits comfortably at standard font size
-      if (typeof chunkGrid.style.setProperty === 'function') {
-        chunkGrid.style.setProperty('--row-chunk-font-size', '0.92rem');
-      } else {
-        chunkGrid.style['--row-chunk-font-size'] = '0.92rem';
-      }
+      // Short / Normal sentence: utilize the horizontal length of 1 row as much as possible!
+      // Scale up font size dynamically up to 1.35rem, scale up padding, and allocate proportional card widths
+      const upScale = Math.min(1.35, 1.0 + (scaleRatio - 1.0) * 0.35);
+      const scaledFontRem = (0.92 * upScale).toFixed(3);
+      const padX = Math.min(18, Math.max(6, Math.round(6 * Math.sqrt(scaleRatio))));
+      const chunkGap = Math.min(10, Math.max(4, Math.round(baseGap * Math.sqrt(scaleRatio))));
+
+      setCssVar('--row-chunk-font-size', `${scaledFontRem}rem`);
+      setCssVar('--row-chunk-pad-x', `${padX}px`);
+      setCssVar('--row-chunk-gap', `${chunkGap}px`);
+
+      const effectiveAvail = Math.max(20, gridWidth - (cards.length - 1) * chunkGap - 4);
+      let remainingSpace = effectiveAvail;
       cards.forEach((card, idx) => {
-        const cardW = rawTextWidths[idx] + fixedCardExtra;
+        let cardW;
+        if (idx === cards.length - 1) {
+          cardW = Math.max(20, remainingSpace);
+        } else {
+          cardW = Math.max(20, Math.floor(effectiveAvail * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+          remainingSpace -= cardW;
+        }
         card.style.flex = '0 0 auto';
         card.style.width = `${cardW}px`;
         card.style.minWidth = '0px';
@@ -644,8 +639,8 @@ export class MemorizeView {
     if (!list || sIdx < 0 || sIdx >= list.length) return;
 
     this.classroomIndex = sIdx;
-    // Synchronize flip state: if Korean is on front in Page 3 canvas, show Korean in classroom modal
-    this.areClassroomCardsFlipped = !!appState.memorizeAllFlipped;
+    // Always start with Korean front cards (English answers hidden until flipped)
+    this.areClassroomCardsFlipped = false;
 
     this.renderClassroomModal();
     if (this.classroomModal) {
@@ -672,6 +667,7 @@ export class MemorizeView {
   prevClassroomSentence() {
     if (this.classroomIndex > 0) {
       this.classroomIndex--;
+      this.areClassroomCardsFlipped = false;
       this.renderClassroomModal();
     }
   }
@@ -680,6 +676,7 @@ export class MemorizeView {
     const list = appState.sentenceList;
     if (list && this.classroomIndex < list.length - 1) {
       this.classroomIndex++;
+      this.areClassroomCardsFlipped = false;
       this.renderClassroomModal();
     }
   }
@@ -693,10 +690,10 @@ export class MemorizeView {
     });
     if (this.btnClassroomFlipAll) {
       this.btnClassroomFlipAll.innerHTML = this.areClassroomCardsFlipped
-        ? '<span>🔤 영어 앞면</span>'
-        : '<span>🔄 전체 뒤집기</span>';
+        ? '<span>🇰🇷 우리말 앞면</span>'
+        : '<span>🔤 정답 영어 보기</span>';
     }
-    toast.show(this.areClassroomCardsFlipped ? '🔄 모든 청크 뒷면(해석)으로 뒤집기' : '🔄 모든 청크 앞면(영어)으로 뒤집기');
+    toast.show(this.areClassroomCardsFlipped ? '🔤 정답 영어로 뒤집었습니다.' : '🇰🇷 우리말 앞면으로 뒤집었습니다.');
   }
 
   flipClassroomCardByIndex(cIdx) {
@@ -772,7 +769,7 @@ export class MemorizeView {
       this.classroomStnBadge.textContent = `S${currentIdx + 1}`;
     }
     if (this.classroomStnCounter) {
-      this.classroomStnCounter.textContent = `${currentIdx + 1} / ${list.length} 문장 (선택 문장 가운데 표시)`;
+      this.classroomStnCounter.textContent = `${currentIdx + 1} / ${list.length} 문장`;
     }
     if (this.btnClassroomPrev) {
       this.btnClassroomPrev.disabled = (currentIdx <= 0);
@@ -782,83 +779,42 @@ export class MemorizeView {
     }
     if (this.btnClassroomFlipAll) {
       this.btnClassroomFlipAll.innerHTML = this.areClassroomCardsFlipped
-        ? '<span>🔤 영어 앞면</span>'
-        : '<span>🔄 전체 뒤집기</span>';
+        ? '<span>🇰🇷 우리말 앞면</span>'
+        : '<span>🔤 정답 영어 보기</span>';
     }
 
     if (!this.classroomChunksContainer) return;
     this.classroomChunksContainer.innerHTML = '';
 
-    // Render 3 sentences: Prev (i - 1), Active Center (i), Next (i + 1)
+    // Render ONLY the active single sentence
     const rowsToRender = [
-      { type: 'prev', idx: currentIdx - 1, label: '이전 문장' },
-      { type: 'active', idx: currentIdx, label: '현재 문장 (중심)' },
-      { type: 'next', idx: currentIdx + 1, label: '다음 문장' }
+      { type: 'active', idx: currentIdx, label: '현재 문장' }
     ];
 
     rowsToRender.forEach(rowDef => {
       const rowEl = document.createElement('div');
       rowEl.className = `classroom-sentence-row row-${rowDef.type}`;
 
-      if (rowDef.idx < 0) {
-        rowEl.classList.add('is-placeholder');
-        rowEl.innerHTML = `
-          <div class="classroom-row-header placeholder-header">
-            <span class="classroom-row-badge dimmed">S0</span>
-            <span class="classroom-row-preview">시작 문장입니다 (이전 문장 없음)</span>
-          </div>
-        `;
-        this.classroomChunksContainer.appendChild(rowEl);
-        return;
-      }
-
-      if (rowDef.idx >= list.length) {
-        rowEl.classList.add('is-placeholder');
-        rowEl.innerHTML = `
-          <div class="classroom-row-header placeholder-header">
-            <span class="classroom-row-badge dimmed">S${list.length + 1}</span>
-            <span class="classroom-row-preview">마지막 문장입니다 (다음 문장 없음)</span>
-          </div>
-        `;
-        this.classroomChunksContainer.appendChild(rowEl);
-        return;
-      }
-
       const sIdx = rowDef.idx;
       const stnData = list[sIdx];
-      const isActive = (rowDef.type === 'active');
+      const isActive = true;
 
-      if (isActive) {
-        rowEl.classList.add('is-active');
-      } else {
-        rowEl.classList.add('is-context');
-        rowEl.addEventListener('click', (e) => {
-          if (e.target.closest('.classroom-chunk-card') || e.target.closest('button')) return;
-          this.classroomIndex = sIdx;
-          this.renderClassroomModal();
-        });
-      }
+      rowEl.classList.add('is-active');
 
       // Sentence Header inside row
       const headerEl = document.createElement('div');
       headerEl.className = 'classroom-row-header';
 
       const badgeBtn = document.createElement('button');
-      badgeBtn.className = `classroom-row-badge ${isActive ? 'active-badge' : ''}`;
+      badgeBtn.className = 'classroom-row-badge active-badge';
       badgeBtn.textContent = `S${sIdx + 1}`;
-      badgeBtn.title = isActive ? '현재 선택 문장' : `문장 S${sIdx + 1}로 이동`;
-      if (!isActive) {
-        badgeBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.classroomIndex = sIdx;
-          this.renderClassroomModal();
-        });
-      }
+      badgeBtn.title = '현재 선택 문장';
 
+      // 크게 보기 모달창 헤더: 우리말 해석 텍스트 노출 제거 (청크 카드에만 집중)
       const previewText = document.createElement('span');
       previewText.className = 'classroom-row-preview';
-      previewText.textContent = stnData.text || '';
-      previewText.title = stnData.result?.natural || '';
+      previewText.textContent = '';
+      previewText.title = '';
 
       const playBtn = document.createElement('button');
       playBtn.className = 'classroom-row-mini-play';
@@ -881,7 +837,7 @@ export class MemorizeView {
       const chunks = stnData.result?.chunks || [{ en: stnData.text, ko: stnData.result?.natural || '' }];
       chunks.forEach((chunk, cIdx) => {
         const card = document.createElement('div');
-        card.className = `classroom-chunk-card ${isActive ? 'active-card' : 'context-card'}`;
+        card.className = 'classroom-chunk-card active-card';
         card.setAttribute('data-c-idx', cIdx);
         card.setAttribute('data-s-idx', sIdx);
         if (this.areClassroomCardsFlipped) {
@@ -889,26 +845,26 @@ export class MemorizeView {
         }
 
         const keyNum = cIdx + 1;
-        // Key badges only on active center row (1~9)
-        const keyBadge = (isActive && keyNum <= 9) ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
+        // Key badges on active center row (1~9)
+        const keyBadge = (keyNum <= 9) ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
 
         const enText = (chunk.en || '').trim();
         const koText = (chunk.ko || '').trim();
+        card._chunkEn = enText;
+        card._chunkKo = koText;
 
-        // Calculate sleek compact width so sentence stays strictly on 1 line
-        const charLen = Math.max(enText.length, Math.ceil(koText.length * 1.3));
-        const estCardW = Math.max(isActive ? 36 : 28, charLen * (isActive ? 9 : 7) + (isActive ? 14 : 10));
-        card.style.width = `${estCardW}px`;
-        card.style.flex = '0 1 auto';
+        // Initial flexible card setup (precise fitting applied dynamically in fitClassroomSentenceRows)
+        card.style.flex = '0 0 auto';
 
+        // 앞면: 우리말(koText), 뒷면: 정답 영어(enText)
         card.innerHTML = `
           ${keyBadge}
           <div class="classroom-card-inner">
-            <div class="classroom-face classroom-face-en">
-              <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
-            </div>
             <div class="classroom-face classroom-face-ko">
               <span class="classroom-chunk-text">${escapeHtml(koText)}</span>
+            </div>
+            <div class="classroom-face classroom-face-en">
+              <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
             </div>
           </div>
         `;
@@ -925,7 +881,7 @@ export class MemorizeView {
       this.classroomChunksContainer.appendChild(rowEl);
     });
 
-    // Precise fitting to prevent any horizontal overflow and scrollbars
+    // Precise fitting to utilize the entire horizontal width of the row and prevent overflow
     requestAnimationFrame(() => {
       this.fitClassroomSentenceRows();
     });
@@ -944,91 +900,95 @@ export class MemorizeView {
       // Available width inside chunksWrap
       let availWidth = chunksWrap.clientWidth;
       if (!availWidth || availWidth <= 0) {
-        if (this.classroomChunksContainer.clientWidth) {
-          availWidth = this.classroomChunksContainer.clientWidth - 32;
-        } else if (this.classroomModal && this.classroomModal.clientWidth) {
-          availWidth = this.classroomModal.clientWidth - 80;
-        } else {
-          availWidth = 1100;
-        }
+        const containerW = this.classroomChunksContainer.clientWidth ||
+          (this.classroomModal ? this.classroomModal.clientWidth - 80 : 1100);
+        availWidth = Math.max(300, containerW - 28);
       }
 
       const isActive = row.classList.contains('is-active');
-      const gap = 6;
-      const totalGaps = (cards.length - 1) * gap;
-      // Active: 4px*2 padding + 2px border + 2px buffer = 16px (padding is 4px 7px)
-      // Context: 2px*2 padding + 2px border + 2px buffer = 12px (padding is 2px 5px)
-      const fixedCardExtra = isActive ? 16 : 12;
-      const totalFixedOverhead = (cards.length * fixedCardExtra) + totalGaps;
-      const availTextWidth = Math.max(20, availWidth - totalFixedOverhead - 4);
-
-      const baseFontRem = isActive ? 1.05 : 0.88;
-      const fontScaleFactor = (baseFontRem * 16) / 14.72;
+      const baseGap = 6;
+      const basePadX = 10;
+      const baseFontRem = isActive ? 1.15 : 0.92;
+      const fontScaleFactor = baseFontRem;
 
       const rawTextWidths = [];
       cards.forEach(card => {
-        const enEl = card.querySelector('.classroom-face-en .classroom-chunk-text');
-        const koEl = card.querySelector('.classroom-face-ko .classroom-chunk-text');
-        const enText = enEl ? enEl.textContent.trim() : '';
-        const koText = koEl ? koEl.textContent.trim() : '';
+        const enText = card._chunkEn || card.querySelector('.classroom-face-en .classroom-chunk-text')?.textContent.trim() || '';
+        const koText = card._chunkKo || card.querySelector('.classroom-face-ko .classroom-chunk-text')?.textContent.trim() || '';
 
         const wEn = this.measureTextWidth(enText, false) * fontScaleFactor;
         const wKo = this.measureTextWidth(koText, true) * fontScaleFactor;
-        const maxTextW = Math.max(wEn, wKo, 10);
+        const maxTextW = Math.max(wEn, wKo, 14);
         rawTextWidths.push(maxTextW);
       });
 
       const totalRawTextWidth = rawTextWidths.reduce((sum, w) => sum + w, 0);
+      const totalBaseGaps = (cards.length - 1) * baseGap;
+      const baseOverhead = cards.length * (basePadX * 2);
+      const baseRequired = totalRawTextWidth + totalBaseGaps + baseOverhead;
+      const scaleRatio = Math.max(20, availWidth - 4) / Math.max(1, baseRequired);
 
-      if (totalRawTextWidth > availTextWidth) {
-        const scale = availTextWidth / totalRawTextWidth;
-        const scaledFontRem = Math.max(0.55, Math.min(baseFontRem, baseFontRem * scale));
-
-        if (isActive) {
-          if (typeof chunksWrap.style.setProperty === 'function') {
-            chunksWrap.style.setProperty('--classroom-font-size', `${scaledFontRem.toFixed(3)}rem`);
-          } else {
-            chunksWrap.style['--classroom-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
-          }
+      const setCssVar = (prop, val) => {
+        if (typeof chunksWrap.style.setProperty === 'function') {
+          chunksWrap.style.setProperty(prop, val);
         } else {
-          if (typeof chunksWrap.style.setProperty === 'function') {
-            chunksWrap.style.setProperty('--classroom-context-font-size', `${scaledFontRem.toFixed(3)}rem`);
-          } else {
-            chunksWrap.style['--classroom-context-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
-          }
+          chunksWrap.style[prop] = val;
         }
+      };
 
-        let remaining = availTextWidth;
+      if (scaleRatio < 1.0) {
+        // Long sentence: scale down font size & padding to strictly fit in 1 line without wrapping
+        const clampedScale = Math.max(0.50, scaleRatio);
+        const scaledFontRem = (baseFontRem * clampedScale).toFixed(3);
+        const padX = Math.max(3, Math.round(basePadX * clampedScale));
+        const chunkGap = Math.max(2, Math.round(baseGap * clampedScale));
+
+        setCssVar('--classroom-font-size', `${scaledFontRem}rem`);
+        setCssVar('--classroom-card-pad-x', `${padX}px`);
+        setCssVar('--classroom-chunk-gap', `${chunkGap}px`);
+
+        const totalPaddingsAndGaps = (cards.length * padX * 2) + ((cards.length - 1) * chunkGap);
+        const availForContent = Math.max(20, availWidth - totalPaddingsAndGaps - 4);
+        let remainingSpace = availForContent;
+
         cards.forEach((card, idx) => {
           let allocated;
           if (idx === cards.length - 1) {
-            allocated = Math.max(8, remaining);
+            allocated = Math.max(10, remainingSpace);
           } else {
-            allocated = Math.max(8, Math.floor(rawTextWidths[idx] * scale));
-            remaining -= allocated;
+            allocated = Math.max(10, Math.floor(availForContent * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+            remainingSpace -= allocated;
           }
-          const cardW = allocated + fixedCardExtra;
+          const cardW = allocated + (padX * 2);
           card.style.flex = '0 0 auto';
           card.style.width = `${cardW}px`;
           card.style.minWidth = '0px';
           card.style.maxWidth = 'none';
         });
       } else {
-        if (isActive) {
-          if (typeof chunksWrap.style.removeProperty === 'function') {
-            chunksWrap.style.removeProperty('--classroom-font-size');
-          } else {
-            delete chunksWrap.style['--classroom-font-size'];
-          }
-        } else {
-          if (typeof chunksWrap.style.removeProperty === 'function') {
-            chunksWrap.style.removeProperty('--classroom-context-font-size');
-          } else {
-            delete chunksWrap.style['--classroom-context-font-size'];
-          }
-        }
+        // Normal / Short sentence: utilize the FULL horizontal width of the row!
+        // Scale font up dynamically up to 1.45rem, scale padding up to 24px, and expand card widths to fill 100% of row width
+        const upScale = Math.min(1.45, 1.0 + (scaleRatio - 1.0) * 0.35);
+        const scaledFontRem = (baseFontRem * upScale).toFixed(3);
+        const padX = Math.min(24, Math.max(basePadX, Math.round(basePadX * Math.sqrt(scaleRatio))));
+        const chunkGap = Math.min(12, Math.max(baseGap, Math.round(baseGap * Math.sqrt(scaleRatio))));
+
+        setCssVar('--classroom-font-size', `${scaledFontRem}rem`);
+        setCssVar('--classroom-card-pad-x', `${padX}px`);
+        setCssVar('--classroom-chunk-gap', `${chunkGap}px`);
+
+        const totalGaps = (cards.length - 1) * chunkGap;
+        const effectiveAvail = Math.max(20, availWidth - totalGaps - 4);
+        let remainingSpace = effectiveAvail;
+
         cards.forEach((card, idx) => {
-          const cardW = Math.max(isActive ? 36 : 28, Math.round(rawTextWidths[idx]) + fixedCardExtra);
+          let cardW;
+          if (idx === cards.length - 1) {
+            cardW = Math.max(24, remainingSpace);
+          } else {
+            cardW = Math.max(24, Math.floor(effectiveAvail * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+            remainingSpace -= cardW;
+          }
           card.style.flex = '0 0 auto';
           card.style.width = `${cardW}px`;
           card.style.minWidth = '0px';

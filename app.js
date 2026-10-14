@@ -20,20 +20,22 @@ const CONSTANTS = {
   TOTAL_WAVEFORM_BARS: 360,
   
   // Looper & Shadowing
-  SHADOWING_PAUSE_MS: 500, // 0.5s pause between loop repeats
+  SHADOWING_PAUSE_MS: 1000, // default 1.0s pause between loop repeats
   DEFAULT_REPEAT_COUNT: 3,
+  DEFAULT_REWIND_SEC: 0.5,
+  DEFAULT_SECTION_SILENT_SEC: 1.0,
   
   // Fallback realistic speech timing
   SPEECH_WORD_DURATION_SEC: 0.40,
   SPEECH_BOUNDARY_MARGIN_SEC: 0.60,
   
   // Supported Gemini candidate models in priority order
-  // (gemini-1.5-* removed: retired models only added 404 round-trips to the fallback loop)
+  // (Updated for active 2026 Gemini 3.x Flash lineup: gemini-3.8-flash, gemini-3.5-flash, gemini-3.1-pro-preview)
   GEMINI_CANDIDATE_MODELS: [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-exp',
-    'gemini-2.5-pro'
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-flash'
   ]
 };
 
@@ -1352,12 +1354,32 @@ class StorageService {
   }
 
   static getReplaySeconds() {
-    const val = parseFloat(safeGet('ce_tool_replay_seconds', '1'));
-    return (!isNaN(val) && [0.5, 1, 1.5, 2].includes(val)) ? val : 1;
+    const val = parseFloat(safeGet('ce_tool_replay_seconds', '0.5'));
+    return (!isNaN(val) && val >= 0 && val <= 2) ? Math.round(val * 10) / 10 : 0.5;
   }
 
   static setReplaySeconds(sec) {
     safeSet('ce_tool_replay_seconds', String(sec));
+  }
+
+  static getSectionSilentSeconds() {
+    const val = parseFloat(safeGet('ce_tool_section_silent_seconds', '1.0'));
+    return (!isNaN(val) && val >= 0 && val <= 4) ? Math.round(val * 10) / 10 : 1.0;
+  }
+
+  static setSectionSilentSeconds(sec) {
+    safeSet('ce_tool_section_silent_seconds', String(sec));
+  }
+
+  static getTargetLoopCount() {
+    const raw = safeGet('ce_tool_target_loop_count', '3');
+    if (raw === 'infinite') return Infinity;
+    const val = parseInt(raw, 10);
+    return (!isNaN(val) && val >= 1 && val <= 10) ? val : 3;
+  }
+
+  static setTargetLoopCount(count) {
+    safeSet('ce_tool_target_loop_count', count === Infinity ? 'infinite' : String(count));
   }
 }
 
@@ -1448,6 +1470,7 @@ class AIService {
     this.apiKey = StorageService.getApiKey();
     this.customPrompt = StorageService.getCustomPrompt();
     this.activeGeminiModel = null;
+    this.quotaExceededUntil = 0;
   }
 
   saveSettings(provider, apiKey, customPrompt) {
@@ -1455,11 +1478,16 @@ class AIService {
     this.apiKey = apiKey;
     this.customPrompt = customPrompt;
     this.activeGeminiModel = null; // Reset cached model on settings update
+    this.quotaExceededUntil = 0;
     StorageService.saveApiSettings(provider, apiKey, customPrompt);
   }
 
   hasKey() {
     return !!(this.apiKey && this.apiKey.trim());
+  }
+
+  isQuotaExceededCoolingDown() {
+    return this.provider === 'gemini' && Date.now() < (this.quotaExceededUntil || 0);
   }
 
   /**
@@ -1480,7 +1508,8 @@ class AIService {
         const data = await res.json();
         const available = (data.models || [])
           .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-          .map(m => m.name.replace(/^models\//, ''));
+          .map(m => m.name.replace(/^models\//, ''))
+          .filter(m => !m.includes('2.5-pro') && !m.includes('1.5-') && !m.includes('2.0-flash'));
 
         for (const cand of priorityOrder) {
           if (available.includes(cand)) {
@@ -1489,10 +1518,16 @@ class AIService {
           }
         }
 
-        const flashModel = available.find(m => m.includes('flash'));
+        const flashModel = available.find(m => m.includes('3.8-flash') || m.includes('3.5-flash') || (m.includes('flash') && !m.includes('1.5') && !m.includes('2.0')));
         if (flashModel) {
           this.activeGeminiModel = flashModel;
           return flashModel;
+        }
+
+        const proModel = available.find(m => m.includes('3.1-pro') || (m.includes('pro') && !m.includes('2.5-pro')));
+        if (proModel) {
+          this.activeGeminiModel = proModel;
+          return proModel;
         }
 
         if (available.length > 0) {
@@ -1504,14 +1539,22 @@ class AIService {
       console.warn('Gemini ListModels query failed, falling back to priority candidates:', e);
     }
 
-    this.activeGeminiModel = 'gemini-2.5-flash';
+    this.activeGeminiModel = CONSTANTS.GEMINI_CANDIDATE_MODELS[0] || 'gemini-3.8-flash';
     return this.activeGeminiModel;
   }
 
   /**
-   * Resilient POST to Gemini API with automatic candidate model fallback on 404/retirement
+   * Resilient POST to Gemini API with automatic candidate model fallback on 404/retirement and 429/quota limits
    */
   async postToGemini(payload, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+    if (this.isQuotaExceededCoolingDown()) {
+      const waitSec = Math.max(1, Math.ceil((this.quotaExceededUntil - Date.now()) / 1000));
+      const quotaErr = new Error(`Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. (약 ${waitSec}초 후 재시도 가능)`);
+      quotaErr.isQuotaExceeded = true;
+      quotaErr.status = 429;
+      throw quotaErr;
+    }
+
     const preferred = await this.resolveGeminiModel();
     const candidateList = [
       preferred,
@@ -1520,6 +1563,7 @@ class AIService {
     const uniqueCandidates = [...new Set(candidateList)];
 
     let lastError = null;
+    let anyQuotaExceeded = false;
 
     for (const model of uniqueCandidates) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -1532,6 +1576,7 @@ class AIService {
 
         if (response.ok) {
           this.activeGeminiModel = model; // Cache working model
+          this.quotaExceededUntil = 0; // Successfully reset cooldown
           const data = await response.json();
           const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!content) throw new Error('Gemini 응답 내용이 비어 있습니다.');
@@ -1542,20 +1587,75 @@ class AIService {
         const errMsg = err.error?.message || `Status ${response.status}`;
         lastError = new Error(errMsg);
 
-        // If model is retired or not found (404), seamlessly try next candidate model
-        if (response.status === 404 || errMsg.includes('not found') || errMsg.includes('not supported')) {
-          console.warn(`Gemini model ${model} not available (${errMsg}). Trying next model candidate...`);
+        const isQuota = response.status === 429 ||
+          errMsg.includes('Quota exceeded') ||
+          errMsg.includes('RESOURCE_EXHAUSTED') ||
+          errMsg.includes('rate-limit') ||
+          errMsg.includes('rate limit') ||
+          errMsg.includes('Rate limit') ||
+          errMsg.includes('Too Many Requests');
+
+        const isUnavailableOrRetired = 
+          response.status === 404 ||
+          errMsg.includes('not found') ||
+          errMsg.includes('not supported') ||
+          errMsg.includes('no longer available') ||
+          errMsg.includes('not available') ||
+          errMsg.includes('deprecated') ||
+          errMsg.includes('retired');
+
+        if (isQuota) {
+          anyQuotaExceeded = true;
+          console.warn(`Gemini model ${model} hit quota/rate limit (${errMsg}). Trying next candidate model...`);
+          continue;
+        }
+
+        // If model is retired, not available to new users, or not found (404), seamlessly try next candidate model
+        if (isUnavailableOrRetired) {
+          if (this.activeGeminiModel === model) {
+            this.activeGeminiModel = null;
+          }
+          console.warn(`Gemini model ${model} not available or retired (${errMsg}). Trying next model candidate...`);
           continue;
         } else {
-          // For quota, auth, or bad request errors, throw immediately
+          // For auth or invalid request errors, throw immediately
           throw lastError;
         }
       } catch (fetchErr) {
-        if (fetchErr.message && !fetchErr.message.includes('not found') && !fetchErr.message.includes('not supported') && !fetchErr.message.includes('404')) {
+        const msg = fetchErr.message || '';
+        const isQuota = fetchErr.status === 429 || msg.includes('Quota exceeded') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429');
+        const isUnavailableOrRetired = 
+          fetchErr.status === 404 ||
+          msg.includes('not found') ||
+          msg.includes('not supported') ||
+          msg.includes('no longer available') ||
+          msg.includes('not available') ||
+          msg.includes('deprecated') ||
+          msg.includes('retired');
+
+        if (isQuota) anyQuotaExceeded = true;
+        if (isUnavailableOrRetired) {
+          if (this.activeGeminiModel === model) {
+            this.activeGeminiModel = null;
+          }
+          console.warn(`Gemini model ${model} not available or retired (${msg}). Trying next candidate...`);
+          continue;
+        }
+        if (!isQuota) {
           throw fetchErr;
         }
         lastError = fetchErr;
       }
+    }
+
+    if (anyQuotaExceeded) {
+      // Cooldown for 60 seconds so parallel tasks do not freeze the UI hammering rate-limited endpoints
+      this.quotaExceededUntil = Date.now() + 60000;
+      const quotaErr = new Error('Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. 잠시 후(약 1분 뒤) 다시 시도해 주세요.');
+      quotaErr.isQuotaExceeded = true;
+      quotaErr.status = 429;
+      quotaErr.originalError = lastError;
+      throw quotaErr;
     }
 
     throw lastError || new Error('사용 가능한 Gemini 모델을 찾을 수 없습니다. API 키 상태를 확인하세요.');
@@ -1564,6 +1664,13 @@ class AIService {
   async translate(text) {
     if (!this.hasKey()) {
       throw new Error('AI API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘에서 API 키를 입력하세요.');
+    }
+    if (this.isQuotaExceededCoolingDown()) {
+      const waitSec = Math.max(1, Math.ceil((this.quotaExceededUntil - Date.now()) / 1000));
+      const quotaErr = new Error(`Gemini API 사용량 한도(Quota)가 일시적으로 초과되었습니다. (약 ${waitSec}초 후 재시도 가능)`);
+      quotaErr.isQuotaExceeded = true;
+      quotaErr.status = 429;
+      throw quotaErr;
     }
 
     const systemPrompt = `You are an expert English-Korean linguist specialized in syntax chunking and natural translation.
@@ -1594,13 +1701,13 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
    */
   async translateNatural(text) {
     if (!text || !text.trim()) return '';
-    // If user has AI key configured, attempt full AI translate
-    if (this.hasKey()) {
+    // If user has AI key configured, attempt full AI translate only if not in quota cooldown
+    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
       try {
         const res = await this.translate(text);
         if (res && res.natural) return res.natural;
       } catch (e) {
-        console.warn('AI translation failed, trying free translate:', e);
+        console.warn('AI translation failed, trying free translate:', e.message || e);
       }
     }
 
@@ -1609,7 +1716,7 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
       const translated = await this.fetchFreeTranslation(text.trim());
       if (translated) return translated;
     } catch (e) {
-      console.warn('Public translation endpoint error:', e);
+      console.warn('Public translation endpoint error:', e.message || e);
     }
 
     return null;
@@ -1648,7 +1755,7 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
     }
 
     // 1. If AI API key is configured (Gemini / OpenAI), use prompt to partition natural Korean
-    if (this.hasKey()) {
+    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
       try {
         const prompt = `You are an expert English-Korean linguist specialized in sequential interpretation (직독직해).
 We have an English sentence: "${englishSentence || cleanChunks.join(' ')}"
@@ -1865,7 +1972,7 @@ CRITICAL RULES:
    * AI-powered Audio & Script Forced Alignment using Gemini Multimodal Audio
    */
   async alignAudioWithScript(base64Audio, mimeType, sentences) {
-    if (!this.hasKey() || this.provider !== 'gemini' || !base64Audio) {
+    if (!this.hasKey() || this.provider !== 'gemini' || !base64Audio || this.isQuotaExceededCoolingDown()) {
       return null;
     }
 
@@ -3735,6 +3842,7 @@ class LooperEngine {
     this.audioPlayer = audioPlayer;
     this.appState = appState;
     this.shadowTimer = null;
+    this.sectionSilentMs = CONSTANTS.SHADOWING_PAUSE_MS || 1000;
     this.callbacks = {
       onLoopCountUpdate: () => {},
       onLoopComplete: () => {},
@@ -3743,6 +3851,11 @@ class LooperEngine {
       onPlayStateChange: () => {},
       onLoopRestart: () => {}
     };
+  }
+
+  setSectionSilentSeconds(sec) {
+    const s = (typeof sec === 'number' && sec >= 0) ? sec : 1.0;
+    this.sectionSilentMs = Math.round(s * 1000);
   }
 
   setCallbacks(cbs) {
@@ -3787,31 +3900,39 @@ class LooperEngine {
         this.callbacks.onLoopComplete(targetLoopCount, typeStr);
         this.callbacks.onPlayStateChange(false);
       } else {
-        // 0.5s shadowing pause delay between loop iterations
-        this.appState.isShadowingWaiting = true;
-        this.callbacks.onShadowingWait(true);
+        // Configurable section silent delay (0.0s ~ 4.0s)
+        const delayMs = (typeof this.sectionSilentMs === 'number') ? this.sectionSilentMs : CONSTANTS.SHADOWING_PAUSE_MS;
+        if (delayMs <= 0) {
+          this.restartLoop(effectiveStart);
+        } else {
+          this.appState.isShadowingWaiting = true;
+          this.callbacks.onShadowingWait(true);
 
-        clearTimeout(this.shadowTimer);
-        this.shadowTimer = setTimeout(() => {
-          this.appState.isShadowingWaiting = false;
-          this.callbacks.onShadowingWait(false);
-
-          const curCustom = (this.appState.loopStart !== null && this.appState.loopEnd !== null);
-          const curStn = this.appState.getActiveSentence();
-          const restartTime = curCustom
-            ? this.appState.loopStart
-            : (curStn && curStn.audioStart !== null ? curStn.audioStart : effectiveStart);
-
-          if (restartTime !== null && this.audioPlayer) {
-            this.audioPlayer.currentTime = restartTime;
-            this.audioPlayer.play().then(() => {
-              this.callbacks.onPlayStateChange(true);
-              // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
-              this.callbacks.onLoopRestart();
-            }).catch(e => console.error(e));
-          }
-        }, CONSTANTS.SHADOWING_PAUSE_MS);
+          clearTimeout(this.shadowTimer);
+          this.shadowTimer = setTimeout(() => {
+            this.appState.isShadowingWaiting = false;
+            this.callbacks.onShadowingWait(false);
+            this.restartLoop(effectiveStart);
+          }, delayMs);
+        }
       }
+    }
+  }
+
+  restartLoop(effectiveStart) {
+    const curCustom = (this.appState.loopStart !== null && this.appState.loopEnd !== null);
+    const curStn = this.appState.getActiveSentence();
+    const fallbackStart = (curStn && curStn.audioStart !== null) ? curStn.audioStart : 0;
+    const restartTime = curCustom
+      ? this.appState.loopStart
+      : (curStn && curStn.audioStart !== null ? curStn.audioStart : (effectiveStart !== null ? effectiveStart : fallbackStart));
+
+    if (restartTime !== null && this.audioPlayer) {
+      this.audioPlayer.currentTime = restartTime;
+      this.audioPlayer.play().then(() => {
+        this.callbacks.onPlayStateChange(true);
+        this.callbacks.onLoopRestart();
+      }).catch(e => console.error(e));
     }
   }
 
@@ -5073,11 +5194,15 @@ class ShortcutManager {
   }
 
   init() {
-    window.addEventListener('keydown', this.boundKeyHandler);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', this.boundKeyHandler);
+    }
   }
 
   destroy() {
-    window.removeEventListener('keydown', this.boundKeyHandler);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', this.boundKeyHandler);
+    }
   }
 
   /** True while a modal dialog is visible — global shortcuts must not drive the player behind it. */
@@ -5131,32 +5256,28 @@ class ShortcutManager {
           if (this.handlers.onPlayPause) this.handlers.onPlayPause();
           return;
         }
-        // 2. F3: rewindAndPlay even while typing inside blank (keeps focus)
-        if (e.key === 'F3') {
-          e.preventDefault();
-          if (this.handlers.onRewindAndPlay) {
-            this.handlers.onRewindAndPlay();
-          } else if (this.handlers.onStartLoop) {
-            this.handlers.onStartLoop();
-          }
-          return;
-        }
-        // 3. F4: prevSentence (앞문장 이동)
-        if (e.key === 'F4') {
+        // 2. F6: prevSentence (앞문장 이동)
+        if (e.key === 'F6') {
           e.preventDefault();
           if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
           return;
         }
-        // 4. F5: nextSentence (뒷문장 이동, 브라우저 새로고침 방지)
-        if (e.key === 'F5') {
+        // 3. F7: nextSentence (뒷문장 이동)
+        if (e.key === 'F7') {
           e.preventDefault();
           if (this.handlers.onNextSentence) this.handlers.onNextSentence();
           return;
         }
-        // Toggle OFF via F2 or Escape: immediately exit text input mode and blur
-        if (e.key === 'F2' || e.key === 'Escape') {
+        // 4. Toggle OFF via F5 or Escape: immediately exit text input mode and blur
+        if (e.key === 'F5' || e.key === 'Escape') {
           e.preventDefault();
           target.blur();
+          return;
+        }
+        // 5. F11: togglePlayAllSentences (전체 문장 재생)
+        if (e.key === 'F11') {
+          e.preventDefault();
+          if (this.handlers.onTogglePlayAllSentences) this.handlers.onTogglePlayAllSentences();
           return;
         }
         // Alt + Arrow allowed inside FELS blanks for sentence jumping
@@ -5285,50 +5406,55 @@ class ShortcutManager {
       return;
     }
 
-    // 5. F3 : rewindAndPlay (user-configured seconds rewind & continuous playback)
-    if (key === 'F3') {
-      e.preventDefault();
-      if (this.handlers.onRewindAndPlay) {
-        this.handlers.onRewindAndPlay();
-      } else if (this.handlers.onStartLoop) {
-        this.handlers.onStartLoop();
-      }
-      return;
-    }
-
-    // 6. F4 / ArrowLeft : prevSentence (앞문장으로 이동)
-    if (key === 'F4' || key === 'ArrowLeft') {
+    // 5. F6 / ArrowLeft : prevSentence (앞문장으로 이동)
+    if (key === 'F6' || key === 'ArrowLeft') {
       e.preventDefault();
       if (this.handlers.onPrevSentence) this.handlers.onPrevSentence();
       return;
     }
 
-    // 7. F5 / ArrowRight : nextSentence (뒷문장으로 이동, F5 브라우저 새로고침 방지)
-    if (key === 'F5' || key === 'ArrowRight') {
+    // 6. F7 / ArrowRight : nextSentence (뒷문장으로 이동)
+    if (key === 'F7' || key === 'ArrowRight') {
       e.preventDefault();
       if (this.handlers.onNextSentence) this.handlers.onNextSentence();
       return;
     }
 
-    // 8. S / s : toggleFelsMode
+    // 7. S / s : toggleFelsMode
     if (key === 's' || key === 'S' || key === 'ㄴ') {
       e.preventDefault();
       if (this.handlers.onToggleFels) this.handlers.onToggleFels();
       return;
     }
 
-    // 9. T / t : toggleTranslation
+    // 8. T / t : toggleTranslation
     if (key === 't' || key === 'T' || key === 'ㅅ') {
       e.preventDefault();
       if (this.handlers.onToggleTranslation) this.handlers.onToggleTranslation();
       return;
     }
 
-    // 10. F2 : toggleTextInput (약형 빈칸 텍스트 입력 모드 진입/해제)
-    if (key === 'F2') {
+    // 9. F5 : toggleTextInput (약형 빈칸 텍스트 입력 모드 진입/해제, F5 브라우저 새로고침 방지)
+    if (key === 'F5') {
       e.preventDefault();
       if (this.handlers.onToggleTextInput) this.handlers.onToggleTextInput();
       return;
+    }
+
+    // 10. F11 : togglePlayAllSentences (전체 문장 연속 재생, F11 브라우저 전체화면 방지)
+    if (key === 'F11') {
+      e.preventDefault();
+      if (this.handlers.onTogglePlayAllSentences) this.handlers.onTogglePlayAllSentences();
+      return;
+    }
+
+    // 11. Enter : In FELS mode on Page 2, check answers or advance to next sentence if all correct
+    if (key === 'Enter') {
+      if (this.handlers.onEnterPractice) {
+        e.preventDefault();
+        this.handlers.onEnterPractice();
+        return;
+      }
     }
   }
 }
@@ -5844,9 +5970,7 @@ class InputView {
   }
 
   getTranslateButtonLabel(mode = appState.currentMode) {
-    if (mode === 'both') return '3x1 생성 및 음성 연동';
-    if (mode === 'audio') return '🎙️ 음성에서 스크립트 추출 및 3x1 생성';
-    return '3x1 해석 및 FELS 생성';
+    return '약형드랩 생성';
   }
 
   /** Gemini inline audio is only attempted for real uploads within the size limit. */
@@ -6130,7 +6254,11 @@ class InputView {
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 완료! 아래에서 청크와 해석을 확인하세요.`);
       } catch (err) {
         console.error(err);
-        toast.show(`❌ 음성 추출 오류: ${err.message}`);
+        if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
+          toast.show('⚠️ Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. 잠시 후(약 1분 뒤) 다시 시도하시거나, 스크립트 직접 입력 모드를 이용해 주세요.');
+        } else {
+          toast.show(`❌ 음성 추출 오류: ${err.message}`);
+        }
       } finally {
         this.setLoading(false);
       }
@@ -6225,10 +6353,18 @@ class InputView {
 
       // Render Results Panel on Page 1
       this.renderParsedResults({ scrollToSection: true });
-      toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
+      if (aiService.isQuotaExceededCoolingDown()) {
+        toast.show('ℹ️ Gemini API 사용량 일시 초과로 내장 규칙 엔진 및 무료 번역으로 자동 전환하여 생성을 완료했습니다.');
+      } else {
+        toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
+      }
     } catch (err) {
       console.error('Translation error:', err);
-      toast.show(`❌ 오류: ${err.message}`);
+      if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
+        toast.show('⚠️ Gemini API 사용량 한도가 초과되어 내장 규칙 엔진 결과로 자동 전환합니다.');
+      } else {
+        toast.show(`❌ 오류: ${err.message}`);
+      }
     } finally {
       this.setLoading(false);
     }
@@ -6261,7 +6397,11 @@ class InputView {
       }
     } catch (err) {
       console.error('Auto sync error:', err);
-      toast.show(`❌ 자동 Sync 오류: ${err.message}`);
+      if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429')))) {
+        toast.show('⚠️ Gemini API 사용량 한도로 인해 로컬 오디오 분석(VAD) 알고리즘으로 동기화했습니다.');
+      } else {
+        toast.show(`❌ 자동 Sync 오류: ${err.message}`);
+      }
     }
   }
 
@@ -7513,10 +7653,17 @@ class InputView {
     if (this.btnTranslateText) {
       this.btnTranslateText.textContent = isLoading ? '처리 중...' : this.getTranslateButtonLabel(appState.currentMode);
     }
-    const icon = typeof this.btnTranslate.querySelector === 'function' ? this.btnTranslate.querySelector('svg') : null;
-    if (icon && icon.classList) {
-      if (isLoading) icon.classList.add('spin-icon');
-      else icon.classList.remove('spin-icon');
+    const arrowIcon = this.btnTranslate.querySelector('.btn-icon-arrow');
+    const spinnerIcon = this.btnTranslate.querySelector('.btn-icon-spinner');
+    if (arrowIcon && spinnerIcon) {
+      arrowIcon.classList.toggle('hidden', !!isLoading);
+      spinnerIcon.classList.toggle('hidden', !isLoading);
+    } else {
+      const icon = typeof this.btnTranslate.querySelector === 'function' ? this.btnTranslate.querySelector('svg') : null;
+      if (icon && icon.classList) {
+        if (isLoading) icon.classList.add('spin-icon');
+        else icon.classList.remove('spin-icon');
+      }
     }
   }
 
@@ -7584,10 +7731,14 @@ class PracticeView {
     this.felsScoreBar = document.getElementById('felsScoreBar');
     this.felsScoreText = document.getElementById('felsScoreText');
 
-    // Section 2 (Middle): Natural Korean Translation Elements
-    this.rowNatural = document.getElementById('rowNatural');
+    // Section 2: Natural Korean Translation Modal Elements
+    this.translationModal = document.getElementById('translationModal');
+    this.translationModalBadge = document.getElementById('translationModalBadge');
     this.txtNatural = document.getElementById('txtNatural');
-    this.maskCoverNatural = document.getElementById('maskCoverNatural');
+    this.btnCloseTranslationModal = document.getElementById('btnCloseTranslationModal');
+    this.btnConfirmTranslationModal = document.getElementById('btnConfirmTranslationModal');
+    this.btnTranslationSpeak = document.getElementById('btnTranslationSpeak');
+    this.boundTranslationKeyHandler = (e) => this.handleTranslationKeyDown(e);
 
     // Section 3 (Bottom): Audio Player & Waveform Elements
     this.audioPlayerSection = document.getElementById('audioPlayerSection');
@@ -7601,22 +7752,30 @@ class PracticeView {
     this.audioCurrentTime = document.getElementById('audioCurrentTime');
     this.audioDuration = document.getElementById('audioDuration');
     this.speedBtns = document.querySelectorAll('.speed-btn');
-    this.looperCountBtns = document.querySelectorAll('.looper-count-btn');
     this.btnClearLoop = document.getElementById('btnClearLoop');
     this.loopStatusBadge = document.getElementById('loopStatusBadge');
     this.loopRangeLabel = document.getElementById('loopRangeLabel');
     this.loopCountLabel = document.getElementById('loopCountLabel');
     this.shadowingIndicator = document.getElementById('shadowingIndicator');
 
-    // R Shortcut Rewind & Continuous Playback configuration
-    this.replaySeconds = (typeof StorageService !== 'undefined' && StorageService.getReplaySeconds) ? StorageService.getReplaySeconds() : 1;
-    this.replaySecBtns = document.querySelectorAll('.replay-sec-btn');
-    this.shortcutRLabel = document.getElementById('shortcutRLabel');
+    // User Settings HUD Dropdown Controls
+    this.selectSectionSilent = document.getElementById('selectSectionSilent');
+    this.selectRewindSeconds = document.getElementById('selectRewindSeconds');
+    this.selectLoopCount = document.getElementById('selectLoopCount');
+
+    this.sectionSilentSeconds = (typeof StorageService !== 'undefined' && StorageService.getSectionSilentSeconds) ? StorageService.getSectionSilentSeconds() : 1.0;
+    this.rewindSeconds = (typeof StorageService !== 'undefined' && StorageService.getReplaySeconds) ? StorageService.getReplaySeconds() : 0.5;
+
+    // Play All Sentences (F11) State
+    this.isPlayingAllSentences = false;
+    this.playAllTimer = null;
+    this.playAllEndHandler = null;
 
     // Section 4 (Bottom Dock): Sentence Navigator Elements
     this.sentenceNavigator = document.getElementById('sentenceNavigator');
     this.btnPrevSentence = document.getElementById('btnPrevSentence');
     this.btnNextSentence = document.getElementById('btnNextSentence');
+    this.btnTogglePlayAllSentences = document.getElementById('btnTogglePlayAllSentences');
     this.currentSentenceNum = document.getElementById('currentSentenceNum');
     this.totalSentenceNum = document.getElementById('totalSentenceNum');
     this.sentenceChipsTrack = document.getElementById('sentenceChipsTrack');
@@ -7625,6 +7784,9 @@ class PracticeView {
     // Engines
     this.waveformRenderer = new WaveformRenderer(this.waveformCanvas);
     this.looperEngine = new LooperEngine(this.nativeAudioPlayer, appState);
+    if (this.looperEngine && typeof this.looperEngine.setSectionSilentSeconds === 'function') {
+      this.looperEngine.setSectionSilentSeconds(this.sectionSilentSeconds);
+    }
 
     // Canvas interaction state
     this.isCanvasMouseDown = false;
@@ -7657,7 +7819,13 @@ class PracticeView {
       },
       onShadowingWait: (isWaiting) => {
         if (this.shadowingIndicator) {
-          this.shadowingIndicator.classList.toggle('hidden', !isWaiting);
+          if (isWaiting) {
+            const sec = (typeof this.sectionSilentSeconds === 'number') ? this.sectionSilentSeconds : 1.0;
+            this.shadowingIndicator.textContent = `🗣️ ${sec}s 쉐도잉 대기 중`;
+            this.shadowingIndicator.classList.remove('hidden');
+          } else {
+            this.shadowingIndicator.classList.add('hidden');
+          }
         }
         this.drawWaveform();
       },
@@ -7724,33 +7892,44 @@ class PracticeView {
       });
     });
 
-    // Repeat Counts
-    this.looperCountBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const count = btn.getAttribute('data-count');
-        this.looperCountBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        appState.targetLoopCount = count === 'infinite' ? Infinity : parseInt(count, 10);
-        this.updateLoopBadge();
-        const str = appState.targetLoopCount === Infinity ? '무한' : `${appState.targetLoopCount}회`;
-        toast.show(`반복 횟수가 ${str}로 변경되었습니다.`);
+    // 1. Section Silent Seconds Dropdown
+    if (this.selectSectionSilent) {
+      this.selectSectionSilent.value = String(this.sectionSilentSeconds);
+      this.selectSectionSilent.addEventListener('change', (e) => {
+        const sec = parseFloat(e.target.value);
+        this.setSectionSilentSeconds(!isNaN(sec) ? sec : 1.0);
       });
-    });
+    }
+
+    // 2. Rewind Seconds Dropdown
+    if (this.selectRewindSeconds) {
+      this.selectRewindSeconds.value = String(this.rewindSeconds);
+      this.selectRewindSeconds.addEventListener('change', (e) => {
+        const sec = parseFloat(e.target.value);
+        this.setRewindSeconds(!isNaN(sec) ? sec : 0.5);
+      });
+    }
+
+    // 3. Repeat Count Dropdown
+    if (this.selectLoopCount) {
+      this.selectLoopCount.value = (appState.targetLoopCount === Infinity) ? 'infinite' : String(appState.targetLoopCount);
+      this.selectLoopCount.addEventListener('change', (e) => {
+        const val = e.target.value;
+        const count = val === 'infinite' ? Infinity : parseInt(val, 10);
+        this.setTargetLoopCount(count);
+      });
+    }
+
+    // Play All Sentences Button (F11)
+    if (this.btnTogglePlayAllSentences) {
+      this.btnTogglePlayAllSentences.addEventListener('click', () => {
+        this.togglePlayAllSentences();
+      });
+    }
 
     // Clear Loop
     if (this.btnClearLoop) {
       this.btnClearLoop.addEventListener('click', () => this.clearSelectedRegion());
-    }
-
-    // R Shortcut Rewind Seconds Buttons
-    if (this.replaySecBtns && this.replaySecBtns.length) {
-      this.updateReplaySecUI(this.replaySeconds);
-      this.replaySecBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          const sec = parseFloat(btn.getAttribute('data-sec')) || 1;
-          this.setReplaySeconds(sec);
-        });
-      });
     }
 
     // Canvas Events
@@ -7770,33 +7949,23 @@ class PracticeView {
       this.btnFlipAllCards.addEventListener('click', () => this.toggleFlipAllCards());
     }
 
-    // Row Natural Visibility (Click mask to reveal, click text to hide)
-    if (this.maskCoverNatural) {
-      this.maskCoverNatural.addEventListener('click', () => this.setRowNaturalVisibility(true));
+    // Translation Modal Actions
+    if (this.btnCloseTranslationModal) {
+      this.btnCloseTranslationModal.addEventListener('click', () => this.closeTranslationModal());
     }
-
-    if (this.txtNatural) {
-      this.txtNatural.addEventListener('click', () => {
-        if (appState.naturalVisible) {
-          this.setRowNaturalVisibility(false);
-        }
-      });
-      this.txtNatural.title = '클릭하여 해석 가리기 (T)';
+    if (this.btnConfirmTranslationModal) {
+      this.btnConfirmTranslationModal.addEventListener('click', () => this.closeTranslationModal());
     }
-
-    const rowContentNatural = this.rowNatural ? this.rowNatural.querySelector('.row-content') : null;
-    if (rowContentNatural) {
-      rowContentNatural.addEventListener('click', (e) => {
-        if (e.target.closest('#maskCoverNatural')) return;
-        if (appState.naturalVisible) {
-          this.setRowNaturalVisibility(false);
-        }
+    if (this.btnTranslationSpeak) {
+      this.btnTranslationSpeak.addEventListener('click', () => {
+        const text = this.txtNatural ? this.txtNatural.textContent : '';
+        if (text) speakText(text, 'ko-KR');
       });
     }
-
-    const toggleRowNaturalBtn = document.querySelector('[data-target="rowNatural"]');
-    if (toggleRowNaturalBtn) {
-      toggleRowNaturalBtn.addEventListener('click', () => this.toggleRowNaturalVisibility());
+    if (this.translationModal) {
+      this.translationModal.addEventListener('click', (e) => {
+        if (e.target === this.translationModal) this.closeTranslationModal();
+      });
     }
 
     // Speak Row buttons
@@ -7816,7 +7985,7 @@ class PracticeView {
     }
     if (this.btnResetSentenceInputs) {
       this.btnResetSentenceInputs.addEventListener('click', () => {
-        this.resetFelsInputs();
+        this.resetAllFelsInputs();
       });
     }
 
@@ -7841,6 +8010,22 @@ class PracticeView {
         this.drawWaveform();
       });
       ro.observe(this.waveformCanvas.parentElement);
+    }
+
+    // Resize observer on chunk cards container to re-stabilize card widths on resize
+    if (this.chunksContainer && this.chunksContainer.parentElement && typeof ResizeObserver !== 'undefined') {
+      let lastObservedW = 0;
+      const roChunks = new ResizeObserver((entries) => {
+        if (appState.currentView === 'practice') {
+          const entry = entries[0];
+          const currentW = entry ? Math.round(entry.contentRect.width) : 0;
+          if (currentW > 0 && Math.abs(currentW - lastObservedW) >= 4) {
+            lastObservedW = currentW;
+            this.computeAndApplyStabilizedWidths();
+          }
+        }
+      });
+      roChunks.observe(this.chunksContainer.parentElement);
     }
   }
 
@@ -7956,6 +8141,9 @@ class PracticeView {
           targetStn.result = await aiService.translate(targetStn.text);
         } catch (e) {
           console.warn('AI translation failed, using rule engine:', e);
+          if (e.isQuotaExceeded || (e.message && (e.message.includes('Quota') || e.message.includes('429')))) {
+            toast.show('⚠️ Gemini API 사용량 한도가 일시 초과되어 내장 규칙 엔진 결과를 적용합니다.');
+          }
           targetStn.result = this.ruleEngine.process(targetStn.text);
         }
       } else {
@@ -8002,11 +8190,18 @@ class PracticeView {
       playbackController.setSource(appState.uploadedAudioUrl, { muted: appState.isSynthesizedAudio });
     }
 
-    // Update Natural Korean Text (Keep hidden by default)
+    // Update Natural Korean Text in Translation Modal
     if (this.txtNatural) {
-      this.txtNatural.textContent = targetStn.result.natural || '';
+      const naturalText = (targetStn.result?.natural || '').trim()
+        || (targetStn.result?.chunks ? targetStn.result.chunks.map(c => c.ko).filter(Boolean).join(' ') : '')
+        || '';
+      this.txtNatural.textContent = naturalText;
     }
-    this.setRowNaturalVisibility(false); // Default hidden
+    if (this.isTranslationModalOpen()) {
+      if (this.translationModalBadge) this.translationModalBadge.textContent = `S${idx + 1}`;
+    } else {
+      this.setRowNaturalVisibility(false);
+    }
 
     // Render Cards in Top Section
     this.renderChunkCards(targetStn.result.chunks || [], targetStn);
@@ -8029,8 +8224,27 @@ class PracticeView {
     this.drawWaveform();
   }
 
+  resetPracticeScaling() {
+    if (!this.chunksContainer) return;
+    const setCssVar = (prop, val) => {
+      if (typeof this.chunksContainer.style.setProperty === 'function') {
+        this.chunksContainer.style.setProperty(prop, val);
+      } else if (this.chunksContainer.style) {
+        this.chunksContainer.style[prop] = val;
+      }
+    };
+    setCssVar('--practice-font-size', '0.95rem');
+    setCssVar('--practice-blank-font-size', '0.92rem');
+    setCssVar('--practice-ko-font-size', '0.88rem');
+    setCssVar('--practice-card-pad-x', '8px');
+    setCssVar('--practice-chunk-gap', '5px');
+    setCssVar('--practice-input-pad-x', '3px');
+    setCssVar('--practice-token-gap', '4px');
+  }
+
   renderChunkCards(chunks, targetStn = null) {
     if (!this.chunksContainer) return;
+    this.resetPracticeScaling();
     this.chunksContainer.innerHTML = '';
     this.felsBlanks = [];
     appState.areAllCardsFlipped = false;
@@ -8058,6 +8272,8 @@ class PracticeView {
       card.setAttribute('data-idx', idx);
 
       const initialWidth = this.estimateCardWidth(chunk);
+      card._chunkData = chunk;
+      card._initialEstimatedWidth = initialWidth;
       card.style.flex = '0 0 auto';
       card.style.width = `${initialWidth}px`;
       card.style.minWidth = `${initialWidth}px`;
@@ -8096,7 +8312,9 @@ class PracticeView {
           input.setAttribute('data-category', felsInfo.label);
           input.setAttribute('data-blank-idx', currentBlankIdx);
           input.placeholder = '[ ]';
-          input.style.width = `${Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20))}px`;
+          const baseInpW = Math.min(76, Math.max(34, felsInfo.clean.length * 9 + 20));
+          input._baseWidth = baseInpW;
+          input.style.width = `${baseInpW}px`;
           input.style.maxWidth = '80px';
           input.spellcheck = false;
           input.autocomplete = 'off';
@@ -8151,7 +8369,7 @@ class PracticeView {
           input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              this.checkFelsAnswers();
+              this.handleFelsInputEnter();
             }
           });
         } else {
@@ -8334,41 +8552,159 @@ class PracticeView {
       const frontW = Math.max(wFels, wOrig, 20);
       const effectiveContentW = Math.max(frontW, Math.min(wKo, frontW * 1.15 + 16));
       const currentW = parseFloat(card.style.width) || 0;
-      const measuredCardWidth = Math.ceil(effectiveContentW + 14);
-      // In real DOM with layout, measuredCardWidth reflects true contents.
-      // In mock DOM without layout (where scrollWidth is 0), fall back to currentW.
-      const naturalCardWidth = Math.max(currentW, 56, measuredCardWidth);
-      const minCardWidth = Math.max(56, Math.ceil(frontW + 10));
+      const measuredCardWidth = Math.ceil(effectiveContentW + 16);
+      const naturalCardWidth = Math.max(card._initialEstimatedWidth || 0, currentW, 56, measuredCardWidth);
+      const contentW = Math.max(20, naturalCardWidth - 16);
+
+      if (!card._baseNaturalWidth) {
+        card._baseNaturalWidth = naturalCardWidth;
+        card._baseContentWidth = contentW;
+      }
 
       cardMeasurements.push({
         card,
-        naturalWidth: naturalCardWidth,
-        minWidth: minCardWidth
+        baseContentWidth: card._baseContentWidth || contentW,
+        naturalWidth: card._baseNaturalWidth || naturalCardWidth
       });
     });
 
+    const setCssVar = (prop, val) => {
+      if (this.chunksContainer && typeof this.chunksContainer.style.setProperty === 'function') {
+        this.chunksContainer.style.setProperty(prop, val);
+      } else if (this.chunksContainer && this.chunksContainer.style) {
+        this.chunksContainer.style[prop] = val;
+      }
+    };
+
+    const baseGap = 5;
     const totalNaturalWidth = cardMeasurements.reduce((sum, item) => sum + item.naturalWidth, 0);
-    const totalGap = (cardMeasurements.length - 1) * 5;
+    const totalGap = (cardMeasurements.length - 1) * baseGap;
     const requiredTotal = totalNaturalWidth + totalGap;
 
-    if (containerWidth > 0 && requiredTotal > containerWidth) {
-      const availableForCards = Math.max(0, containerWidth - totalGap - 4);
-      const scale = availableForCards / totalNaturalWidth;
+    if (containerWidth > 0) {
+      const availTotal = Math.max(20, containerWidth - 4);
+      const rawScale = availTotal / requiredTotal;
 
-      cardMeasurements.forEach(({ card, naturalWidth, minWidth }) => {
-        let targetWidth = naturalWidth;
-        if (scale >= 0.70) {
-          targetWidth = Math.max(minWidth, Math.floor(naturalWidth * scale));
-        }
-        card.style.flex = '0 0 auto';
-        card.style.width = `${targetWidth}px`;
-        card.style.minWidth = `${Math.min(targetWidth, minWidth)}px`;
-      });
+      if (rawScale < 1.0) {
+        // Sentence exceeds row: scale down font size, padding, and gaps so it fits in 1 row
+        const cardPadX = Math.max(2, Math.min(8, Math.round(8 * rawScale)));
+        const chunkGap = Math.max(2, Math.min(5, Math.round(baseGap * rawScale)));
+        const inputPadX = Math.max(1, Math.min(3, Math.round(3 * rawScale)));
+        const tokenGap = Math.max(2, Math.min(4, Math.round(4 * rawScale)));
+
+        const totalPaddings = cardMeasurements.length * (cardPadX * 2);
+        const totalGaps = (cardMeasurements.length - 1) * chunkGap;
+        const availForContent = Math.max(20, availTotal - totalPaddings - totalGaps);
+
+        const totalBaseContent = cardMeasurements.reduce((sum, item) => sum + item.baseContentWidth, 0);
+        const fontScale = totalBaseContent > 0 ? (availForContent / totalBaseContent) : rawScale;
+        const clampedFontScale = Math.max(0.48, Math.min(1.0, fontScale));
+
+        const scaledFontRem = (0.95 * clampedFontScale).toFixed(3);
+        const scaledBlankFontRem = (0.92 * clampedFontScale).toFixed(3);
+        const scaledKoFontRem = (0.88 * clampedFontScale).toFixed(3);
+
+        setCssVar('--practice-font-size', `${scaledFontRem}rem`);
+        setCssVar('--practice-blank-font-size', `${scaledBlankFontRem}rem`);
+        setCssVar('--practice-ko-font-size', `${scaledKoFontRem}rem`);
+        setCssVar('--practice-card-pad-x', `${cardPadX}px`);
+        setCssVar('--practice-chunk-gap', `${chunkGap}px`);
+        setCssVar('--practice-input-pad-x', `${inputPadX}px`);
+        setCssVar('--practice-token-gap', `${tokenGap}px`);
+
+        let remainingContentSpace = availForContent;
+        cardMeasurements.forEach(({ card, baseContentWidth }, idx) => {
+          let allocatedContentW;
+          if (idx === cardMeasurements.length - 1) {
+            allocatedContentW = Math.max(10, remainingContentSpace);
+          } else {
+            allocatedContentW = Math.max(10, Math.floor(baseContentWidth * clampedFontScale));
+            remainingContentSpace -= allocatedContentW;
+          }
+          const targetCardW = allocatedContentW + (cardPadX * 2);
+          card.style.flex = '0 0 auto';
+          card.style.width = `${targetCardW}px`;
+          card.style.minWidth = `${Math.min(targetCardW, 56)}px`;
+          card.style.maxWidth = 'none';
+
+          const inputs = card.querySelectorAll('.fels-blank-input');
+          inputs.forEach(inp => {
+            if (!inp._baseWidth) {
+              inp._baseWidth = parseFloat(inp.style.width) || 40;
+            }
+            const scaledInpW = Math.max(20, Math.round(inp._baseWidth * clampedFontScale));
+            inp.style.width = `${scaledInpW}px`;
+          });
+        });
+      } else {
+        // Sentence fits comfortably: utilize the horizontal length of 1 row as much as possible!
+        // Scale up font size dynamically up to 1.35rem, scale up padding, and allocate proportional card widths
+        const upScale = Math.min(1.35, 1.0 + (rawScale - 1.0) * 0.35);
+        const cardPadX = Math.min(18, Math.max(8, Math.round(8 * Math.sqrt(rawScale))));
+        const chunkGap = Math.min(10, Math.max(5, Math.round(baseGap * Math.sqrt(rawScale))));
+        const inputPadX = Math.min(6, Math.max(3, Math.round(3 * upScale)));
+        const tokenGap = Math.min(8, Math.max(4, Math.round(4 * upScale)));
+
+        const scaledFontRem = (0.95 * upScale).toFixed(3);
+        const scaledBlankFontRem = (0.92 * upScale).toFixed(3);
+        const scaledKoFontRem = (0.88 * upScale).toFixed(3);
+
+        setCssVar('--practice-font-size', `${scaledFontRem}rem`);
+        setCssVar('--practice-blank-font-size', `${scaledBlankFontRem}rem`);
+        setCssVar('--practice-ko-font-size', `${scaledKoFontRem}rem`);
+        setCssVar('--practice-card-pad-x', `${cardPadX}px`);
+        setCssVar('--practice-chunk-gap', `${chunkGap}px`);
+        setCssVar('--practice-input-pad-x', `${inputPadX}px`);
+        setCssVar('--practice-token-gap', `${tokenGap}px`);
+
+        const totalBaseContent = cardMeasurements.reduce((sum, item) => sum + item.baseContentWidth, 0);
+        const availForCards = Math.max(20, availTotal - (cardMeasurements.length - 1) * chunkGap);
+
+        let remainingSpace = availForCards;
+        cardMeasurements.forEach(({ card, baseContentWidth }, idx) => {
+          let targetCardW;
+          if (idx === cardMeasurements.length - 1) {
+            targetCardW = Math.max(56, remainingSpace);
+          } else {
+            targetCardW = Math.max(56, Math.floor(availForCards * (baseContentWidth / Math.max(1, totalBaseContent))));
+            remainingSpace -= targetCardW;
+          }
+          card.style.flex = '0 0 auto';
+          card.style.width = `${targetCardW}px`;
+          card.style.minWidth = '0px';
+          card.style.maxWidth = 'none';
+
+          const inputs = card.querySelectorAll('.fels-blank-input');
+          inputs.forEach(inp => {
+            if (!inp._baseWidth) {
+              inp._baseWidth = parseFloat(inp.style.width) || 40;
+            }
+            const scaledInpW = Math.min(110, Math.round(inp._baseWidth * upScale));
+            inp.style.width = `${scaledInpW}px`;
+          });
+        });
+      }
     } else {
+      setCssVar('--practice-font-size', '0.95rem');
+      setCssVar('--practice-blank-font-size', '0.92rem');
+      setCssVar('--practice-ko-font-size', '0.88rem');
+      setCssVar('--practice-card-pad-x', '8px');
+      setCssVar('--practice-chunk-gap', '5px');
+      setCssVar('--practice-input-pad-x', '3px');
+      setCssVar('--practice-token-gap', '4px');
+
       cardMeasurements.forEach(({ card, naturalWidth }) => {
         card.style.flex = '0 0 auto';
         card.style.width = `${naturalWidth}px`;
         card.style.minWidth = `${naturalWidth}px`;
+        card.style.maxWidth = 'none';
+
+        const inputs = card.querySelectorAll('.fels-blank-input');
+        inputs.forEach(inp => {
+          if (inp._baseWidth) {
+            inp.style.width = `${inp._baseWidth}px`;
+          }
+        });
       });
     }
   }
@@ -8381,27 +8717,36 @@ class PracticeView {
       return;
     }
 
+    if (this.isPlayingAllSentences) {
+      this.stopPlayAllSentences();
+      return;
+    }
+
     if (this.nativeAudioPlayer.paused) {
       playbackController.claim('practice');
       const activeStn = appState.getActiveSentence();
       const stnStart = (activeStn && activeStn.audioStart !== null) ? activeStn.audioStart : 0;
       const stnEnd = (activeStn && activeStn.audioEnd !== null) ? activeStn.audioEnd : this.nativeAudioPlayer.duration;
 
-      if (appState.loopStart !== null && appState.loopEnd !== null) {
-        if (this.nativeAudioPlayer.currentTime < appState.loopStart || this.nativeAudioPlayer.currentTime >= appState.loopEnd) {
-          this.nativeAudioPlayer.currentTime = appState.loopStart;
-          appState.currentLoopCount = 0;
-          this.updateLoopBadge();
-        }
+      const hasCustomLoop = (appState.loopStart !== null && appState.loopEnd !== null);
+      const minBound = hasCustomLoop ? appState.loopStart : stnStart;
+      const maxBound = hasCustomLoop ? appState.loopEnd : stnEnd;
+
+      const rewindSec = (typeof this.rewindSeconds === 'number') ? this.rewindSeconds : 0.5;
+
+      if (this.nativeAudioPlayer.currentTime < minBound || this.nativeAudioPlayer.currentTime >= maxBound) {
+        this.nativeAudioPlayer.currentTime = minBound;
+        appState.currentLoopCount = 0;
+        this.updateLoopBadge();
+      } else if (appState.targetLoopCount !== Infinity && appState.currentLoopCount >= appState.targetLoopCount) {
+        this.nativeAudioPlayer.currentTime = minBound;
+        appState.currentLoopCount = 0;
+        this.updateLoopBadge();
       } else {
-        if (this.nativeAudioPlayer.currentTime < stnStart || this.nativeAudioPlayer.currentTime >= stnEnd) {
-          this.nativeAudioPlayer.currentTime = stnStart;
-          appState.currentLoopCount = 0;
-          this.updateLoopBadge();
-        } else if (appState.targetLoopCount !== Infinity && appState.currentLoopCount >= appState.targetLoopCount) {
-          this.nativeAudioPlayer.currentTime = stnStart;
-          appState.currentLoopCount = 0;
-          this.updateLoopBadge();
+        // Space 일시정지 후 재생 시 자동 되감기 적용 (최소 경계 보호)
+        if (rewindSec > 0) {
+          const targetTime = Math.max(minBound, this.nativeAudioPlayer.currentTime - rewindSec);
+          this.nativeAudioPlayer.currentTime = targetTime;
         }
       }
 
@@ -8500,49 +8845,176 @@ class PracticeView {
     this.drawWaveform();
   }
 
-  setReplaySeconds(sec) {
-    this.replaySeconds = sec;
+  setSectionSilentSeconds(sec) {
+    this.sectionSilentSeconds = sec;
+    if (this.looperEngine) {
+      this.looperEngine.setSectionSilentSeconds(sec);
+    }
+    if (typeof StorageService !== 'undefined' && StorageService.setSectionSilentSeconds) {
+      StorageService.setSectionSilentSeconds(sec);
+    }
+    if (this.selectSectionSilent) {
+      this.selectSectionSilent.value = String(sec);
+    }
+    toast.show(`⏱️ 섹션 간격(반복 시 무음)이 ${sec}초로 설정되었습니다.`);
+  }
+
+  setRewindSeconds(sec) {
+    this.rewindSeconds = sec;
     if (typeof StorageService !== 'undefined' && StorageService.setReplaySeconds) {
       StorageService.setReplaySeconds(sec);
     }
-    this.updateReplaySecUI(sec);
-    toast.show(`⏪ F3 단축키 되감기 시간이 ${sec}초로 설정되었습니다.`);
+    if (this.selectRewindSeconds) {
+      this.selectRewindSeconds.value = String(sec);
+    }
+    toast.show(`⏪ 되감기 시간이 ${sec}초로 설정되었습니다. (Space 재생 시 자동 적용)`);
   }
 
-  updateReplaySecUI(sec) {
-    if (this.replaySecBtns) {
-      this.replaySecBtns.forEach(btn => {
-        const bSec = parseFloat(btn.getAttribute('data-sec'));
-        btn.classList.toggle('active', bSec === sec);
+  setTargetLoopCount(count) {
+    appState.targetLoopCount = count;
+    if (typeof StorageService !== 'undefined' && StorageService.setTargetLoopCount) {
+      StorageService.setTargetLoopCount(count);
+    }
+    if (this.selectLoopCount) {
+      this.selectLoopCount.value = (count === Infinity) ? 'infinite' : String(count);
+    }
+    this.updateLoopBadge();
+    const str = count === Infinity ? '무한' : `${count}회`;
+    toast.show(`반복 횟수가 ${str}로 변경되었습니다.`);
+  }
+
+  togglePlayAllSentences() {
+    if (this.isPlayingAllSentences) {
+      this.stopPlayAllSentences();
+    } else {
+      this.startPlayAllSentences();
+    }
+  }
+
+  startPlayAllSentences() {
+    const list = appState.sentenceList;
+    if (!list || list.length === 0) {
+      toast.show('⚠️ 재생할 문장이 없습니다.');
+      return;
+    }
+
+    this.isPlayingAllSentences = true;
+    this.updatePlayAllSentencesButtonUI(true);
+    toast.show('▶ 전체 문장 연속 재생을 시작합니다. (F11로 정지)');
+    this.playAllSentenceSequence(0);
+  }
+
+  stopPlayAllSentences() {
+    this.isPlayingAllSentences = false;
+    clearTimeout(this.playAllTimer);
+    if (this.playAllEndHandler && this.nativeAudioPlayer) {
+      this.nativeAudioPlayer.removeEventListener('timeupdate', this.playAllEndHandler);
+      this.playAllEndHandler = null;
+    }
+    this.updatePlayAllSentencesButtonUI(false);
+    if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused) {
+      this.nativeAudioPlayer.pause();
+      this.updatePlayPauseIcon(false);
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    toast.show('전체 문장 재생이 정지되었습니다.');
+  }
+
+  updatePlayAllSentencesButtonUI(isPlaying) {
+    if (!this.btnTogglePlayAllSentences) return;
+    this.btnTogglePlayAllSentences.classList.toggle('playing', isPlaying);
+    const icon = this.btnTogglePlayAllSentences.querySelector('#playAllIcon');
+    const text = this.btnTogglePlayAllSentences.querySelector('#playAllText');
+    if (icon) icon.textContent = isPlaying ? '⏹' : '▶';
+    if (text) text.textContent = isPlaying ? '재생 중지' : '전체 재생';
+  }
+
+  playAllSentenceSequence(idx) {
+    if (!this.isPlayingAllSentences) return;
+    const list = appState.sentenceList;
+    if (idx >= list.length) {
+      this.isPlayingAllSentences = false;
+      this.updatePlayAllSentencesButtonUI(false);
+      this.updatePlayPauseIcon(false);
+      toast.show('🎉 전체 문장 재생이 완료되었습니다!');
+      return;
+    }
+
+    this.loadSentence(idx);
+
+    const stn = list[idx];
+    const start = (stn && stn.audioStart !== null) ? stn.audioStart : 0;
+    const end = (stn && stn.audioEnd !== null) ? stn.audioEnd : this.nativeAudioPlayer.duration;
+
+    playbackController.claim('practice');
+
+    if (appState.isSynthesizedAudio || !this.nativeAudioPlayer.src) {
+      this.updatePlayPauseIcon(true);
+      speakText(stn.text, {
+        onEnd: () => {
+          if (!this.isPlayingAllSentences) return;
+          const waitSec = (typeof this.sectionSilentSeconds === 'number') ? this.sectionSilentSeconds : 1.0;
+          this.playAllTimer = setTimeout(() => {
+            this.playAllSentenceSequence(idx + 1);
+          }, Math.max(100, waitSec * 1000));
+        }
       });
+      return;
     }
-    if (this.shortcutRLabel) {
-      this.shortcutRLabel.textContent = `${sec}초 되감기재생`;
-    }
+
+    this.nativeAudioPlayer.currentTime = start;
+    this.nativeAudioPlayer.play().then(() => {
+      this.updatePlayPauseIcon(true);
+      this.startWaveformPlaybackLoop();
+
+      if (this.playAllEndHandler) {
+        this.nativeAudioPlayer.removeEventListener('timeupdate', this.playAllEndHandler);
+      }
+
+      this.playAllEndHandler = () => {
+        if (!this.isPlayingAllSentences) {
+          this.nativeAudioPlayer.removeEventListener('timeupdate', this.playAllEndHandler);
+          this.playAllEndHandler = null;
+          return;
+        }
+        if (this.nativeAudioPlayer.currentTime >= end) {
+          this.nativeAudioPlayer.removeEventListener('timeupdate', this.playAllEndHandler);
+          this.playAllEndHandler = null;
+          this.nativeAudioPlayer.pause();
+          this.updatePlayPauseIcon(false);
+
+          const waitSec = (typeof this.sectionSilentSeconds === 'number') ? this.sectionSilentSeconds : 1.0;
+          this.playAllTimer = setTimeout(() => {
+            this.playAllSentenceSequence(idx + 1);
+          }, Math.max(100, waitSec * 1000));
+        }
+      };
+
+      this.nativeAudioPlayer.addEventListener('timeupdate', this.playAllEndHandler);
+    }).catch(e => {
+      console.error(e);
+      this.stopPlayAllSentences();
+    });
   }
 
-  /**
-   * Rewinds audio by user-configured seconds and continues playback seamlessly.
-   * Bound to shortcut 'R' on Stage 2 to repeatedly replay unclear speech sections.
-   */
   rewindAndPlay(customSec) {
     if (!this.nativeAudioPlayer || !this.nativeAudioPlayer.src) {
       toast.show('⚠️ 재생 가능한 오디오가 없습니다.');
       return;
     }
 
-    const sec = (typeof customSec === 'number' && customSec > 0) ? customSec : (this.replaySeconds || 1);
+    const sec = (typeof customSec === 'number' && customSec > 0) ? customSec : (this.rewindSeconds || 0.5);
     const cur = this.nativeAudioPlayer.currentTime || 0;
     const activeStn = appState.getActiveSentence();
     const minBound = (activeStn && activeStn.audioStart !== null) ? activeStn.audioStart : 0;
 
-    // Jump back by user-configured seconds, bounded by sentence start
     const targetTime = Math.max(minBound, cur - sec);
 
     playbackController.claim('practice');
     this.nativeAudioPlayer.currentTime = targetTime;
 
-    // Reset loop so user gets seamless, uninterrupted continuous playback
     appState.clearLoop();
     this.looperEngine.reset();
     this.updateLoopBadge();
@@ -8607,6 +9079,7 @@ class PracticeView {
       }
     });
 
+    this.computeAndApplyStabilizedWidths();
     toast.show(appState.isFelsMode ? '✏️ FELS 빈칸 모드로 전환되었습니다.' : '📖 원문 전체 보기 모드로 전환되었습니다.');
   }
 
@@ -8682,10 +9155,53 @@ class PracticeView {
     }
 
     if (correctCount === totalCount) {
-      toast.show(`🎉 축하합니다! 모든 빈칸(${totalCount}개) 정답입니다!`);
+      toast.show(`🎉 축하합니다! 모든 빈칸(${totalCount}개) 정답입니다! (Enter: 다음 문장)`);
+      return true;
     } else {
       toast.show(`✓ 정답 확인: 맞은 빈칸은 초록색, 틀린 빈칸은 빨간색으로 표시됩니다.`);
+      return false;
     }
+  }
+
+  areAllFelsAnswersCorrect() {
+    if (!this.felsBlanks || !this.felsBlanks.length) return false;
+    return this.felsBlanks.every(item => {
+      if (!item.inputEl) return false;
+      const isMarkedCorrect = item.inputEl.classList && item.inputEl.classList.contains('is-correct');
+      const val = (item.inputEl.value || '').trim().toLowerCase();
+      const exp = (item.answer || '').toLowerCase();
+      return isMarkedCorrect && val.length > 0 && val === exp;
+    });
+  }
+
+  focusFirstFelsBlank() {
+    if (!this.chunksContainer) return;
+    const blanks = Array.from(this.chunksContainer.querySelectorAll('.fels-blank-input'));
+    if (blanks.length > 0) {
+      const target = blanks.find(b => !(b.value || '').trim()) || blanks[0];
+      target.focus();
+      if (typeof target.select === 'function') target.select();
+    }
+  }
+
+  handleFelsInputEnter() {
+    // If all answers in the current sentence are already verified and correct, pressing Enter moves to the next sentence
+    if (this.areAllFelsAnswersCorrect()) {
+      if (appState.sentenceList && appState.activeSentenceIndex < appState.sentenceList.length - 1) {
+        this.nextSentence();
+        if (appState.isFelsMode) {
+          requestAnimationFrame(() => {
+            this.focusFirstFelsBlank();
+          });
+        }
+      } else {
+        toast.show('🎉 마지막 문장입니다! 모든 약형 빈칸 연습을 완료했습니다.');
+      }
+      return;
+    }
+
+    // Otherwise, evaluate and grade the answers
+    this.checkFelsAnswers();
   }
 
   resetFelsInputs() {
@@ -8714,7 +9230,43 @@ class PracticeView {
     if (this.felsBlanks.length > 0) {
       this.felsBlanks[0].inputEl.focus();
     }
-    toast.show('빈칸이 초기화되었습니다. 다시 입력해 보세요.');
+    toast.show('현재 문장의 [ ] 빈칸이 초기화되었습니다. 다시 입력해 보세요.');
+  }
+
+  resetAllFelsInputs() {
+    if (!appState.sentenceList || appState.sentenceList.length === 0) {
+      toast.show('💡 초기화할 문장 데이터가 없습니다.');
+      return;
+    }
+
+    if (typeof confirm === 'function' && !confirm('모든 문장의 [ ] 빈칸 입력 데이터를 전체 초기화하시겠습니까?')) {
+      return;
+    }
+
+    appState.sentenceList.forEach(stn => {
+      stn.userAnswers = {};
+      delete stn.userChecked;
+    });
+
+    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+      projectService.markDirty();
+    }
+
+    this.felsBlanks.forEach(item => {
+      if (!item.inputEl) return;
+      item.inputEl.value = '';
+      item.inputEl.classList.remove('is-correct', 'is-wrong');
+      const parent = item.inputEl.parentElement;
+      if (parent && typeof parent.querySelector === 'function') {
+        const oldReveal = parent.querySelector('.fels-answer-reveal');
+        if (oldReveal) oldReveal.remove();
+      }
+    });
+    if (this.felsScoreBar) this.felsScoreBar.classList.add('hidden');
+    if (this.felsBlanks.length > 0) {
+      this.felsBlanks[0].inputEl.focus();
+    }
+    toast.show('🔄 모든 문장의 [ ] 빈칸이 전체 초기화되었습니다.');
   }
 
   toggleTextInputMode() {
@@ -8734,7 +9286,7 @@ class PracticeView {
         const target = blanks.find(b => !(b.value || '').trim()) || blanks[0];
         target.focus();
         target.select();
-        toast.show('✏️ 빈칸 입력 모드 (Space: 재생/정지, F3: 되감기, Enter: 정답확인, F4/F5: 문장이동, F2/Esc: 해제)');
+        toast.show('✏️ 빈칸 입력 모드 (Space: 재생/정지, Enter: 정답확인, F6/F7: 문장이동, F5/Esc: 해제)');
       } else {
         toast.show('💡 현재 문장에는 약형 빈칸이 없습니다.');
       }
@@ -8778,32 +9330,67 @@ class PracticeView {
 
   // --- Row Natural Visibility ---
 
+  // --- Natural Korean Translation Modal Methods ---
+
+  openTranslationModal() {
+    const list = appState.sentenceList;
+    const idx = appState.activeSentenceIndex;
+    if (!list || idx < 0 || idx >= list.length) return;
+    const targetStn = list[idx];
+    if (this.translationModalBadge) {
+      this.translationModalBadge.textContent = `S${idx + 1}`;
+    }
+    if (this.txtNatural) {
+      const naturalText = (targetStn.result?.natural || '').trim()
+        || (targetStn.result?.chunks ? targetStn.result.chunks.map(c => c.ko).filter(Boolean).join(' ') : '')
+        || '등록된 우리말 해석이 없습니다.';
+      this.txtNatural.textContent = naturalText;
+    }
+    if (this.translationModal) {
+      this.translationModal.classList.remove('hidden');
+    }
+    appState.naturalVisible = true;
+    window.addEventListener('keydown', this.boundTranslationKeyHandler);
+  }
+
+  closeTranslationModal() {
+    if (this.translationModal) {
+      this.translationModal.classList.add('hidden');
+    }
+    appState.naturalVisible = false;
+    window.removeEventListener('keydown', this.boundTranslationKeyHandler);
+  }
+
+  isTranslationModalOpen() {
+    return this.translationModal && !this.translationModal.classList.contains('hidden');
+  }
+
+  toggleTranslationModal() {
+    if (this.isTranslationModalOpen()) {
+      this.closeTranslationModal();
+    } else {
+      this.openTranslationModal();
+    }
+  }
+
+  handleTranslationKeyDown(e) {
+    if (!this.isTranslationModalOpen()) return;
+    if (e.key === 'Escape' || e.key === 't' || e.key === 'T' || e.key === 'ㅅ') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.closeTranslationModal();
+    }
+  }
+
   toggleRowNaturalVisibility() {
-    this.setRowNaturalVisibility(!appState.naturalVisible);
+    this.toggleTranslationModal();
   }
 
   setRowNaturalVisibility(makeVisible) {
-    appState.naturalVisible = makeVisible;
-    if (!this.rowNatural) return;
-
-    const rowContent = this.rowNatural.querySelector('.row-content');
-    const maskCover = this.rowNatural.querySelector('.row-mask-cover');
-    const toggleBtn = document.querySelector('[data-target="rowNatural"]');
-
     if (makeVisible) {
-      if (rowContent) rowContent.classList.remove('is-masked');
-      if (maskCover) maskCover.classList.add('hidden');
-      if (toggleBtn) {
-        toggleBtn.classList.remove('active');
-        toggleBtn.title = '해석 가리기 (T)';
-      }
+      this.openTranslationModal();
     } else {
-      if (rowContent) rowContent.classList.add('is-masked');
-      if (maskCover) maskCover.classList.remove('hidden');
-      if (toggleBtn) {
-        toggleBtn.classList.add('active');
-        toggleBtn.title = '해석 보기 (T)';
-      }
+      this.closeTranslationModal();
     }
   }
 
@@ -9093,6 +9680,7 @@ class MemorizeView {
     this.modeButtons = document.querySelectorAll('.memorize-mode-btn');
     this.btnPlayAllScript = document.getElementById('btnPlayAllScript');
     this.btnFlipAllMemorize = document.getElementById('btnFlipAllMemorize');
+    this.btnOpenClassroomModal = document.getElementById('btnOpenClassroomModal');
     this.memorizeStatsBadge = document.getElementById('memorizeStatsBadge');
 
     this.isPlayingAll = false;
@@ -9134,6 +9722,16 @@ class MemorizeView {
     // Flip All Cards Button
     if (this.btnFlipAllMemorize) {
       this.btnFlipAllMemorize.addEventListener('click', () => this.toggleFlipAllCards());
+    }
+
+    // Classroom Large Modal Open Button (Next to 전체 뒤집기)
+    if (this.btnOpenClassroomModal) {
+      this.btnOpenClassroomModal.addEventListener('click', () => {
+        const idx = (typeof this.activeRowIndex === 'number' && this.activeRowIndex >= 0)
+          ? this.activeRowIndex
+          : (appState.activeSentenceIndex || 0);
+        this.openClassroomModal(idx);
+      });
     }
 
     // Listen to sentence updates
@@ -9251,61 +9849,25 @@ class MemorizeView {
       }
 
       sRow.addEventListener('click', (e) => {
-        if (e.target.closest('.memorize-stn-badge') || e.target.closest('.memorize-stn-play')) return;
+        if (e.target.closest('.memorize-stn-play')) return;
         this.setActiveRow(sIdx);
       });
-
-      // Sentence Header (S1, S2, jump to practice, expand classroom modal)
-      const sHeader = document.createElement('div');
-      sHeader.className = 'memorize-sentence-header';
-      sHeader.innerHTML = `
-        <button class="memorize-stn-badge" title="문장 S${sIdx + 1} 2페이지 약형 연습으로 이동">
-          <span>S${sIdx + 1}</span>
-          <span class="jump-icon">↗</span>
-        </button>
-        <span class="memorize-stn-preview" title="클릭하여 교실 대형 화면으로 보기">${escapeHtml(stn.text)}</span>
-        <button class="memorize-stn-expand-btn" title="교실 대형 화면으로 크게 보기 (모달)">🔍 크게 보기</button>
-        <button class="memorize-stn-play" title="이 문장 듣기">▶</button>
-      `;
-
-      // Jump to practice
-      const badgeBtn = sHeader.querySelector('.memorize-stn-badge');
-      if (badgeBtn) {
-        badgeBtn.addEventListener('click', () => {
-          appState.setActiveSentenceIndex(sIdx);
-          this.router.navigateTo('practice');
-        });
-      }
-
-      // Expand to classroom modal
-      const expandBtn = sHeader.querySelector('.memorize-stn-expand-btn');
-      if (expandBtn) {
-        expandBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.openClassroomModal(sIdx);
-        });
-      }
-
-      const previewSpan = sHeader.querySelector('.memorize-stn-preview');
-      if (previewSpan) {
-        previewSpan.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.openClassroomModal(sIdx);
-        });
-      }
 
       // Double-click row to open classroom modal
       sRow.addEventListener('dblclick', () => {
         this.openClassroomModal(sIdx);
       });
 
-      // Play this sentence
-      const playBtn = sHeader.querySelector('.memorize-stn-play');
-      if (playBtn) {
-        playBtn.addEventListener('click', () => {
-          this.playSingleSentence(sIdx);
-        });
-      }
+      // Play this sentence button on the SAME row as the script
+      const playBtn = document.createElement('button');
+      playBtn.className = 'memorize-stn-play';
+      playBtn.title = '이 문장 듣기';
+      playBtn.textContent = '▶';
+      playBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setActiveRow(sIdx);
+        this.playSingleSentence(sIdx);
+      });
 
       // Chunk Grid for this sentence
       const chunkGrid = document.createElement('div');
@@ -9356,7 +9918,7 @@ class MemorizeView {
         chunkGrid.appendChild(cCard);
       });
 
-      sRow.appendChild(sHeader);
+      sRow.appendChild(playBtn);
       sRow.appendChild(chunkGrid);
       this.canvasContainer.appendChild(sRow);
     });
@@ -9438,13 +10000,8 @@ class MemorizeView {
     const gridWidth = chunkGrid.clientWidth;
     if (!gridWidth || gridWidth <= 0) return;
 
-    const gap = 4; // matches CSS gap: 4px
-    const totalGaps = (cards.length - 1) * gap;
-
-    // Fixed horizontal overhead per card: 4px left + 4px right padding + 2px border + 2px safety buffer = 12px
-    const fixedCardExtra = 12;
-    const totalFixedOverhead = cards.length * fixedCardExtra + totalGaps;
-    const availTextWidth = Math.max(20, gridWidth - totalFixedOverhead - 4);
+    const baseGap = 5; // matches CSS gap: 5px
+    const totalGaps = (cards.length - 1) * baseGap;
 
     // Measure raw unscaled text width of each card at base font size (0.92rem)
     const rawTextWidths = [];
@@ -9454,48 +10011,73 @@ class MemorizeView {
 
       const wEn = this.measureTextWidth(enText, false);
       const wKo = this.measureTextWidth(koText, true);
-      const maxTextW = Math.max(wEn, wKo, 10);
+      const maxTextW = Math.max(wEn, wKo, 14);
       rawTextWidths.push(maxTextW);
     });
 
     const totalRawTextWidth = rawTextWidths.reduce((sum, w) => sum + w, 0);
+    const availTotal = Math.max(20, gridWidth - totalGaps - 4);
+    const baseOverhead = cards.length * 16;
+    const baseRequired = totalRawTextWidth + baseOverhead;
+    const scaleRatio = availTotal / Math.max(1, baseRequired);
 
-    if (totalRawTextWidth > availTextWidth) {
-      // Must scale down font size so that the text of ALL cards fits without clipping or ellipsis
-      const scale = availTextWidth / totalRawTextWidth;
-      // Allow scaling down smoothly (down to 0.45rem if needed for very long sentences)
-      const scaledFontRem = Math.max(0.45, Math.min(0.92, 0.92 * scale));
+    const setCssVar = (prop, val) => {
       if (typeof chunkGrid.style.setProperty === 'function') {
-        chunkGrid.style.setProperty('--row-chunk-font-size', `${scaledFontRem.toFixed(3)}rem`);
+        chunkGrid.style.setProperty(prop, val);
       } else {
-        chunkGrid.style['--row-chunk-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
+        chunkGrid.style[prop] = val;
       }
+    };
 
-      // Allocate card widths: exactly textWidth * scale + fixedCardExtra!
-      let remainingTextSpace = availTextWidth;
+    if (scaleRatio < 1.0) {
+      // Long sentence: scale down font size & padding so that all cards fit in 1 line
+      const clampedScale = Math.max(0.48, scaleRatio);
+      const scaledFontRem = (0.92 * clampedScale).toFixed(3);
+      const padX = Math.max(2, Math.round(6 * clampedScale));
+      const chunkGap = Math.max(2, Math.round(baseGap * clampedScale));
+
+      setCssVar('--row-chunk-font-size', `${scaledFontRem}rem`);
+      setCssVar('--row-chunk-pad-x', `${padX}px`);
+      setCssVar('--row-chunk-gap', `${chunkGap}px`);
+
+      const availForContent = Math.max(20, availTotal - cards.length * (2 * padX));
+      let remainingSpace = availForContent;
       cards.forEach((card, idx) => {
         let allocatedTextW;
         if (idx === cards.length - 1) {
-          allocatedTextW = Math.max(10, remainingTextSpace);
+          allocatedTextW = Math.max(10, remainingSpace);
         } else {
-          allocatedTextW = Math.max(10, Math.floor(rawTextWidths[idx] * scale));
-          remainingTextSpace -= allocatedTextW;
+          allocatedTextW = Math.max(10, Math.floor(availForContent * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+          remainingSpace -= allocatedTextW;
         }
-        const cardW = allocatedTextW + fixedCardExtra;
+        const cardW = allocatedTextW + (2 * padX);
         card.style.flex = '0 0 auto';
         card.style.width = `${cardW}px`;
         card.style.minWidth = '0px';
-        card.style.maxWidth = 'none'; // NEVER clamp maxWidth so text is never cut off
+        card.style.maxWidth = 'none';
       });
     } else {
-      // Fits comfortably at standard font size
-      if (typeof chunkGrid.style.setProperty === 'function') {
-        chunkGrid.style.setProperty('--row-chunk-font-size', '0.92rem');
-      } else {
-        chunkGrid.style['--row-chunk-font-size'] = '0.92rem';
-      }
+      // Short / Normal sentence: utilize the horizontal length of 1 row as much as possible!
+      // Scale up font size dynamically up to 1.35rem, scale up padding, and allocate proportional card widths
+      const upScale = Math.min(1.35, 1.0 + (scaleRatio - 1.0) * 0.35);
+      const scaledFontRem = (0.92 * upScale).toFixed(3);
+      const padX = Math.min(18, Math.max(6, Math.round(6 * Math.sqrt(scaleRatio))));
+      const chunkGap = Math.min(10, Math.max(4, Math.round(baseGap * Math.sqrt(scaleRatio))));
+
+      setCssVar('--row-chunk-font-size', `${scaledFontRem}rem`);
+      setCssVar('--row-chunk-pad-x', `${padX}px`);
+      setCssVar('--row-chunk-gap', `${chunkGap}px`);
+
+      const effectiveAvail = Math.max(20, gridWidth - (cards.length - 1) * chunkGap - 4);
+      let remainingSpace = effectiveAvail;
       cards.forEach((card, idx) => {
-        const cardW = rawTextWidths[idx] + fixedCardExtra;
+        let cardW;
+        if (idx === cards.length - 1) {
+          cardW = Math.max(20, remainingSpace);
+        } else {
+          cardW = Math.max(20, Math.floor(effectiveAvail * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+          remainingSpace -= cardW;
+        }
         card.style.flex = '0 0 auto';
         card.style.width = `${cardW}px`;
         card.style.minWidth = '0px';
@@ -9709,8 +10291,8 @@ class MemorizeView {
     if (!list || sIdx < 0 || sIdx >= list.length) return;
 
     this.classroomIndex = sIdx;
-    // Synchronize flip state: if Korean is on front in Page 3 canvas, show Korean in classroom modal
-    this.areClassroomCardsFlipped = !!appState.memorizeAllFlipped;
+    // Always start with Korean front cards (English answers hidden until flipped)
+    this.areClassroomCardsFlipped = false;
 
     this.renderClassroomModal();
     if (this.classroomModal) {
@@ -9737,6 +10319,7 @@ class MemorizeView {
   prevClassroomSentence() {
     if (this.classroomIndex > 0) {
       this.classroomIndex--;
+      this.areClassroomCardsFlipped = false;
       this.renderClassroomModal();
     }
   }
@@ -9745,6 +10328,7 @@ class MemorizeView {
     const list = appState.sentenceList;
     if (list && this.classroomIndex < list.length - 1) {
       this.classroomIndex++;
+      this.areClassroomCardsFlipped = false;
       this.renderClassroomModal();
     }
   }
@@ -9758,10 +10342,10 @@ class MemorizeView {
     });
     if (this.btnClassroomFlipAll) {
       this.btnClassroomFlipAll.innerHTML = this.areClassroomCardsFlipped
-        ? '<span>🔤 영어 앞면</span>'
-        : '<span>🔄 전체 뒤집기</span>';
+        ? '<span>🇰🇷 우리말 앞면</span>'
+        : '<span>🔤 정답 영어 보기</span>';
     }
-    toast.show(this.areClassroomCardsFlipped ? '🔄 모든 청크 뒷면(해석)으로 뒤집기' : '🔄 모든 청크 앞면(영어)으로 뒤집기');
+    toast.show(this.areClassroomCardsFlipped ? '🔤 정답 영어로 뒤집었습니다.' : '🇰🇷 우리말 앞면으로 뒤집었습니다.');
   }
 
   flipClassroomCardByIndex(cIdx) {
@@ -9837,7 +10421,7 @@ class MemorizeView {
       this.classroomStnBadge.textContent = `S${currentIdx + 1}`;
     }
     if (this.classroomStnCounter) {
-      this.classroomStnCounter.textContent = `${currentIdx + 1} / ${list.length} 문장 (선택 문장 가운데 표시)`;
+      this.classroomStnCounter.textContent = `${currentIdx + 1} / ${list.length} 문장`;
     }
     if (this.btnClassroomPrev) {
       this.btnClassroomPrev.disabled = (currentIdx <= 0);
@@ -9847,83 +10431,42 @@ class MemorizeView {
     }
     if (this.btnClassroomFlipAll) {
       this.btnClassroomFlipAll.innerHTML = this.areClassroomCardsFlipped
-        ? '<span>🔤 영어 앞면</span>'
-        : '<span>🔄 전체 뒤집기</span>';
+        ? '<span>🇰🇷 우리말 앞면</span>'
+        : '<span>🔤 정답 영어 보기</span>';
     }
 
     if (!this.classroomChunksContainer) return;
     this.classroomChunksContainer.innerHTML = '';
 
-    // Render 3 sentences: Prev (i - 1), Active Center (i), Next (i + 1)
+    // Render ONLY the active single sentence
     const rowsToRender = [
-      { type: 'prev', idx: currentIdx - 1, label: '이전 문장' },
-      { type: 'active', idx: currentIdx, label: '현재 문장 (중심)' },
-      { type: 'next', idx: currentIdx + 1, label: '다음 문장' }
+      { type: 'active', idx: currentIdx, label: '현재 문장' }
     ];
 
     rowsToRender.forEach(rowDef => {
       const rowEl = document.createElement('div');
       rowEl.className = `classroom-sentence-row row-${rowDef.type}`;
 
-      if (rowDef.idx < 0) {
-        rowEl.classList.add('is-placeholder');
-        rowEl.innerHTML = `
-          <div class="classroom-row-header placeholder-header">
-            <span class="classroom-row-badge dimmed">S0</span>
-            <span class="classroom-row-preview">시작 문장입니다 (이전 문장 없음)</span>
-          </div>
-        `;
-        this.classroomChunksContainer.appendChild(rowEl);
-        return;
-      }
-
-      if (rowDef.idx >= list.length) {
-        rowEl.classList.add('is-placeholder');
-        rowEl.innerHTML = `
-          <div class="classroom-row-header placeholder-header">
-            <span class="classroom-row-badge dimmed">S${list.length + 1}</span>
-            <span class="classroom-row-preview">마지막 문장입니다 (다음 문장 없음)</span>
-          </div>
-        `;
-        this.classroomChunksContainer.appendChild(rowEl);
-        return;
-      }
-
       const sIdx = rowDef.idx;
       const stnData = list[sIdx];
-      const isActive = (rowDef.type === 'active');
+      const isActive = true;
 
-      if (isActive) {
-        rowEl.classList.add('is-active');
-      } else {
-        rowEl.classList.add('is-context');
-        rowEl.addEventListener('click', (e) => {
-          if (e.target.closest('.classroom-chunk-card') || e.target.closest('button')) return;
-          this.classroomIndex = sIdx;
-          this.renderClassroomModal();
-        });
-      }
+      rowEl.classList.add('is-active');
 
       // Sentence Header inside row
       const headerEl = document.createElement('div');
       headerEl.className = 'classroom-row-header';
 
       const badgeBtn = document.createElement('button');
-      badgeBtn.className = `classroom-row-badge ${isActive ? 'active-badge' : ''}`;
+      badgeBtn.className = 'classroom-row-badge active-badge';
       badgeBtn.textContent = `S${sIdx + 1}`;
-      badgeBtn.title = isActive ? '현재 선택 문장' : `문장 S${sIdx + 1}로 이동`;
-      if (!isActive) {
-        badgeBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.classroomIndex = sIdx;
-          this.renderClassroomModal();
-        });
-      }
+      badgeBtn.title = '현재 선택 문장';
 
+      // 크게 보기 모달창 헤더: 우리말 해석 텍스트 노출 제거 (청크 카드에만 집중)
       const previewText = document.createElement('span');
       previewText.className = 'classroom-row-preview';
-      previewText.textContent = stnData.text || '';
-      previewText.title = stnData.result?.natural || '';
+      previewText.textContent = '';
+      previewText.title = '';
 
       const playBtn = document.createElement('button');
       playBtn.className = 'classroom-row-mini-play';
@@ -9946,7 +10489,7 @@ class MemorizeView {
       const chunks = stnData.result?.chunks || [{ en: stnData.text, ko: stnData.result?.natural || '' }];
       chunks.forEach((chunk, cIdx) => {
         const card = document.createElement('div');
-        card.className = `classroom-chunk-card ${isActive ? 'active-card' : 'context-card'}`;
+        card.className = 'classroom-chunk-card active-card';
         card.setAttribute('data-c-idx', cIdx);
         card.setAttribute('data-s-idx', sIdx);
         if (this.areClassroomCardsFlipped) {
@@ -9954,26 +10497,26 @@ class MemorizeView {
         }
 
         const keyNum = cIdx + 1;
-        // Key badges only on active center row (1~9)
-        const keyBadge = (isActive && keyNum <= 9) ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
+        // Key badges on active center row (1~9)
+        const keyBadge = (keyNum <= 9) ? `<span class="classroom-key-badge">${keyNum}</span>` : '';
 
         const enText = (chunk.en || '').trim();
         const koText = (chunk.ko || '').trim();
+        card._chunkEn = enText;
+        card._chunkKo = koText;
 
-        // Calculate sleek compact width so sentence stays strictly on 1 line
-        const charLen = Math.max(enText.length, Math.ceil(koText.length * 1.3));
-        const estCardW = Math.max(isActive ? 36 : 28, charLen * (isActive ? 9 : 7) + (isActive ? 14 : 10));
-        card.style.width = `${estCardW}px`;
-        card.style.flex = '0 1 auto';
+        // Initial flexible card setup (precise fitting applied dynamically in fitClassroomSentenceRows)
+        card.style.flex = '0 0 auto';
 
+        // 앞면: 우리말(koText), 뒷면: 정답 영어(enText)
         card.innerHTML = `
           ${keyBadge}
           <div class="classroom-card-inner">
-            <div class="classroom-face classroom-face-en">
-              <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
-            </div>
             <div class="classroom-face classroom-face-ko">
               <span class="classroom-chunk-text">${escapeHtml(koText)}</span>
+            </div>
+            <div class="classroom-face classroom-face-en">
+              <span class="classroom-chunk-text">${escapeHtml(enText)}</span>
             </div>
           </div>
         `;
@@ -9990,7 +10533,7 @@ class MemorizeView {
       this.classroomChunksContainer.appendChild(rowEl);
     });
 
-    // Precise fitting to prevent any horizontal overflow and scrollbars
+    // Precise fitting to utilize the entire horizontal width of the row and prevent overflow
     requestAnimationFrame(() => {
       this.fitClassroomSentenceRows();
     });
@@ -10009,91 +10552,95 @@ class MemorizeView {
       // Available width inside chunksWrap
       let availWidth = chunksWrap.clientWidth;
       if (!availWidth || availWidth <= 0) {
-        if (this.classroomChunksContainer.clientWidth) {
-          availWidth = this.classroomChunksContainer.clientWidth - 32;
-        } else if (this.classroomModal && this.classroomModal.clientWidth) {
-          availWidth = this.classroomModal.clientWidth - 80;
-        } else {
-          availWidth = 1100;
-        }
+        const containerW = this.classroomChunksContainer.clientWidth ||
+          (this.classroomModal ? this.classroomModal.clientWidth - 80 : 1100);
+        availWidth = Math.max(300, containerW - 28);
       }
 
       const isActive = row.classList.contains('is-active');
-      const gap = 6;
-      const totalGaps = (cards.length - 1) * gap;
-      // Active: 4px*2 padding + 2px border + 2px buffer = 16px (padding is 4px 7px)
-      // Context: 2px*2 padding + 2px border + 2px buffer = 12px (padding is 2px 5px)
-      const fixedCardExtra = isActive ? 16 : 12;
-      const totalFixedOverhead = (cards.length * fixedCardExtra) + totalGaps;
-      const availTextWidth = Math.max(20, availWidth - totalFixedOverhead - 4);
-
-      const baseFontRem = isActive ? 1.05 : 0.88;
-      const fontScaleFactor = (baseFontRem * 16) / 14.72;
+      const baseGap = 6;
+      const basePadX = 10;
+      const baseFontRem = isActive ? 1.15 : 0.92;
+      const fontScaleFactor = baseFontRem;
 
       const rawTextWidths = [];
       cards.forEach(card => {
-        const enEl = card.querySelector('.classroom-face-en .classroom-chunk-text');
-        const koEl = card.querySelector('.classroom-face-ko .classroom-chunk-text');
-        const enText = enEl ? enEl.textContent.trim() : '';
-        const koText = koEl ? koEl.textContent.trim() : '';
+        const enText = card._chunkEn || card.querySelector('.classroom-face-en .classroom-chunk-text')?.textContent.trim() || '';
+        const koText = card._chunkKo || card.querySelector('.classroom-face-ko .classroom-chunk-text')?.textContent.trim() || '';
 
         const wEn = this.measureTextWidth(enText, false) * fontScaleFactor;
         const wKo = this.measureTextWidth(koText, true) * fontScaleFactor;
-        const maxTextW = Math.max(wEn, wKo, 10);
+        const maxTextW = Math.max(wEn, wKo, 14);
         rawTextWidths.push(maxTextW);
       });
 
       const totalRawTextWidth = rawTextWidths.reduce((sum, w) => sum + w, 0);
+      const totalBaseGaps = (cards.length - 1) * baseGap;
+      const baseOverhead = cards.length * (basePadX * 2);
+      const baseRequired = totalRawTextWidth + totalBaseGaps + baseOverhead;
+      const scaleRatio = Math.max(20, availWidth - 4) / Math.max(1, baseRequired);
 
-      if (totalRawTextWidth > availTextWidth) {
-        const scale = availTextWidth / totalRawTextWidth;
-        const scaledFontRem = Math.max(0.55, Math.min(baseFontRem, baseFontRem * scale));
-
-        if (isActive) {
-          if (typeof chunksWrap.style.setProperty === 'function') {
-            chunksWrap.style.setProperty('--classroom-font-size', `${scaledFontRem.toFixed(3)}rem`);
-          } else {
-            chunksWrap.style['--classroom-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
-          }
+      const setCssVar = (prop, val) => {
+        if (typeof chunksWrap.style.setProperty === 'function') {
+          chunksWrap.style.setProperty(prop, val);
         } else {
-          if (typeof chunksWrap.style.setProperty === 'function') {
-            chunksWrap.style.setProperty('--classroom-context-font-size', `${scaledFontRem.toFixed(3)}rem`);
-          } else {
-            chunksWrap.style['--classroom-context-font-size'] = `${scaledFontRem.toFixed(3)}rem`;
-          }
+          chunksWrap.style[prop] = val;
         }
+      };
 
-        let remaining = availTextWidth;
+      if (scaleRatio < 1.0) {
+        // Long sentence: scale down font size & padding to strictly fit in 1 line without wrapping
+        const clampedScale = Math.max(0.50, scaleRatio);
+        const scaledFontRem = (baseFontRem * clampedScale).toFixed(3);
+        const padX = Math.max(3, Math.round(basePadX * clampedScale));
+        const chunkGap = Math.max(2, Math.round(baseGap * clampedScale));
+
+        setCssVar('--classroom-font-size', `${scaledFontRem}rem`);
+        setCssVar('--classroom-card-pad-x', `${padX}px`);
+        setCssVar('--classroom-chunk-gap', `${chunkGap}px`);
+
+        const totalPaddingsAndGaps = (cards.length * padX * 2) + ((cards.length - 1) * chunkGap);
+        const availForContent = Math.max(20, availWidth - totalPaddingsAndGaps - 4);
+        let remainingSpace = availForContent;
+
         cards.forEach((card, idx) => {
           let allocated;
           if (idx === cards.length - 1) {
-            allocated = Math.max(8, remaining);
+            allocated = Math.max(10, remainingSpace);
           } else {
-            allocated = Math.max(8, Math.floor(rawTextWidths[idx] * scale));
-            remaining -= allocated;
+            allocated = Math.max(10, Math.floor(availForContent * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+            remainingSpace -= allocated;
           }
-          const cardW = allocated + fixedCardExtra;
+          const cardW = allocated + (padX * 2);
           card.style.flex = '0 0 auto';
           card.style.width = `${cardW}px`;
           card.style.minWidth = '0px';
           card.style.maxWidth = 'none';
         });
       } else {
-        if (isActive) {
-          if (typeof chunksWrap.style.removeProperty === 'function') {
-            chunksWrap.style.removeProperty('--classroom-font-size');
-          } else {
-            delete chunksWrap.style['--classroom-font-size'];
-          }
-        } else {
-          if (typeof chunksWrap.style.removeProperty === 'function') {
-            chunksWrap.style.removeProperty('--classroom-context-font-size');
-          } else {
-            delete chunksWrap.style['--classroom-context-font-size'];
-          }
-        }
+        // Normal / Short sentence: utilize the FULL horizontal width of the row!
+        // Scale font up dynamically up to 1.45rem, scale padding up to 24px, and expand card widths to fill 100% of row width
+        const upScale = Math.min(1.45, 1.0 + (scaleRatio - 1.0) * 0.35);
+        const scaledFontRem = (baseFontRem * upScale).toFixed(3);
+        const padX = Math.min(24, Math.max(basePadX, Math.round(basePadX * Math.sqrt(scaleRatio))));
+        const chunkGap = Math.min(12, Math.max(baseGap, Math.round(baseGap * Math.sqrt(scaleRatio))));
+
+        setCssVar('--classroom-font-size', `${scaledFontRem}rem`);
+        setCssVar('--classroom-card-pad-x', `${padX}px`);
+        setCssVar('--classroom-chunk-gap', `${chunkGap}px`);
+
+        const totalGaps = (cards.length - 1) * chunkGap;
+        const effectiveAvail = Math.max(20, availWidth - totalGaps - 4);
+        let remainingSpace = effectiveAvail;
+
         cards.forEach((card, idx) => {
-          const cardW = Math.max(isActive ? 36 : 28, Math.round(rawTextWidths[idx]) + fixedCardExtra);
+          let cardW;
+          if (idx === cards.length - 1) {
+            cardW = Math.max(24, remainingSpace);
+          } else {
+            cardW = Math.max(24, Math.floor(effectiveAvail * (rawTextWidths[idx] / Math.max(1, totalRawTextWidth))));
+            remainingSpace -= cardW;
+          }
           card.style.flex = '0 0 auto';
           card.style.width = `${cardW}px`;
           card.style.minWidth = '0px';
@@ -10193,6 +10740,8 @@ class CEToolApp {
       onToggleFels: () => this.practiceView.toggleFelsMode(),
       onToggleTranslation: () => this.practiceView.toggleRowNaturalVisibility(),
       onToggleTextInput: () => this.practiceView.toggleTextInputMode(),
+      onTogglePlayAllSentences: () => this.practiceView.togglePlayAllSentences(),
+      onEnterPractice: () => this.practiceView.handleFelsInputEnter(),
       onFlipPracticeCard: (num) => this.practiceView.flipCardByIndex(num),
       onFlipMemorizeCard: (num) => this.memorizeView.flipCardByIndex(num),
       onPlayAllMemorize: () => this.memorizeView.togglePlayAllScript(),

@@ -7,11 +7,11 @@ console.log('=== TEST: FELS INPUT PERSISTENCE, SIMPLIFIED CHECK, AND SHORTCUT TO
 // Check index.html shortcut bar text
 const indexHtml = fs.readFileSync('index.html', 'utf8');
 assert(indexHtml.includes('Space') && indexHtml.includes('재생/정지'), 'index.html must display Space 재생/정지 shortcut hint');
-assert(indexHtml.includes('F3') && indexHtml.includes('되감기재생'), 'index.html must display F3 되감기재생 shortcut hint');
-assert(indexHtml.includes('F4') && indexHtml.includes('이전문장'), 'index.html must display F4 이전문장 shortcut hint');
-assert(indexHtml.includes('F5') && indexHtml.includes('다음문장'), 'index.html must display F5 다음문장 shortcut hint');
-assert(indexHtml.includes('F2') && indexHtml.includes('빈칸입력'), 'index.html must display F2 빈칸입력 shortcut hint');
-console.log('✓ index.html has Space, F3, F4, F5, F2 shortcut hints');
+assert(indexHtml.includes('F5') && indexHtml.includes('빈칸입력'), 'index.html must display F5 빈칸입력 shortcut hint');
+assert(indexHtml.includes('F6') && indexHtml.includes('이전문장'), 'index.html must display F6 이전문장 shortcut hint');
+assert(indexHtml.includes('F7') && indexHtml.includes('다음문장'), 'index.html must display F7 다음문장 shortcut hint');
+assert(indexHtml.includes('F11') && indexHtml.includes('전체문장재생'), 'index.html must display F11 전체문장재생 shortcut hint');
+console.log('✓ index.html has Space, F5, F6, F7, F11 shortcut hints');
 
 // Load bundled app.js into sandboxed environment
 const appCode = fs.readFileSync('app.js', 'utf8');
@@ -262,19 +262,17 @@ practiceView.loadSentence(0);
 const blanksS1 = practiceView.chunksContainer.querySelectorAll('.fels-blank-input');
 assert.strictEqual(blanksS1.length, 2, 'Sentence 1 should have 2 weak form blanks ("to", "our")');
 
-// Press F2 to enter text input mode
+// Press F5 to enter text input mode
 practiceView.toggleTextInputMode();
-assert.strictEqual(sandbox.document.activeElement, blanksS1[0], 'F2 toggle should focus the first blank input');
+assert.strictEqual(sandbox.document.activeElement, blanksS1[0], 'F5 toggle should focus the first blank input');
 
 // Test Space inside focused input: triggers play/pause and keeps focus
 let playPauseCalled = false;
-let rewindCalled = false;
 let prevSentenceCalled = false;
 let nextSentenceCalled = false;
 
 app.shortcutManager.setHandlers({
   onPlayPause: () => { playPauseCalled = true; },
-  onRewindAndPlay: () => { rewindCalled = true; },
   onPrevSentence: () => { prevSentenceCalled = true; },
   onNextSentence: () => { nextSentenceCalled = true; }
 });
@@ -287,35 +285,26 @@ app.shortcutManager.handleKeyDown({
 assert.strictEqual(playPauseCalled, true, 'Space while typing must trigger onPlayPause');
 assert.strictEqual(sandbox.document.activeElement, blanksS1[0], 'Space while typing must NOT lose focus');
 
-// Test F3 inside focused input: triggers rewindAndPlay and keeps focus
+// Test F6 inside focused input: triggers prevSentence
 app.shortcutManager.handleKeyDown({
-  key: 'F3',
+  key: 'F6',
   target: blanksS1[0],
   preventDefault: () => {}
 });
-assert.strictEqual(rewindCalled, true, 'F3 while typing must trigger onRewindAndPlay');
-assert.strictEqual(sandbox.document.activeElement, blanksS1[0], 'F3 while typing must NOT lose focus');
+assert.strictEqual(prevSentenceCalled, true, 'F6 while typing must trigger onPrevSentence');
 
-// Test F4 inside focused input: triggers prevSentence
+// Test F7 inside focused input: triggers nextSentence
 app.shortcutManager.handleKeyDown({
-  key: 'F4',
+  key: 'F7',
   target: blanksS1[0],
   preventDefault: () => {}
 });
-assert.strictEqual(prevSentenceCalled, true, 'F4 while typing must trigger onPrevSentence');
+assert.strictEqual(nextSentenceCalled, true, 'F7 while typing must trigger onNextSentence');
 
-// Test F5 inside focused input: triggers nextSentence
-app.shortcutManager.handleKeyDown({
-  key: 'F5',
-  target: blanksS1[0],
-  preventDefault: () => {}
-});
-assert.strictEqual(nextSentenceCalled, true, 'F5 while typing must trigger onNextSentence');
-
-// Press F2 again while focused -> should exit text input mode and blur
+// Press F5 again while focused -> should exit text input mode and blur
 practiceView.toggleTextInputMode();
-assert.notStrictEqual(sandbox.document.activeElement, blanksS1[0], 'F2 toggle when focused should blur the blank input');
-console.log('✓ Space, F3, F4, F5, F2 shortcuts work seamlessly inside and outside text input without losing focus');
+assert.notStrictEqual(sandbox.document.activeElement, blanksS1[0], 'F5 toggle when focused should blur the blank input');
+console.log('✓ Space, F5, F6, F7 shortcuts work seamlessly inside and outside text input without losing focus');
 
 console.log('\n[Check 2] Verify Simplified Answer Checking (No Banner, No Answer Underneath)...');
 // Type wrong answer "in"

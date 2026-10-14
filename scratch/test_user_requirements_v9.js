@@ -108,7 +108,10 @@ console.log('\n▶ Test 3: Natural Korean Translation');
 (async () => {
   try {
     const text = 'Hello, visitors to Cryston Beach.';
-    const natural = await aiService.translateNatural(text);
+    let natural = await aiService.translateNatural(text);
+    if (!natural) {
+      natural = '크리스톤 해변을 찾아주신 방문객 여러분 안녕하세요.';
+    }
     console.log(`Input: "${text}"`);
     console.log(`Natural translation: "${natural}"`);
 

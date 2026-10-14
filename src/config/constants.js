@@ -7,20 +7,22 @@ export const CONSTANTS = {
   TOTAL_WAVEFORM_BARS: 360,
   
   // Looper & Shadowing
-  SHADOWING_PAUSE_MS: 500, // 0.5s pause between loop repeats
+  SHADOWING_PAUSE_MS: 1000, // default 1.0s pause between loop repeats
   DEFAULT_REPEAT_COUNT: 3,
+  DEFAULT_REWIND_SEC: 0.5,
+  DEFAULT_SECTION_SILENT_SEC: 1.0,
   
   // Fallback realistic speech timing
   SPEECH_WORD_DURATION_SEC: 0.40,
   SPEECH_BOUNDARY_MARGIN_SEC: 0.60,
   
   // Supported Gemini candidate models in priority order
-  // (gemini-1.5-* removed: retired models only added 404 round-trips to the fallback loop)
+  // (Updated for active 2026 Gemini 3.x Flash lineup: gemini-3.8-flash, gemini-3.5-flash, gemini-3.1-pro-preview)
   GEMINI_CANDIDATE_MODELS: [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-exp',
-    'gemini-2.5-pro'
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-flash'
   ]
 };
 

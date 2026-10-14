@@ -25,6 +25,7 @@ export class LooperEngine {
     this.audioPlayer = audioPlayer;
     this.appState = appState;
     this.shadowTimer = null;
+    this.sectionSilentMs = CONSTANTS.SHADOWING_PAUSE_MS || 1000;
     this.callbacks = {
       onLoopCountUpdate: () => {},
       onLoopComplete: () => {},
@@ -33,6 +34,11 @@ export class LooperEngine {
       onPlayStateChange: () => {},
       onLoopRestart: () => {}
     };
+  }
+
+  setSectionSilentSeconds(sec) {
+    const s = (typeof sec === 'number' && sec >= 0) ? sec : 1.0;
+    this.sectionSilentMs = Math.round(s * 1000);
   }
 
   setCallbacks(cbs) {
@@ -77,31 +83,39 @@ export class LooperEngine {
         this.callbacks.onLoopComplete(targetLoopCount, typeStr);
         this.callbacks.onPlayStateChange(false);
       } else {
-        // 0.5s shadowing pause delay between loop iterations
-        this.appState.isShadowingWaiting = true;
-        this.callbacks.onShadowingWait(true);
+        // Configurable section silent delay (0.0s ~ 4.0s)
+        const delayMs = (typeof this.sectionSilentMs === 'number') ? this.sectionSilentMs : CONSTANTS.SHADOWING_PAUSE_MS;
+        if (delayMs <= 0) {
+          this.restartLoop(effectiveStart);
+        } else {
+          this.appState.isShadowingWaiting = true;
+          this.callbacks.onShadowingWait(true);
 
-        clearTimeout(this.shadowTimer);
-        this.shadowTimer = setTimeout(() => {
-          this.appState.isShadowingWaiting = false;
-          this.callbacks.onShadowingWait(false);
-
-          const curCustom = (this.appState.loopStart !== null && this.appState.loopEnd !== null);
-          const curStn = this.appState.getActiveSentence();
-          const restartTime = curCustom
-            ? this.appState.loopStart
-            : (curStn && curStn.audioStart !== null ? curStn.audioStart : effectiveStart);
-
-          if (restartTime !== null && this.audioPlayer) {
-            this.audioPlayer.currentTime = restartTime;
-            this.audioPlayer.play().then(() => {
-              this.callbacks.onPlayStateChange(true);
-              // Lets the view re-trigger TTS for synthesized (silent WAV) sessions on every repeat
-              this.callbacks.onLoopRestart();
-            }).catch(e => console.error(e));
-          }
-        }, CONSTANTS.SHADOWING_PAUSE_MS);
+          clearTimeout(this.shadowTimer);
+          this.shadowTimer = setTimeout(() => {
+            this.appState.isShadowingWaiting = false;
+            this.callbacks.onShadowingWait(false);
+            this.restartLoop(effectiveStart);
+          }, delayMs);
+        }
       }
+    }
+  }
+
+  restartLoop(effectiveStart) {
+    const curCustom = (this.appState.loopStart !== null && this.appState.loopEnd !== null);
+    const curStn = this.appState.getActiveSentence();
+    const fallbackStart = (curStn && curStn.audioStart !== null) ? curStn.audioStart : 0;
+    const restartTime = curCustom
+      ? this.appState.loopStart
+      : (curStn && curStn.audioStart !== null ? curStn.audioStart : (effectiveStart !== null ? effectiveStart : fallbackStart));
+
+    if (restartTime !== null && this.audioPlayer) {
+      this.audioPlayer.currentTime = restartTime;
+      this.audioPlayer.play().then(() => {
+        this.callbacks.onPlayStateChange(true);
+        this.callbacks.onLoopRestart();
+      }).catch(e => console.error(e));
     }
   }
 

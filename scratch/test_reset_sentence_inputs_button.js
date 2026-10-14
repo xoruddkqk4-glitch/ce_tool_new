@@ -41,6 +41,21 @@ class MockPracticeView {
       item.inputEl.classList.delete('is-wrong');
     });
   }
+
+  resetAllFelsInputs() {
+    if (!appState.sentenceList || appState.sentenceList.length === 0) return;
+    appState.sentenceList.forEach(stn => {
+      stn.userAnswers = {};
+      delete stn.userChecked;
+    });
+
+    this.felsBlanks.forEach(item => {
+      if (!item.inputEl) return;
+      item.inputEl.value = '';
+      item.inputEl.classList.delete('is-correct');
+      item.inputEl.classList.delete('is-wrong');
+    });
+  }
 }
 
 const pv = new MockPracticeView();
@@ -51,7 +66,7 @@ assert.strictEqual(appState.sentenceList[0].userChecked, true);
 assert.strictEqual(appState.sentenceList[1].userAnswers[0], 'had');
 assert.strictEqual(appState.sentenceList[1].userChecked, true);
 
-// Execute reset
+// 1. Execute resetFelsInputs (현재 [ ] 초기화)
 pv.resetFelsInputs();
 
 // Verify Sentence 0 was reset
@@ -64,4 +79,20 @@ assert.strictEqual(pv.felsBlanks[0].inputEl.classList.has('is-correct'), false, 
 assert.strictEqual(appState.sentenceList[1].userAnswers[0], 'had', 'Sentence 1 answers must remain intact');
 assert.strictEqual(appState.sentenceList[1].userChecked, true, 'Sentence 1 userChecked must remain intact');
 
-console.log('✓ [ ] 초기화 button and resetFelsInputs logic verified successfully!');
+// 2. Prepare for resetAllFelsInputs (전체 [ ] 초기화)
+appState.sentenceList[0].userAnswers = { 0: 'was' };
+appState.sentenceList[0].userChecked = true;
+pv.felsBlanks[0].inputEl.value = 'was';
+pv.felsBlanks[0].inputEl.classList.add('is-correct');
+
+// Execute resetAllFelsInputs
+pv.resetAllFelsInputs();
+
+// Verify all sentences are reset
+assert.deepStrictEqual(appState.sentenceList[0].userAnswers, {}, 'Sentence 0 userAnswers must be empty');
+assert.strictEqual(appState.sentenceList[0].userChecked, undefined, 'Sentence 0 userChecked must be deleted');
+assert.deepStrictEqual(appState.sentenceList[1].userAnswers, {}, 'Sentence 1 userAnswers must be empty');
+assert.strictEqual(appState.sentenceList[1].userChecked, undefined, 'Sentence 1 userChecked must be deleted');
+assert.strictEqual(pv.felsBlanks[0].inputEl.value, '', 'Input value must be cleared');
+
+console.log('✓ [현재 [ ] 초기화] & [전체 [ ] 초기화] logic verified successfully!');
