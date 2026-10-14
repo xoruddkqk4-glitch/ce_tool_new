@@ -610,7 +610,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 36/36개 테스트 스위트 100% 통과 (22.6초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
-## [2026-10-14 12:05] 업데이트 이력 (Commit ID: PENDING_COMMIT_ID)
+## [2026-10-14 12:05] 업데이트 이력 (Commit ID: 893329a)
 - **수정 내용**:
   1. **UI 텍스트 및 버튼 레이아웃 정돈 (1단계 & 2단계)**:
      - 1페이지 버튼 텍스트를 '약형드랩 생성'으로 변경하고 'script만 (텍스트)' 탭 우측에 1행으로 배치.
