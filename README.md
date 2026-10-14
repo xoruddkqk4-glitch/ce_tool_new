@@ -688,6 +688,22 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 44/44개 테스트 스위트 100% 통과 (28.0초).
   - `node tools/build-standalone.js`: 단독 번들링 빌드 0 에러 통과.
 
+## [2026-10-14 15:15] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **상단 브랜드 로고("CE Tool") 클릭 시 첫 번째 페이지(데이터 입력) 이동 연동**:
+     - 상단 헤더의 로고/타이틀 영역(`.brand`)에 `role="button"`, `tabindex="0"`, `title="첫 번째 페이지(데이터 입력)로 이동"`, `aria-label`을 부여하여 마우스 클릭 및 키보드(Enter, Space) 접근성 완비.
+     - `src/ui/router.js`의 `initEvents`에 브랜드 로고 클릭/키다운 이벤트 리스너를 연동하여, 2단계(연습) 또는 3단계(암기) 페이지에서 로고를 클릭하면 즉시 1단계(`input`) 페이지로 안전하게 전환되도록 구현.
+     - 이미 1단계에 위치한 상태에서 로고를 클릭할 경우 페이지 상단으로 부드럽게 스크롤(Smooth Scroll to top)되도록 편의성 추가.
+  2. **로고 인터랙션 스타일 및 시각적 피드백 강화**:
+     - `styles/layout/nav-tabs.css`에서 `.brand`에 `cursor: pointer`, 호버 시 부드러운 떠오름 애니메이션(`transform: translateY(-1px)`), 클릭 시 눌림 효과(`active`), 키보드 포커스 링(`focus-visible`)을 추가하여 클릭 가능한 요소임을 명확히 인지할 수 있도록 개선.
+  3. **단독 배포 번들 빌드 및 전체 46개 테스트 통과**:
+     - `tools/build-standalone.js`를 통해 `styles.css` (110.0 KB) 및 `app.js` (426.5 KB) 단독 번들 패키징 완료.
+     - `scratch/test_brand_logo_navigation.js` 단위 테스트 작성 및 2단계/3단계에서 1단계로의 라우팅 무결성 검증 완료.
+- **검증 결과**:
+  - `npm run check`: 28개 파일 구문 검사 100% 통과.
+  - `npm test`: 전체 46/46개 테스트 스위트 100% 통과 (28.2초).
+  - `node tools/build-standalone.js`: 단독 번들링 빌드 0 에러 통과.
+
 
 
 

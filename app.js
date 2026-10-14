@@ -5790,6 +5790,28 @@ class AppRouter {
   }
 
   initEvents() {
+    // Brand Logo click -> navigate to first page ('input')
+    const brandEl = document.querySelector('.brand');
+    if (brandEl) {
+      brandEl.addEventListener('click', () => {
+        if (this.currentPage !== 'input') {
+          this.navigateTo('input');
+        } else if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      });
+      brandEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (this.currentPage !== 'input') {
+            this.navigateTo('input');
+          } else if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        }
+      });
+    }
+
     // Top tab clicks
     document.querySelectorAll('.nav-tab-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
