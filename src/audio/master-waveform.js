@@ -117,8 +117,13 @@ export class MasterWaveformTimeline {
 
     const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
 
+    // Detect Theme (Light Mode vs Dark Mode)
+    const isLight = (typeof document !== 'undefined') &&
+      (document.documentElement.getAttribute('data-theme') === 'light' ||
+       document.body?.getAttribute('data-theme') === 'light');
+
     // 1. Background Grid & Glass styling
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillStyle = isLight ? '#f8fafc' : 'rgba(15, 23, 42, 0.85)';
     ctx.fillRect(0, 0, w, h);
 
     // Dynamic time division grid lines based on zoom and duration
@@ -134,10 +139,10 @@ export class MasterWaveformTimeline {
       timeStep = 5;
     }
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.strokeStyle = isLight ? 'rgba(148, 163, 184, 0.25)' : 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
     ctx.font = '9px monospace';
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.65)';
+    ctx.fillStyle = isLight ? '#64748b' : 'rgba(148, 163, 184, 0.65)';
 
     for (let t = 0; t <= duration; t += timeStep) {
       const x = Math.round((t / duration) * w);
@@ -159,12 +164,11 @@ export class MasterWaveformTimeline {
       const barWidth = Math.max(1, barSpacing * 0.75);
       const halfH = h / 2;
 
+      ctx.fillStyle = isLight ? 'rgba(99, 102, 241, 0.35)' : 'rgba(0, 255, 204, 0.35)';
       for (let i = 0; i < numBars; i++) {
         const peak = this.peaks[i];
         const barH = Math.max(2, peak * (halfH - 8));
         const x = i * barSpacing;
-
-        ctx.fillStyle = 'rgba(0, 255, 204, 0.35)';
         ctx.fillRect(x, halfH - barH, barWidth, barH * 2);
       }
     }
@@ -184,9 +188,9 @@ export class MasterWaveformTimeline {
 
       // Segment Background (selected stays prominently highlighted)
       if (isSelected) {
-        ctx.fillStyle = color.fill.replace('0.18', '0.38');
+        ctx.fillStyle = color.fill.replace('0.18', isLight ? '0.28' : '0.38');
       } else if (isHovered || isDragging) {
-        ctx.fillStyle = color.fill.replace('0.18', '0.32');
+        ctx.fillStyle = color.fill.replace('0.18', isLight ? '0.22' : '0.32');
       } else {
         ctx.fillStyle = color.fill;
       }
@@ -198,14 +202,14 @@ export class MasterWaveformTimeline {
       ctx.strokeRect(startX, 0, segW, h);
 
       // Label Tag: S1 (00:03.2)
-      ctx.fillStyle = isSelected ? '#ffffff' : color.tag;
+      ctx.fillStyle = isSelected ? (isLight ? '#312e81' : '#ffffff') : color.tag;
       ctx.font = isSelected ? 'bold 11px sans-serif' : 'bold 10px sans-serif';
       const label = `S${stn.index + 1} (${this.formatSec(stn.audioStart)}~${this.formatSec(stn.audioEnd)})`;
       ctx.fillText(label, startX + 5, 22);
 
       // Left Boundary Handle Line
       const isStartHovered = (isHovered && this.hoverInfo.edge === 'start') || (isDragging && this.activeDrag.edge === 'start');
-      ctx.strokeStyle = isStartHovered ? '#ffffff' : color.stroke;
+      ctx.strokeStyle = isStartHovered ? (isLight ? '#312e81' : '#ffffff') : color.stroke;
       ctx.lineWidth = isStartHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(startX, 0);
@@ -214,7 +218,7 @@ export class MasterWaveformTimeline {
 
       // Right Boundary Handle Line
       const isEndHovered = (isHovered && this.hoverInfo.edge === 'end') || (isDragging && this.activeDrag.edge === 'end');
-      ctx.strokeStyle = isEndHovered ? '#ffffff' : color.stroke;
+      ctx.strokeStyle = isEndHovered ? (isLight ? '#312e81' : '#ffffff') : color.stroke;
       ctx.lineWidth = isEndHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(endX, 0);
@@ -222,23 +226,27 @@ export class MasterWaveformTimeline {
       ctx.stroke();
 
       // Grab handle diamond indicators
-      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
-      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
+      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? (isLight ? '#312e81' : '#ffffff') : (isSelected ? (isLight ? '#312e81' : '#ffffff') : color.tag));
+      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? (isLight ? '#312e81' : '#ffffff') : (isSelected ? (isLight ? '#312e81' : '#ffffff') : color.tag));
     });
 
-    // 4. Playhead Line
+    // 4. Playhead Line (Subpixel smooth rendering)
     if (this.playbackTime !== null && this.playbackTime >= 0 && this.playbackTime <= duration) {
-      const playheadX = Math.round((this.playbackTime / duration) * w);
-      ctx.strokeStyle = '#ffffff';
+      const playheadX = (this.playbackTime / duration) * w;
+      ctx.strokeStyle = isLight ? '#312e81' : '#ffffff';
       ctx.lineWidth = 2;
-      ctx.shadowColor = '#00ffcc';
-      ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, h);
       ctx.stroke();
-      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = isLight ? '#4338ca' : '#00ffcc';
+      ctx.beginPath();
+      ctx.arc(playheadX, 6, 3, 0, Math.PI * 2);
+      ctx.arc(playheadX, h - 6, 3, 0, Math.PI * 2);
+      ctx.fill();
     }
+
   }
 
   drawHandleDiamond(ctx, x, y, color) {

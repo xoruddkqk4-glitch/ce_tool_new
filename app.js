@@ -3369,28 +3369,75 @@ class WaveformRenderer {
     if (!canvas) return;
     const ctx = this.ctx;
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
-    const rect = (typeof canvas.getBoundingClientRect === 'function')
-      ? canvas.getBoundingClientRect()
-      : { width: canvas.width || 800, height: canvas.height || 110 };
-    const width = rect.width || 800;
-    const height = 110;
 
-    if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-      canvas.width = Math.floor(width * dpr);
-      canvas.height = Math.floor(height * dpr);
+    // Detect Theme (Light Mode vs Dark Mode)
+    const isLight = (typeof document !== 'undefined') &&
+      (document.documentElement.getAttribute('data-theme') === 'light' ||
+       document.body?.getAttribute('data-theme') === 'light');
+
+    const palette = isLight ? {
+      bg: '#f8fafc',
+      centerLine: 'rgba(148, 163, 184, 0.35)',
+      barActive: '#4f46e5',
+      barInactive: 'rgba(99, 102, 241, 0.28)',
+      playhead: '#312e81',
+      playheadDot: '#4338ca',
+      playheadGlow: 'rgba(79, 70, 229, 0.4)',
+      loopBoxBg: 'rgba(99, 102, 241, 0.12)',
+      loopBoxBorder: '#6366f1',
+      loopText: '#4338ca',
+      dragBg: 'rgba(99, 102, 241, 0.16)',
+      dragBorder: '#6366f1',
+      badgeBg: 'rgba(255, 255, 255, 0.94)',
+      badgeBorder: '#cbd5e1',
+      badgeText: '#334155',
+      bannerBg: 'rgba(255, 255, 255, 0.96)',
+      bannerBorder: '#6366f1',
+      bannerText: '#4338ca'
+    } : {
+      bg: '#090e17',
+      centerLine: 'rgba(255, 255, 255, 0.08)',
+      barActive: 'rgb(0, 255, 204)',
+      barInactive: 'rgba(0, 255, 204, 0.32)',
+      playhead: '#ffffff',
+      playheadDot: '#ffffff',
+      playheadGlow: 'rgba(0, 255, 204, 0.85)',
+      loopBoxBg: 'rgba(6, 182, 212, 0.22)',
+      loopBoxBorder: 'rgb(0, 255, 204)',
+      loopText: 'rgb(0, 255, 204)',
+      dragBg: 'rgba(0, 255, 204, 0.25)',
+      dragBorder: 'rgba(0, 255, 204, 0.9)',
+      badgeBg: 'rgba(9, 14, 23, 0.78)',
+      badgeBorder: 'rgba(0, 255, 204, 0.45)',
+      badgeText: 'rgb(0, 255, 204)',
+      bannerBg: 'rgba(9, 14, 23, 0.88)',
+      bannerBorder: 'rgb(0, 255, 204)',
+      bannerText: 'rgb(0, 255, 204)'
+    };
+
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+    // Fast dimension retrieval to prevent synchronous layout thrashing (getBoundingClientRect)
+    const clientW = canvas.clientWidth || (canvas.parentElement ? canvas.parentElement.clientWidth : 800);
+    const width = clientW || 800;
+    const height = 100;
+
+    const targetCanvasW = Math.floor(width * dpr);
+    const targetCanvasH = Math.floor(height * dpr);
+    if (canvas.width !== targetCanvasW || canvas.height !== targetCanvasH) {
+      canvas.width = targetCanvasW;
+      canvas.height = targetCanvasH;
     }
 
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    // 1. Dark background
-    ctx.fillStyle = '#090e17';
+    // 1. Background
+    ctx.fillStyle = palette.bg;
     ctx.fillRect(0, 0, width, height);
 
     // Center baseline
     const centerY = height / 2;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.strokeStyle = palette.centerLine;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, centerY);
@@ -3412,17 +3459,17 @@ class WaveformRenderer {
       if (loopEnd !== null) {
         const x2 = Math.max(0, Math.min(width, ((loopEnd - stnStart) / stnDuration) * width));
         if (x2 > x1 + 1) {
-          ctx.fillStyle = 'rgba(6, 182, 212, 0.22)';
+          ctx.fillStyle = palette.loopBoxBg;
           ctx.fillRect(x1, 0, x2 - x1, height);
 
-          ctx.strokeStyle = 'rgb(0, 255, 204)';
+          ctx.strokeStyle = palette.loopBoxBorder;
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.moveTo(x1, 0); ctx.lineTo(x1, height);
           ctx.moveTo(x2, 0); ctx.lineTo(x2, height);
           ctx.stroke();
 
-          ctx.fillStyle = 'rgb(0, 255, 204)';
+          ctx.fillStyle = palette.loopText;
           ctx.font = 'bold 11px monospace';
           ctx.fillText('[A]', x1 + 3, 14);
           ctx.fillText('[B]', Math.max(x1 + 22, x2 - 22), 14);
@@ -3430,7 +3477,7 @@ class WaveformRenderer {
       } else {
         // [A] only
         ctx.save();
-        ctx.strokeStyle = 'rgb(0, 255, 204)';
+        ctx.strokeStyle = palette.loopBoxBorder;
         ctx.lineWidth = 2;
         if (typeof ctx.setLineDash === 'function') ctx.setLineDash([4, 2]);
         ctx.beginPath();
@@ -3438,7 +3485,7 @@ class WaveformRenderer {
         ctx.stroke();
         ctx.restore();
 
-        ctx.fillStyle = 'rgb(0, 255, 204)';
+        ctx.fillStyle = palette.loopText;
         ctx.font = 'bold 11px monospace';
         ctx.fillText('[A] 시작점', Math.min(width - 65, x1 + 4), 14);
       }
@@ -3448,14 +3495,14 @@ class WaveformRenderer {
     if (isRangeDragging && dragStartX !== null && currentMouseX !== null) {
       const x1 = Math.min(dragStartX, currentMouseX);
       const x2 = Math.max(dragStartX, currentMouseX);
-      ctx.fillStyle = 'rgba(0, 255, 204, 0.25)';
+      ctx.fillStyle = palette.dragBg;
       ctx.fillRect(x1, 0, x2 - x1, height);
-      ctx.strokeStyle = 'rgba(0, 255, 204, 0.9)';
+      ctx.strokeStyle = palette.dragBorder;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(x1, 0, x2 - x1, height);
     }
 
-    // 4. Waveform Bars
+    // 4. Waveform Bars (High-performance batched rendering)
     let bars = activeSentence ? activeSentence.cachedPeaks : null;
     if (!bars || bars.length === 0) {
       if (activeSentence) {
@@ -3467,43 +3514,53 @@ class WaveformRenderer {
     }
     const totalBars = bars.length || CONSTANTS.TOTAL_WAVEFORM_BARS;
     const barWidth = Math.max(1.8, (width / totalBars) * 0.72);
+    const halfH = height / 2;
 
+    // Fast 2-pass drawing (Inactive bars then Active bars) eliminates 360 separate state changes
+    // Pass 4a: Inactive (Unplayed) Bars
+    ctx.fillStyle = palette.barInactive;
+    ctx.shadowBlur = 0;
     for (let i = 0; i < totalBars; i++) {
       const bx = (i / totalBars) * width;
-      const peak = bars[i] !== undefined ? bars[i] : 0.12;
-      const bh = Math.max(2, peak * (height / 2) * 0.88);
-
-      if (bx <= progressX) {
-        ctx.fillStyle = 'rgb(0, 255, 204)';
-        ctx.shadowColor = 'rgba(0, 255, 204, 0.75)';
-        ctx.shadowBlur = 4;
-      } else {
-        ctx.fillStyle = 'rgba(0, 255, 204, 0.32)';
-        ctx.shadowBlur = 0;
+      if (bx > progressX) {
+        const peak = bars[i] !== undefined ? bars[i] : 0.12;
+        const bh = Math.max(2, peak * halfH * 0.88);
+        if (typeof ctx.roundRect === 'function') {
+          ctx.beginPath();
+          ctx.roundRect(bx - barWidth / 2, centerY - bh, barWidth, bh * 2, [barWidth / 2]);
+          ctx.fill();
+        } else {
+          ctx.fillRect(bx - barWidth / 2, centerY - bh, barWidth, bh * 2);
+        }
       }
-
-      ctx.beginPath();
-      if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(bx - barWidth / 2, centerY - bh, barWidth, bh * 2, [barWidth / 2]);
-      } else {
-        ctx.rect(bx - barWidth / 2, centerY - bh, barWidth, bh * 2);
-      }
-      ctx.fill();
     }
 
-    ctx.shadowBlur = 0;
+    // Pass 4b: Active (Played) Bars
+    ctx.fillStyle = palette.barActive;
+    for (let i = 0; i < totalBars; i++) {
+      const bx = (i / totalBars) * width;
+      if (bx <= progressX) {
+        const peak = bars[i] !== undefined ? bars[i] : 0.12;
+        const bh = Math.max(2, peak * halfH * 0.88);
+        if (typeof ctx.roundRect === 'function') {
+          ctx.beginPath();
+          ctx.roundRect(bx - barWidth / 2, centerY - bh, barWidth, bh * 2, [barWidth / 2]);
+          ctx.fill();
+        } else {
+          ctx.fillRect(bx - barWidth / 2, centerY - bh, barWidth, bh * 2);
+        }
+      }
+    }
 
     // 5. Playhead
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = palette.playhead;
     ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(255, 255, 255, 0.9)';
-    ctx.shadowBlur = 6;
     ctx.beginPath();
     ctx.moveTo(progressX, 0);
     ctx.lineTo(progressX, height);
     ctx.stroke();
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = palette.playheadDot;
     ctx.beginPath();
     ctx.arc(progressX, 6, 3.5, 0, Math.PI * 2);
     ctx.arc(progressX, height - 6, 3.5, 0, Math.PI * 2);
@@ -3511,19 +3568,18 @@ class WaveformRenderer {
 
     // 5.5 Sentence Unit Badge
     if (activeSentence && totalSentences > 0) {
-      ctx.shadowBlur = 0;
       const fmt = formatTimeFn || (s => `${s.toFixed(1)}s`);
       const badgeText = `SENTENCE S${(sentenceIndex || 0) + 1}/${totalSentences} (${fmt(stnStart)} ~ ${fmt(stnEnd)})`;
       ctx.font = 'bold 10px monospace';
       const badgeW = ctx.measureText(badgeText).width + 16;
 
-      ctx.fillStyle = 'rgba(9, 14, 23, 0.78)';
+      ctx.fillStyle = palette.badgeBg;
       ctx.fillRect(8, 8, badgeW, 20);
-      ctx.strokeStyle = 'rgba(0, 255, 204, 0.45)';
+      ctx.strokeStyle = palette.badgeBorder;
       ctx.lineWidth = 1;
       ctx.strokeRect(8, 8, badgeW, 20);
 
-      ctx.fillStyle = 'rgb(0, 255, 204)';
+      ctx.fillStyle = palette.badgeText;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.fillText(badgeText, 16, 18);
@@ -3531,17 +3587,15 @@ class WaveformRenderer {
 
     // 6. Shadowing 0.5s pause overlay
     if (isShadowingWaiting) {
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = 'rgba(0, 255, 204, 0.8)';
-      ctx.fillStyle = 'rgba(9, 14, 23, 0.88)';
+      ctx.fillStyle = palette.bannerBg;
       const bannerW = 210;
       const bannerH = 34;
       ctx.fillRect(width / 2 - bannerW / 2, centerY - bannerH / 2, bannerW, bannerH);
-      ctx.strokeStyle = 'rgb(0, 255, 204)';
+      ctx.strokeStyle = palette.bannerBorder;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(width / 2 - bannerW / 2, centerY - bannerH / 2, bannerW, bannerH);
 
-      ctx.fillStyle = 'rgb(0, 255, 204)';
+      ctx.fillStyle = palette.bannerText;
       ctx.font = 'bold 12px Pretendard, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -3551,6 +3605,7 @@ class WaveformRenderer {
     ctx.restore();
   }
 }
+
 
 
   // =========================================================================
@@ -3676,8 +3731,13 @@ class MasterWaveformTimeline {
 
     const duration = this.audioBuffer ? this.audioBuffer.duration : 1;
 
+    // Detect Theme (Light Mode vs Dark Mode)
+    const isLight = (typeof document !== 'undefined') &&
+      (document.documentElement.getAttribute('data-theme') === 'light' ||
+       document.body?.getAttribute('data-theme') === 'light');
+
     // 1. Background Grid & Glass styling
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillStyle = isLight ? '#f8fafc' : 'rgba(15, 23, 42, 0.85)';
     ctx.fillRect(0, 0, w, h);
 
     // Dynamic time division grid lines based on zoom and duration
@@ -3693,10 +3753,10 @@ class MasterWaveformTimeline {
       timeStep = 5;
     }
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.strokeStyle = isLight ? 'rgba(148, 163, 184, 0.25)' : 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
     ctx.font = '9px monospace';
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.65)';
+    ctx.fillStyle = isLight ? '#64748b' : 'rgba(148, 163, 184, 0.65)';
 
     for (let t = 0; t <= duration; t += timeStep) {
       const x = Math.round((t / duration) * w);
@@ -3718,12 +3778,11 @@ class MasterWaveformTimeline {
       const barWidth = Math.max(1, barSpacing * 0.75);
       const halfH = h / 2;
 
+      ctx.fillStyle = isLight ? 'rgba(99, 102, 241, 0.35)' : 'rgba(0, 255, 204, 0.35)';
       for (let i = 0; i < numBars; i++) {
         const peak = this.peaks[i];
         const barH = Math.max(2, peak * (halfH - 8));
         const x = i * barSpacing;
-
-        ctx.fillStyle = 'rgba(0, 255, 204, 0.35)';
         ctx.fillRect(x, halfH - barH, barWidth, barH * 2);
       }
     }
@@ -3743,9 +3802,9 @@ class MasterWaveformTimeline {
 
       // Segment Background (selected stays prominently highlighted)
       if (isSelected) {
-        ctx.fillStyle = color.fill.replace('0.18', '0.38');
+        ctx.fillStyle = color.fill.replace('0.18', isLight ? '0.28' : '0.38');
       } else if (isHovered || isDragging) {
-        ctx.fillStyle = color.fill.replace('0.18', '0.32');
+        ctx.fillStyle = color.fill.replace('0.18', isLight ? '0.22' : '0.32');
       } else {
         ctx.fillStyle = color.fill;
       }
@@ -3757,14 +3816,14 @@ class MasterWaveformTimeline {
       ctx.strokeRect(startX, 0, segW, h);
 
       // Label Tag: S1 (00:03.2)
-      ctx.fillStyle = isSelected ? '#ffffff' : color.tag;
+      ctx.fillStyle = isSelected ? (isLight ? '#312e81' : '#ffffff') : color.tag;
       ctx.font = isSelected ? 'bold 11px sans-serif' : 'bold 10px sans-serif';
       const label = `S${stn.index + 1} (${this.formatSec(stn.audioStart)}~${this.formatSec(stn.audioEnd)})`;
       ctx.fillText(label, startX + 5, 22);
 
       // Left Boundary Handle Line
       const isStartHovered = (isHovered && this.hoverInfo.edge === 'start') || (isDragging && this.activeDrag.edge === 'start');
-      ctx.strokeStyle = isStartHovered ? '#ffffff' : color.stroke;
+      ctx.strokeStyle = isStartHovered ? (isLight ? '#312e81' : '#ffffff') : color.stroke;
       ctx.lineWidth = isStartHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(startX, 0);
@@ -3773,7 +3832,7 @@ class MasterWaveformTimeline {
 
       // Right Boundary Handle Line
       const isEndHovered = (isHovered && this.hoverInfo.edge === 'end') || (isDragging && this.activeDrag.edge === 'end');
-      ctx.strokeStyle = isEndHovered ? '#ffffff' : color.stroke;
+      ctx.strokeStyle = isEndHovered ? (isLight ? '#312e81' : '#ffffff') : color.stroke;
       ctx.lineWidth = isEndHovered ? 3 : (isSelected ? 2.5 : 2);
       ctx.beginPath();
       ctx.moveTo(endX, 0);
@@ -3781,23 +3840,27 @@ class MasterWaveformTimeline {
       ctx.stroke();
 
       // Grab handle diamond indicators
-      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
-      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? '#ffffff' : (isSelected ? '#ffffff' : color.tag));
+      this.drawHandleDiamond(ctx, startX, h / 2, isStartHovered ? (isLight ? '#312e81' : '#ffffff') : (isSelected ? (isLight ? '#312e81' : '#ffffff') : color.tag));
+      this.drawHandleDiamond(ctx, endX, h / 2, isEndHovered ? (isLight ? '#312e81' : '#ffffff') : (isSelected ? (isLight ? '#312e81' : '#ffffff') : color.tag));
     });
 
-    // 4. Playhead Line
+    // 4. Playhead Line (Subpixel smooth rendering)
     if (this.playbackTime !== null && this.playbackTime >= 0 && this.playbackTime <= duration) {
-      const playheadX = Math.round((this.playbackTime / duration) * w);
-      ctx.strokeStyle = '#ffffff';
+      const playheadX = (this.playbackTime / duration) * w;
+      ctx.strokeStyle = isLight ? '#312e81' : '#ffffff';
       ctx.lineWidth = 2;
-      ctx.shadowColor = '#00ffcc';
-      ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, h);
       ctx.stroke();
-      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = isLight ? '#4338ca' : '#00ffcc';
+      ctx.beginPath();
+      ctx.arc(playheadX, 6, 3, 0, Math.PI * 2);
+      ctx.arc(playheadX, h - 6, 3, 0, Math.PI * 2);
+      ctx.fill();
     }
+
   }
 
   drawHandleDiamond(ctx, x, y, color) {
@@ -6179,6 +6242,12 @@ class InputView {
     this.masterZoomLabel = document.getElementById('masterZoomLabel');
     this.btnMasterZoomIn = document.getElementById('btnMasterZoomIn');
 
+    // Master Waveform 60FPS Playback Loop & Interpolation State
+    this.isMasterPlaybackLoopRunning = false;
+    this.masterPlaybackRafId = null;
+    this.masterAudioAnchorTime = 0;
+    this.masterAudioAnchorWallTime = 0;
+
     this.masterWaveform = null;
     if (this.masterWaveformCanvas) {
       this.masterWaveform = new MasterWaveformTimeline(this.masterWaveformCanvas, {
@@ -6476,22 +6545,39 @@ class InputView {
       this.nativeAudioPlayer.addEventListener('timeupdate', () => {
         const cur = this.nativeAudioPlayer.currentTime;
         const dur = this.nativeAudioPlayer.duration || 1;
-        if (this.masterWaveform) {
-          this.masterWaveform.setPlayheadTime(cur);
-        }
-        if (this.masterTimeHud) {
-          this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+        // While the 60FPS loop is running, masterWaveform and HUD are already smoothly updated
+        if (!this.isMasterPlaybackLoopRunning) {
+          if (this.masterWaveform) {
+            this.masterWaveform.setPlayheadTime(cur);
+          }
+          if (this.masterTimeHud) {
+            this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+          }
         }
       });
 
       this.nativeAudioPlayer.addEventListener('pause', () => {
         if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
         if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+        this.stopMasterPlaybackLoop();
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(this.nativeAudioPlayer.currentTime || 0);
+        }
       });
 
       this.nativeAudioPlayer.addEventListener('play', () => {
         if (this.masterPlayIcon) this.masterPlayIcon.textContent = '⏸';
         if (this.masterPlayLabel) this.masterPlayLabel.textContent = '일시정지';
+        this.startMasterPlaybackLoop();
+      });
+
+      this.nativeAudioPlayer.addEventListener('ended', () => {
+        if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+        if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+        this.stopMasterPlaybackLoop();
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(0);
+        }
       });
     }
 
@@ -8296,7 +8382,73 @@ class InputView {
     }
   }
 
-  onDeactivated() {}
+  getSmoothMasterCurrentTime() {
+    if (!this.nativeAudioPlayer) return 0;
+    if (this.nativeAudioPlayer.paused || this.nativeAudioPlayer.ended) {
+      return this.nativeAudioPlayer.currentTime || 0;
+    }
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const actualTime = this.nativeAudioPlayer.currentTime || 0;
+
+    if (actualTime !== this.masterAudioAnchorTime) {
+      this.masterAudioAnchorTime = actualTime;
+      this.masterAudioAnchorWallTime = now;
+    }
+
+    const playbackRate = this.nativeAudioPlayer.playbackRate || 1.0;
+    const elapsedSec = ((now - this.masterAudioAnchorWallTime) / 1000) * playbackRate;
+    let smoothTime = this.masterAudioAnchorTime + elapsedSec;
+
+    if (Math.abs(smoothTime - actualTime) > 0.12) {
+      smoothTime = actualTime;
+      this.masterAudioAnchorTime = actualTime;
+      this.masterAudioAnchorWallTime = now;
+    }
+    return smoothTime;
+  }
+
+  startMasterPlaybackLoop() {
+    if (this.isMasterPlaybackLoopRunning) return;
+    this.isMasterPlaybackLoopRunning = true;
+
+    if (this.nativeAudioPlayer) {
+      this.masterAudioAnchorTime = this.nativeAudioPlayer.currentTime || 0;
+      this.masterAudioAnchorWallTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+
+    const loop = () => {
+      if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
+        const cur = this.getSmoothMasterCurrentTime();
+        const dur = this.nativeAudioPlayer.duration || 1;
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(cur);
+        }
+        if (this.masterTimeHud) {
+          this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+        }
+        this.masterPlaybackRafId = requestAnimationFrame(loop);
+      } else {
+        this.isMasterPlaybackLoopRunning = false;
+        this.masterPlaybackRafId = null;
+        if (this.masterWaveform && this.nativeAudioPlayer) {
+          this.masterWaveform.setPlayheadTime(this.nativeAudioPlayer.currentTime || 0);
+        }
+      }
+    };
+    this.masterPlaybackRafId = requestAnimationFrame(loop);
+  }
+
+  stopMasterPlaybackLoop() {
+    if (this.masterPlaybackRafId) {
+      cancelAnimationFrame(this.masterPlaybackRafId);
+      this.masterPlaybackRafId = null;
+    }
+    this.isMasterPlaybackLoopRunning = false;
+  }
+
+  onDeactivated() {
+    this.stopMasterPlaybackLoop();
+  }
 }
 
 
@@ -8419,6 +8571,12 @@ class PracticeView {
     // Last AppState.dataVersion seen by onActivated (fresh data → FELS mode default)
     this.lastSeenDataVersion = -1;
 
+    // Waveform 60FPS Playback Loop & High-Precision Interpolation State
+    this.isWaveformLoopRunning = false;
+    this.waveformRafId = null;
+    this.lastAudioAnchorTime = 0;
+    this.lastAudioAnchorWallTime = 0;
+
     this.initLooperCallbacks();
     this.initEvents();
   }
@@ -8479,9 +8637,12 @@ class PracticeView {
       });
 
       this.nativeAudioPlayer.addEventListener('timeupdate', () => {
-        this.updateAudioProgress();
-        if (this.isLooperActive()) this.looperEngine.checkBoundary();
-        this.drawWaveform();
+        // While 60FPS rAF loop is active, avoid redundant out-of-sync waveform re-renders
+        if (!this.isWaveformLoopRunning) {
+          this.updateAudioProgress();
+          if (this.isLooperActive()) this.looperEngine.checkBoundary();
+          this.drawWaveform();
+        }
       });
 
       this.nativeAudioPlayer.addEventListener('play', () => {
@@ -8491,10 +8652,14 @@ class PracticeView {
 
       this.nativeAudioPlayer.addEventListener('pause', () => {
         this.updatePlayPauseIcon(false);
+        this.stopWaveformPlaybackLoop();
+        this.drawWaveform();
       });
 
       this.nativeAudioPlayer.addEventListener('ended', () => {
         this.updatePlayPauseIcon(false);
+        this.stopWaveformPlaybackLoop();
+        this.drawWaveform();
         if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       });
     }
@@ -10143,19 +10308,66 @@ class PracticeView {
     toast.show(`재생 속도: ${speed}x`);
   }
 
+  getSmoothCurrentTime() {
+    if (!this.nativeAudioPlayer) return 0;
+    if (this.nativeAudioPlayer.paused || this.nativeAudioPlayer.ended) {
+      return this.nativeAudioPlayer.currentTime || 0;
+    }
+
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const actualTime = this.nativeAudioPlayer.currentTime || 0;
+
+    // Re-anchor when HTMLAudioElement reports an updated timestamp tick
+    if (actualTime !== this.lastAudioAnchorTime) {
+      this.lastAudioAnchorTime = actualTime;
+      this.lastAudioAnchorWallTime = now;
+    }
+
+    const playbackRate = this.nativeAudioPlayer.playbackRate || 1.0;
+    const elapsedSec = ((now - this.lastAudioAnchorWallTime) / 1000) * playbackRate;
+    let smoothTime = this.lastAudioAnchorTime + elapsedSec;
+
+    // Safety guard against seek or drift: if interpolated time drifts > 0.12s from actual audio, snap back
+    if (Math.abs(smoothTime - actualTime) > 0.12) {
+      smoothTime = actualTime;
+      this.lastAudioAnchorTime = actualTime;
+      this.lastAudioAnchorWallTime = now;
+    }
+
+    return smoothTime;
+  }
+
   startWaveformPlaybackLoop() {
+    if (this.isWaveformLoopRunning) return;
+    this.isWaveformLoopRunning = true;
+
+    if (this.nativeAudioPlayer) {
+      this.lastAudioAnchorTime = this.nativeAudioPlayer.currentTime || 0;
+      this.lastAudioAnchorWallTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+
     const loop = () => {
-      if (!this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
+      if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
         this.updateAudioProgress();
         if (this.isLooperActive()) this.looperEngine.checkBoundary();
         this.drawWaveform();
-        requestAnimationFrame(loop);
+        this.waveformRafId = requestAnimationFrame(loop);
       } else {
+        this.isWaveformLoopRunning = false;
+        this.waveformRafId = null;
         this.updateAudioProgress();
         this.drawWaveform();
       }
     };
-    requestAnimationFrame(loop);
+    this.waveformRafId = requestAnimationFrame(loop);
+  }
+
+  stopWaveformPlaybackLoop() {
+    if (this.waveformRafId) {
+      cancelAnimationFrame(this.waveformRafId);
+      this.waveformRafId = null;
+    }
+    this.isWaveformLoopRunning = false;
   }
 
   drawWaveform() {
@@ -10164,12 +10376,14 @@ class PracticeView {
       ? this.nativeAudioPlayer.duration
       : (appState.audioBuffer ? appState.audioBuffer.duration : 1);
 
+    const currentTime = this.getSmoothCurrentTime();
+
     this.waveformRenderer.draw({
       activeSentence: activeStn,
       audioBuffer: appState.audioBuffer,
       sentenceIndex: appState.activeSentenceIndex,
       totalSentences: appState.sentenceList.length,
-      currentTime: this.nativeAudioPlayer.currentTime,
+      currentTime: currentTime,
       totalDuration: totalDuration,
       loopStart: appState.loopStart,
       loopEnd: appState.loopEnd,
@@ -11442,6 +11656,12 @@ class CEToolApp {
         document.documentElement.setAttribute('data-theme', next);
         StorageService.saveTheme(next);
         this.updateThemeIcon(next);
+        if (this.inputView && this.inputView.masterWaveform) {
+          this.inputView.masterWaveform.draw();
+        }
+        if (this.practiceView && typeof this.practiceView.drawWaveform === 'function') {
+          this.practiceView.drawWaveform();
+        }
         toast.show(`테마가 ${next === 'dark' ? '다크 모드' : '라이트 모드'}로 변경되었습니다.`);
       });
     }

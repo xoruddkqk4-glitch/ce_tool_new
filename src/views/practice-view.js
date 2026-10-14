@@ -113,6 +113,12 @@ export class PracticeView {
     // Last AppState.dataVersion seen by onActivated (fresh data → FELS mode default)
     this.lastSeenDataVersion = -1;
 
+    // Waveform 60FPS Playback Loop & High-Precision Interpolation State
+    this.isWaveformLoopRunning = false;
+    this.waveformRafId = null;
+    this.lastAudioAnchorTime = 0;
+    this.lastAudioAnchorWallTime = 0;
+
     this.initLooperCallbacks();
     this.initEvents();
   }
@@ -173,9 +179,12 @@ export class PracticeView {
       });
 
       this.nativeAudioPlayer.addEventListener('timeupdate', () => {
-        this.updateAudioProgress();
-        if (this.isLooperActive()) this.looperEngine.checkBoundary();
-        this.drawWaveform();
+        // While 60FPS rAF loop is active, avoid redundant out-of-sync waveform re-renders
+        if (!this.isWaveformLoopRunning) {
+          this.updateAudioProgress();
+          if (this.isLooperActive()) this.looperEngine.checkBoundary();
+          this.drawWaveform();
+        }
       });
 
       this.nativeAudioPlayer.addEventListener('play', () => {
@@ -185,10 +194,14 @@ export class PracticeView {
 
       this.nativeAudioPlayer.addEventListener('pause', () => {
         this.updatePlayPauseIcon(false);
+        this.stopWaveformPlaybackLoop();
+        this.drawWaveform();
       });
 
       this.nativeAudioPlayer.addEventListener('ended', () => {
         this.updatePlayPauseIcon(false);
+        this.stopWaveformPlaybackLoop();
+        this.drawWaveform();
         if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       });
     }
@@ -1837,19 +1850,66 @@ export class PracticeView {
     toast.show(`재생 속도: ${speed}x`);
   }
 
+  getSmoothCurrentTime() {
+    if (!this.nativeAudioPlayer) return 0;
+    if (this.nativeAudioPlayer.paused || this.nativeAudioPlayer.ended) {
+      return this.nativeAudioPlayer.currentTime || 0;
+    }
+
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const actualTime = this.nativeAudioPlayer.currentTime || 0;
+
+    // Re-anchor when HTMLAudioElement reports an updated timestamp tick
+    if (actualTime !== this.lastAudioAnchorTime) {
+      this.lastAudioAnchorTime = actualTime;
+      this.lastAudioAnchorWallTime = now;
+    }
+
+    const playbackRate = this.nativeAudioPlayer.playbackRate || 1.0;
+    const elapsedSec = ((now - this.lastAudioAnchorWallTime) / 1000) * playbackRate;
+    let smoothTime = this.lastAudioAnchorTime + elapsedSec;
+
+    // Safety guard against seek or drift: if interpolated time drifts > 0.12s from actual audio, snap back
+    if (Math.abs(smoothTime - actualTime) > 0.12) {
+      smoothTime = actualTime;
+      this.lastAudioAnchorTime = actualTime;
+      this.lastAudioAnchorWallTime = now;
+    }
+
+    return smoothTime;
+  }
+
   startWaveformPlaybackLoop() {
+    if (this.isWaveformLoopRunning) return;
+    this.isWaveformLoopRunning = true;
+
+    if (this.nativeAudioPlayer) {
+      this.lastAudioAnchorTime = this.nativeAudioPlayer.currentTime || 0;
+      this.lastAudioAnchorWallTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+
     const loop = () => {
-      if (!this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
+      if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
         this.updateAudioProgress();
         if (this.isLooperActive()) this.looperEngine.checkBoundary();
         this.drawWaveform();
-        requestAnimationFrame(loop);
+        this.waveformRafId = requestAnimationFrame(loop);
       } else {
+        this.isWaveformLoopRunning = false;
+        this.waveformRafId = null;
         this.updateAudioProgress();
         this.drawWaveform();
       }
     };
-    requestAnimationFrame(loop);
+    this.waveformRafId = requestAnimationFrame(loop);
+  }
+
+  stopWaveformPlaybackLoop() {
+    if (this.waveformRafId) {
+      cancelAnimationFrame(this.waveformRafId);
+      this.waveformRafId = null;
+    }
+    this.isWaveformLoopRunning = false;
   }
 
   drawWaveform() {
@@ -1858,12 +1918,14 @@ export class PracticeView {
       ? this.nativeAudioPlayer.duration
       : (appState.audioBuffer ? appState.audioBuffer.duration : 1);
 
+    const currentTime = this.getSmoothCurrentTime();
+
     this.waveformRenderer.draw({
       activeSentence: activeStn,
       audioBuffer: appState.audioBuffer,
       sentenceIndex: appState.activeSentenceIndex,
       totalSentences: appState.sentenceList.length,
-      currentTime: this.nativeAudioPlayer.currentTime,
+      currentTime: currentTime,
       totalDuration: totalDuration,
       loopStart: appState.loopStart,
       loopEnd: appState.loopEnd,

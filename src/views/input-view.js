@@ -94,6 +94,12 @@ export class InputView {
     this.masterZoomLabel = document.getElementById('masterZoomLabel');
     this.btnMasterZoomIn = document.getElementById('btnMasterZoomIn');
 
+    // Master Waveform 60FPS Playback Loop & Interpolation State
+    this.isMasterPlaybackLoopRunning = false;
+    this.masterPlaybackRafId = null;
+    this.masterAudioAnchorTime = 0;
+    this.masterAudioAnchorWallTime = 0;
+
     this.masterWaveform = null;
     if (this.masterWaveformCanvas) {
       this.masterWaveform = new MasterWaveformTimeline(this.masterWaveformCanvas, {
@@ -391,22 +397,39 @@ export class InputView {
       this.nativeAudioPlayer.addEventListener('timeupdate', () => {
         const cur = this.nativeAudioPlayer.currentTime;
         const dur = this.nativeAudioPlayer.duration || 1;
-        if (this.masterWaveform) {
-          this.masterWaveform.setPlayheadTime(cur);
-        }
-        if (this.masterTimeHud) {
-          this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+        // While the 60FPS loop is running, masterWaveform and HUD are already smoothly updated
+        if (!this.isMasterPlaybackLoopRunning) {
+          if (this.masterWaveform) {
+            this.masterWaveform.setPlayheadTime(cur);
+          }
+          if (this.masterTimeHud) {
+            this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+          }
         }
       });
 
       this.nativeAudioPlayer.addEventListener('pause', () => {
         if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
         if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+        this.stopMasterPlaybackLoop();
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(this.nativeAudioPlayer.currentTime || 0);
+        }
       });
 
       this.nativeAudioPlayer.addEventListener('play', () => {
         if (this.masterPlayIcon) this.masterPlayIcon.textContent = '⏸';
         if (this.masterPlayLabel) this.masterPlayLabel.textContent = '일시정지';
+        this.startMasterPlaybackLoop();
+      });
+
+      this.nativeAudioPlayer.addEventListener('ended', () => {
+        if (this.masterPlayIcon) this.masterPlayIcon.textContent = '▶';
+        if (this.masterPlayLabel) this.masterPlayLabel.textContent = '재생';
+        this.stopMasterPlaybackLoop();
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(0);
+        }
       });
     }
 
@@ -2211,5 +2234,71 @@ export class InputView {
     }
   }
 
-  onDeactivated() {}
+  getSmoothMasterCurrentTime() {
+    if (!this.nativeAudioPlayer) return 0;
+    if (this.nativeAudioPlayer.paused || this.nativeAudioPlayer.ended) {
+      return this.nativeAudioPlayer.currentTime || 0;
+    }
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const actualTime = this.nativeAudioPlayer.currentTime || 0;
+
+    if (actualTime !== this.masterAudioAnchorTime) {
+      this.masterAudioAnchorTime = actualTime;
+      this.masterAudioAnchorWallTime = now;
+    }
+
+    const playbackRate = this.nativeAudioPlayer.playbackRate || 1.0;
+    const elapsedSec = ((now - this.masterAudioAnchorWallTime) / 1000) * playbackRate;
+    let smoothTime = this.masterAudioAnchorTime + elapsedSec;
+
+    if (Math.abs(smoothTime - actualTime) > 0.12) {
+      smoothTime = actualTime;
+      this.masterAudioAnchorTime = actualTime;
+      this.masterAudioAnchorWallTime = now;
+    }
+    return smoothTime;
+  }
+
+  startMasterPlaybackLoop() {
+    if (this.isMasterPlaybackLoopRunning) return;
+    this.isMasterPlaybackLoopRunning = true;
+
+    if (this.nativeAudioPlayer) {
+      this.masterAudioAnchorTime = this.nativeAudioPlayer.currentTime || 0;
+      this.masterAudioAnchorWallTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+
+    const loop = () => {
+      if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
+        const cur = this.getSmoothMasterCurrentTime();
+        const dur = this.nativeAudioPlayer.duration || 1;
+        if (this.masterWaveform) {
+          this.masterWaveform.setPlayheadTime(cur);
+        }
+        if (this.masterTimeHud) {
+          this.masterTimeHud.textContent = `${this.formatSec(cur)} / ${this.formatSec(dur)}`;
+        }
+        this.masterPlaybackRafId = requestAnimationFrame(loop);
+      } else {
+        this.isMasterPlaybackLoopRunning = false;
+        this.masterPlaybackRafId = null;
+        if (this.masterWaveform && this.nativeAudioPlayer) {
+          this.masterWaveform.setPlayheadTime(this.nativeAudioPlayer.currentTime || 0);
+        }
+      }
+    };
+    this.masterPlaybackRafId = requestAnimationFrame(loop);
+  }
+
+  stopMasterPlaybackLoop() {
+    if (this.masterPlaybackRafId) {
+      cancelAnimationFrame(this.masterPlaybackRafId);
+      this.masterPlaybackRafId = null;
+    }
+    this.isMasterPlaybackLoopRunning = false;
+  }
+
+  onDeactivated() {
+    this.stopMasterPlaybackLoop();
+  }
 }

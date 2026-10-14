@@ -667,6 +667,27 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 44/44개 테스트 스위트 100% 통과 (25.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
+## [2026-10-14 15:10] 업데이트 이력 (Commit ID: pending)
+- **수정 내용**:
+  1. **라이트 모드(Day Theme) 파형창 시각 디자인 전면 개편**:
+     - 기존에 라이트 모드로 전환해도 칠흑 같은 딥 네이비/블랙(`#090e17`)으로 남아 주변 카드와 심한 부조화를 일으키던 파형창을 클린 스튜디오 화이트 DAW 테마로 전면 개편.
+     - `styles/components/audio-player.css`에 `[data-theme="light"] .waveform-container` 및 `.waveform-loading` 스타일 룰 추가 (`#f8fafc` 배경, `#cbd5e1` 서브틀 보더, 인셋 섀도우).
+     - `styles/views/input-view.css`에 `[data-theme="light"] .master-waveform-panel` 및 타이틀, 줌, HUD 스타일 룰 추가 (`rgba(255, 255, 255, 0.96)` 글래스 화이트).
+     - `WaveformRenderer` 및 `MasterWaveformTimeline`에 `isLight` 동적 테마 감지 및 전용 팔레트 도입: 로열 인디고(`#4f46e5`) 활성 바, 소프트 라벤더(`rgba(99, 102, 241, 0.28)`) 비활성 바, 딥 인디고(`#312e81`) 바늘 및 도트, 맑은 루프 박스(`rgba(99, 102, 241, 0.12)`) 적용.
+     - 상단 테마 토글(해/달 아이콘) 클릭 시 즉시 두 파형창이 실시간 리렌더링되도록 `main.js` 연동.
+  2. **60FPS 초고속 부드러운 재생 애니메이션 및 재생바 끊김(Stuttering) 완전 해소**:
+     - **고정밀 타임스탬프 기반 시간 보간기(`getSmoothCurrentTime`) 구현**: 브라우저 오디오 하드웨어 버퍼(20~50ms 간격)의 시간 양자화로 인해 발생하던 2~3프레임 정지 후 점프(마이크로 지터) 현상을 해결. `performance.now()` 고해상도 시계를 결합하여 오디오 틱 사이를 60Hz/120Hz/144Hz 화면 주사율에 맞춰 서브픽셀 단위로 연속 보간.
+     - **1단계 마스터 파형 60FPS 전용 rAF 재생 루프 신설**: 기존에 초당 4회(250ms 간격) 발생하는 `timeupdate`에만 의존하던 1단계 파형창에 `startMasterPlaybackLoop()` 및 `stopMasterPlaybackLoop()`를 신설하여 0.25초마다 뚝뚝 순간이동하던 문제를 완전히 해결.
+     - **단일 rAF 생명주기 관리 & `timeupdate` 비동기 경합 분리**: `isWaveformLoopRunning` 가드를 추가하여 반복 재생 시 복수 rAF 루프 중복 실행을 차단하고, 60FPS 재생 중에는 `timeupdate`가 불필요하게 캔버스를 중복 렌더링하지 않도록 분리.
+     - **캔버스 레이아웃 리플로우(Layout Thrashing) 및 래스터 부하 제거**: 매 프레임 `getBoundingClientRect()` 호출을 제거하고 캔버스 치수 캐싱 적용. 360개 바 루프 내 개별 가우시안 블러(`shadowBlur = 4`) 연산을 제거하고 2-Pass 고속 배치 렌더링으로 전환하여 프레임 드랍 원천 차단.
+  3. **단독 배포 번들 빌드 및 전체 44개 테스트 스위트 검증**:
+     - `tools/build-standalone.js`를 통해 `styles.css` (109.7 KB) 및 `app.js` (425.6 KB) 단독 번들 패키징 완료.
+     - `scratch/test_waveform_light_and_smooth.js` 단위 테스트 작성 및 하드웨어 오디오 버퍼 스텝 사이 0ms 정지 및 고정밀 보간 검증 완료.
+- **검증 결과**:
+  - `npm run check`: 28개 파일 구문 검사 100% 통과.
+  - `npm test`: 전체 44/44개 테스트 스위트 100% 통과 (28.0초).
+  - `node tools/build-standalone.js`: 단독 번들링 빌드 0 에러 통과.
+
 
 
 

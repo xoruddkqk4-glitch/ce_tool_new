@@ -147,6 +147,12 @@ class CEToolApp {
         document.documentElement.setAttribute('data-theme', next);
         StorageService.saveTheme(next);
         this.updateThemeIcon(next);
+        if (this.inputView && this.inputView.masterWaveform) {
+          this.inputView.masterWaveform.draw();
+        }
+        if (this.practiceView && typeof this.practiceView.drawWaveform === 'function') {
+          this.practiceView.drawWaveform();
+        }
         toast.show(`테마가 ${next === 'dark' ? '다크 모드' : '라이트 모드'}로 변경되었습니다.`);
       });
     }
