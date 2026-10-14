@@ -688,7 +688,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 44/44개 테스트 스위트 100% 통과 (28.0초).
   - `node tools/build-standalone.js`: 단독 번들링 빌드 0 에러 통과.
 
-## [2026-10-14 15:15] 업데이트 이력 (Commit ID: pending)
+## [2026-10-14 15:15] 업데이트 이력 (Commit ID: e849536)
 - **수정 내용**:
   1. **상단 브랜드 로고("CE Tool") 클릭 시 첫 번째 페이지(데이터 입력) 이동 연동**:
      - 상단 헤더의 로고/타이틀 영역(`.brand`)에 `role="button"`, `tabindex="0"`, `title="첫 번째 페이지(데이터 입력)로 이동"`, `aria-label`을 부여하여 마우스 클릭 및 키보드(Enter, Space) 접근성 완비.
