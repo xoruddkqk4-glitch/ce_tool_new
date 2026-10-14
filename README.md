@@ -639,7 +639,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 43/43개 테스트 스위트 100% 통과 (28.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
-## [2026-10-14 14:40] 업데이트 이력 (Commit ID: pending)
+## [2026-10-14 14:40] 업데이트 이력 (Commit ID: a08ad20)
 - **수정 내용**:
   1. **멀티 AI 서비스 4개 프로바이더 확장 (Google Gemini, OpenAI, Claude, OpenRouter)**:
      - `StorageService`에 제공자별 개별 저장소 키(`ce_tool_gemini_key`, `ce_tool_openai_key`, `ce_tool_claude_key`, `ce_tool_openrouter_key`)를 신설하여 사용자가 제공자를 전환해도 모든 API 키가 독립적으로 영구 보존되도록 구현.
