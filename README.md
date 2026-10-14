@@ -667,7 +667,7 @@ npm test               # = node tools/run-tests.js
   - `npm test`: 전체 44/44개 테스트 스위트 100% 통과 (25.1초).
   - `npm run build`: standalone 번들링 완료 (0 imports/exports, syntax 검사 통과).
 
-## [2026-10-14 15:10] 업데이트 이력 (Commit ID: pending)
+## [2026-10-14 15:10] 업데이트 이력 (Commit ID: ba08c8a)
 - **수정 내용**:
   1. **라이트 모드(Day Theme) 파형창 시각 디자인 전면 개편**:
      - 기존에 라이트 모드로 전환해도 칠흑 같은 딥 네이비/블랙(`#090e17`)으로 남아 주변 카드와 심한 부조화를 일으키던 파형창을 클린 스튜디오 화이트 DAW 테마로 전면 개편.
