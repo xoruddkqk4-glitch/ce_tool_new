@@ -1,4 +1,4 @@
-# 🎧 CE Tool (Chunk English Tool)
+﻿# 🎧 CE Tool (Chunk English Tool)
 
 > **3-Page Multi-Input AI Chunk & FELS Weak-Form Listening Trainer**  
 > 영어 문장 청크(Chunk) 분할, 직독직해, FELS 약형 기능어 딕테이션 훈련 및 전체 스크립트 암기를 지원하는 지능형 영어 학습 도구
@@ -723,7 +723,7 @@ npm test               # = node tools/run-tests.js
 
 
 
-## [2026-10-24 14:40] 업데이트 이력 (Commit ID: PENDING_HASH)
+## [2026-10-24 14:40] 업데이트 이력 (Commit ID: 45075b3)
 - **수정 내용**:
   - 프로젝트 전체 기능 확인 및 코드 정밀 검증 수행 (src/ 28개 모듈, index.html, 	ools/, scratch/ 테스트 46개).
   - 검증 결과를 바탕으로 수정 계획서 docs/implementation/20261024_1445_code_review_fix_plan.md 작성 (소스 코드는 수정하지 않음).
