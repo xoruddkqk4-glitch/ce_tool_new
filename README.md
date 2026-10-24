@@ -765,7 +765,7 @@ pm test: 전체 47/47개 테스트 스위트 통과.
   - npm run build: 단독 번들 빌드 성공.
   - npm test: 전체 48/48개 테스트 스위트 통과.
 
-## [2026-10-24 15:40] 업데이트 이력 (Commit ID: <pending>)
+## [2026-10-24 15:40] 업데이트 이력 (Commit ID: a013909)
 - **수정 내용**:
   - Impeccable 디자인 시스템 전면 진단(25대 기준) 및 8대 UI 안티패턴/슬롭 완전 해결 (`docs/implementation/20261024_1510_impeccable_25_audit_plan.md`).
   - 공식 제품 사양서 `PRODUCT.md` 및 디자인 토큰 사양서 `DESIGN.md` 신규 제정.
