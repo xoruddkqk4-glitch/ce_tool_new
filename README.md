@@ -722,3 +722,16 @@ npm test               # = node tools/run-tests.js
 
 
 
+
+## [2026-10-24 14:40] 업데이트 이력 (Commit ID: PENDING_HASH)
+- **수정 내용**:
+  - 프로젝트 전체 기능 확인 및 코드 정밀 검증 수행 (src/ 28개 모듈, index.html, 	ools/, scratch/ 테스트 46개).
+  - 검증 결과를 바탕으로 수정 계획서 docs/implementation/20261024_1445_code_review_fix_plan.md 작성 (소스 코드는 수정하지 않음).
+  - 계획서 핵심: 0단계 번들 복구, 1단계 High 7건(TTS 연속 재생 정지, 오디오 소스 미갱신, 디코딩 경쟁, 페이지 이탈 후 타이머 잔존, 프로젝트 로드 시 답안 덮어쓰기, AI 키 혼용, 동사 사전 매칭 오류), 2단계 Medium 19건, 3단계 Low 정리.
+  - .agents/skills/impeccable, .agents/skills/impeccable-all 스킬 파일 추가.
+  - 작업 폴더의 pp.js는 src/보다 오래된 빌드여서 이번 커밋에서 제외 (HEAD의 pp.js가 최신 소스와 일치).
+- **검증 결과**:
+  - 
+pm run check: 28개 파일 구문 검사 통과.
+  - 
+pm test: 작업 폴더 pp.js 기준 41/46 통과, src/로 새로 빌드한 번들 기준 46/46 통과.
