@@ -752,7 +752,7 @@ pm run build: 단독 번들 빌드 성공 (pp.js 441.0 KB).
   - 
 pm test: 전체 47/47개 테스트 스위트 통과.
 
-## [2026-10-24 15:02] 업데이트 이력 (Commit ID: PENDING_HASH)
+## [2026-10-24 15:02] 업데이트 이력 (Commit ID: 4cac4f8)
 - **수정 내용**:
   - 코드 리뷰 계획서 3단계(Low) 잔여 항목 이어서 적용.
   - FELS 아포스트로피 정규화, text-splitter lookbehind 제거, R 단축키(되감기 재생).
