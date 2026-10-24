@@ -1,4 +1,4 @@
-﻿# 🎧 CE Tool (Chunk English Tool)
+# 🎧 CE Tool (Chunk English Tool)
 
 > **3-Page Multi-Input AI Chunk & FELS Weak-Form Listening Trainer**  
 > 영어 문장 청크(Chunk) 분할, 직독직해, FELS 약형 기능어 딕테이션 훈련 및 전체 스크립트 암기를 지원하는 지능형 영어 학습 도구
@@ -761,9 +761,21 @@ pm test: 전체 47/47개 테스트 스위트 통과.
   - input-view markDirty/번역 동시성 3/문장 결합·분리 dataVersion, TTS voices 캐시.
   - 회귀 테스트 scratch/test_review_fixes_stage3.js 추가, pp.js 재빌드(446.6 KB).
 - **검증 결과**:
-  - 
-pm run check: 28개 파일 구문 검사 통과.
-  - 
-pm run build: 단독 번들 빌드 성공.
-  - 
-pm test: 전체 48/48개 테스트 스위트 통과.
+  - npm run check: 28개 파일 구문 검사 통과.
+  - npm run build: 단독 번들 빌드 성공.
+  - npm test: 전체 48/48개 테스트 스위트 통과.
+
+## [2026-10-24 15:40] 업데이트 이력 (Commit ID: <pending>)
+- **수정 내용**:
+  - Impeccable 디자인 시스템 전면 진단(25대 기준) 및 8대 UI 안티패턴/슬롭 완전 해결 (`docs/implementation/20261024_1510_impeccable_25_audit_plan.md`).
+  - 공식 제품 사양서 `PRODUCT.md` 및 디자인 토큰 사양서 `DESIGN.md` 신규 제정.
+  - WCAG AA 기준 준수: `--primary` 색상을 `#5850ec`(5.5:1 대비비)로 상향, 11px 미만 초소형 텍스트를 `0.72rem`~`0.75rem`(11.5px~12px) 플로어로 보정, 툴바 뱃지 여백 최적화.
+  - 슬롭(Slop) 제거: 인공적인 유색 네온/글로우 그림자(`--primary-glow`, `--shadow-glow`, box-shadow, text-shadow)를 중립 알파 그림자로 전면 전환, 좌측 강조 테두리(`side-tab`) 제거, 통통 튀는 바운스 베지어를 정밀 감속 곡선(`cubic-bezier(0.16, 1, 0.3, 1)`)으로 교체.
+  - 시맨틱 마크업 강화: Page 1, Page 2, Page 3 컨테이너에 접근성 스크린리더용 `<h2 class="sr-only">`를 추가하여 헤딩 건너뜀(`skipped-heading`) 해결.
+  - 계층 구조 평탄화(`nested-cards` 0건): `#audioPlayerSection`의 다중 카드 클래스 정리 및 `.waveform-container` 인셋 그림자를 플랫한 서브틀 보더(`var(--border-subtle)`)로 리팩토링.
+  - `tools/build-standalone.js`를 통해 `styles.css`(109.2 KB) 및 `app.js`(446.6 KB) 단독 번들 재빌드 완료.
+- **검증 결과**:
+  - `npm run check`: 28개 파일 구문 검사 100% 통과 (`✅ 28 files passed node --check`).
+  - `npm test`: 전체 48/48개 테스트 스위트 100% 통과 (28.5초).
+  - `impeccable detect`: 8대 주요 안티패턴(nested-cards, side-tab, bounce-easing, gradient-text, skipped-heading, undersized-ui-text, cramped-padding, dark-glow) 전원 0건 달성.
+

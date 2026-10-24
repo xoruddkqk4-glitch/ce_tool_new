@@ -106,7 +106,7 @@
   width: 100%;
   height: 100%;
   transform-style: preserve-3d;
-  transition: transform 0.4s cubic-bezier(0.34, 1.4, 0.64, 1);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   border-radius: var(--radius-md);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
@@ -166,7 +166,7 @@
 
 .chunk-card-3d:hover .card-front {
   border-color: rgba(99, 102, 241, 0.6);
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
 /* Back Face: Korean Interpretation (Page 3 match) */
@@ -178,7 +178,7 @@
 
 .chunk-card-3d:hover .card-back {
   border-color: rgba(6, 182, 212, 0.7);
-  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.25);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
 /* Card Top Header Bar (Hidden as requested) */
@@ -290,7 +290,7 @@
   height: 26px;
   max-width: 80px;
   box-sizing: border-box;
-  box-shadow: 0 0 8px rgba(0, 255, 204, 0.15);
+  box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
 }
 
@@ -298,7 +298,7 @@
   border-style: solid;
   border-color: #00ffcc;
   background: rgba(0, 255, 204, 0.18);
-  box-shadow: 0 0 14px rgba(0, 255, 204, 0.5);
+  box-shadow: var(--shadow-sm);
   outline: none;
   transform: scale(1.03);
 }
@@ -308,7 +308,7 @@
   border-style: solid !important;
   background: rgba(16, 185, 129, 0.22) !important;
   color: #34d399 !important;
-  box-shadow: 0 0 14px rgba(16, 185, 129, 0.45);
+  box-shadow: var(--shadow-sm);
 }
 
 .fels-blank-input.is-wrong {
@@ -316,7 +316,7 @@
   border-style: solid !important;
   background: rgba(244, 63, 94, 0.22) !important;
   color: #fb7185 !important;
-  box-shadow: 0 0 14px rgba(244, 63, 94, 0.45);
+  box-shadow: var(--shadow-sm);
 }
 
 .fels-answer-reveal {
@@ -333,7 +333,7 @@
   border-radius: 4px;
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 8px rgba(16, 185, 129, 0.5);
+  box-shadow: var(--shadow-md);
   z-index: 30;
   line-height: 1.2;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
@@ -388,7 +388,6 @@
   font-weight: 800;
   color: rgba(99, 102, 241, 0.4);
   letter-spacing: 2px;
-  text-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
 }
 
 /* FELS Score Bar */
@@ -482,7 +481,7 @@
 
 [data-theme="light"] .chunk-card-3d:hover .card-front {
   border-color: #6366f1 !important;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18) !important;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08) !important;
 }
 
 [data-theme="light"] .chunk-card-3d .card-front,
@@ -526,7 +525,7 @@
   color: #0f172a !important;
   background: #f1f5f9 !important;
   border: 1.5px dashed #6366f1 !important;
-  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.12) !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06) !important;
   text-shadow: none !important;
 }
 
@@ -534,7 +533,7 @@
   border-style: solid !important;
   border-color: #4f46e5 !important;
   background: #ffffff !important;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2) !important;
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08) !important;
 }
 
 [data-theme="light"] .chunk-card-3d .fels-blank-input.is-correct {
@@ -542,7 +541,7 @@
   border-style: solid !important;
   background: #ecfdf5 !important;
   color: #047857 !important;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15) !important;
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08) !important;
 }
 
 [data-theme="light"] .chunk-card-3d .fels-blank-input.is-wrong {
@@ -550,14 +549,14 @@
   border-style: solid !important;
   background: #fff1f2 !important;
   color: #e11d48 !important;
-  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.15) !important;
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08) !important;
 }
 
 [data-theme="light"] .fels-answer-reveal {
   background: #059669 !important;
   color: #ffffff !important;
   border-color: #047857 !important;
-  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3) !important;
+  box-shadow: var(--shadow-sm) !important;
   text-shadow: none !important;
 }
 

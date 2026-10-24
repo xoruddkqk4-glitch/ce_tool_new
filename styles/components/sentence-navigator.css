@@ -156,7 +156,7 @@
   border-color: #00ffcc;
   color: #00ffcc;
   font-weight: 800;
-  box-shadow: 0 0 12px rgba(0, 255, 204, 0.35);
+  box-shadow: var(--shadow-sm);
 }
 
 .chip-num {
@@ -283,7 +283,7 @@
   background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
   border-color: #4338ca;
   color: #ffffff;
-  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
+  box-shadow: var(--shadow-sm);
 }
 
 [data-theme="light"] .stn-reset-btn {

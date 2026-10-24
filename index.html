@@ -23,7 +23,7 @@
       <div class="brand" role="button" tabindex="0" title="첫 번째 페이지(데이터 입력)로 이동" aria-label="CE Tool 홈 (첫 번째 페이지로 이동)">
         <div class="logo-icon">CE</div>
         <div class="brand-text">
-          <h1>CE <span class="gradient-text">Tool</span></h1>
+          <h1>CE <span class="brand-accent">Tool</span></h1>
         </div>
       </div>
 
@@ -80,6 +80,7 @@
       <!-- PAGE 1: 데이터 입력 페이지 (Input View)                            -->
       <!-- ================================================================= -->
       <div id="view-input" class="view-container">
+        <h2 class="sr-only">1단계: 데이터 입력 및 청크 편집</h2>
         <div class="glass-card">
           <!-- 3 Mode Segmented Tabs + 3x1 Action Button on the Right -->
           <div class="mode-selector-bar">
@@ -154,7 +155,7 @@
         <!-- ================================================================= -->
         <!-- 업로드 결과 검토 & 청크/해석 수동 편집기 & A4 유인물 출력           -->
         <!-- ================================================================= -->
-        <div id="parsedResultsSection" class="glass-card hidden" style="margin-top: 24px;">
+        <div id="parsedResultsSection" class="results-container hidden" style="margin-top: 24px;">
           <div class="results-header">
             <div class="results-title-group">
               <span class="results-icon">📋</span>
@@ -231,6 +232,7 @@
       <!-- ③ [하단] 우리말 해석 (#rowNatural)                                  -->
       <!-- ================================================================= -->
       <div id="view-practice" class="view-container hidden">
+        <h2 class="sr-only">2단계: 문장 단위 약형 청취 훈련</h2>
         
         <!-- ④ [상단 고정 도킹] 문장 자동 분류 네비게이터 (#sentenceNavigator) -->
         <nav id="sentenceNavigator" class="sentence-navigator-bar">
@@ -307,7 +309,7 @@
         </section>
 
         <!-- ② [중단: 1 비율] 문장 단위 음성 파형 패널 (#audioPlayerSection) -->
-        <section id="audioPlayerSection" class="glass-card audio-player-card">
+        <section id="audioPlayerSection" class="audio-player-card">
           <div class="audio-header-compact">
             <div class="audio-meta-left">
               <div class="audio-disc-icon">🎵</div>
@@ -458,6 +460,7 @@
       <!-- PAGE 3: 전체 스크립트 암기 페이지 (Memorize View)                    -->
       <!-- ================================================================= -->
       <div id="view-memorize" class="view-container hidden">
+        <h2 class="sr-only">3단계: 전체 스크립트 청크 암기</h2>
         <!-- Memorize Control Bar -->
         <div class="glass-card memorize-controls-card">
           <div class="memorize-modes-group">
