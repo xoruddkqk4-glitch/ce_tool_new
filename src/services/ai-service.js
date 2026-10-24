@@ -90,12 +90,23 @@ export class AIService {
 
   saveSettings(provider, apiKey, customPrompt, extraKeys = {}) {
     this.provider = provider;
+    extraKeys = extraKeys || {};
     if (extraKeys.geminiKey !== undefined) this.geminiKey = extraKeys.geminiKey;
     if (extraKeys.openaiKey !== undefined) this.openaiKey = extraKeys.openaiKey;
     if (extraKeys.claudeKey !== undefined) this.claudeKey = extraKeys.claudeKey;
     if (extraKeys.openrouterKey !== undefined) this.openrouterKey = extraKeys.openrouterKey;
     if (extraKeys.autoFailover !== undefined) this.autoFailover = !!extraKeys.autoFailover;
-    this.apiKey = this.getKeyForProvider(provider) || apiKey;
+
+    // Legacy call form saveSettings(provider, key, prompt) (no per-provider keys):
+    // `apiKey` belongs to the selected provider ONLY.
+    const ownField = { gemini: 'geminiKey', openai: 'openaiKey', claude: 'claudeKey', openrouter: 'openrouterKey' }[provider];
+    if (ownField && extraKeys[ownField] === undefined) {
+      this[ownField] = apiKey || '';
+    }
+
+    // Selected provider's own key only: a cleared/empty key must stay empty
+    // (never fall back to another provider's key).
+    this.apiKey = this.getKeyForProvider(provider);
     this.customPrompt = customPrompt;
     this.activeGeminiModel = null; // Reset cached model on settings update
     this.quotaExceededUntil = 0;
@@ -109,11 +120,12 @@ export class AIService {
   }
 
   getKeyForProvider(provider = this.provider) {
-    if (provider === 'gemini') return this.geminiKey || (this.provider === 'gemini' ? this.apiKey : '');
-    if (provider === 'openai') return this.openaiKey || (this.provider === 'openai' ? this.apiKey : '');
-    if (provider === 'claude') return this.claudeKey || (this.provider === 'claude' ? this.apiKey : '');
-    if (provider === 'openrouter') return this.openrouterKey || (this.provider === 'openrouter' ? this.apiKey : '');
-    return this.apiKey || '';
+    // Each provider returns ONLY its own key (never another provider's)
+    if (provider === 'gemini') return this.geminiKey || '';
+    if (provider === 'openai') return this.openaiKey || '';
+    if (provider === 'claude') return this.claudeKey || '';
+    if (provider === 'openrouter') return this.openrouterKey || '';
+    return '';
   }
 
   hasKey(provider = this.provider) {
@@ -121,8 +133,14 @@ export class AIService {
     return !!(k && k.trim());
   }
 
+  /** True while Gemini itself is in the 60s quota cooldown (regardless of which provider is primary). */
+  isGeminiCoolingDown() {
+    return Date.now() < (this.quotaExceededUntil || 0);
+  }
+
+  /** @deprecated Prefer isGeminiCoolingDown(); kept for call sites that meant "skip Gemini". */
   isQuotaExceededCoolingDown() {
-    return this.provider === 'gemini' && Date.now() < (this.quotaExceededUntil || 0);
+    return this.isGeminiCoolingDown();
   }
 
   /**
@@ -200,6 +218,7 @@ export class AIService {
 
     let lastError = null;
     let anyQuotaExceeded = false;
+    let quotaHits = 0; // project-level 429s rarely recover on the next model — cap retries
     const geminiKey = this.getKeyForProvider('gemini');
 
     for (const model of uniqueCandidates) {
@@ -252,7 +271,14 @@ export class AIService {
           errMsg.includes('retired');
 
         if (isQuota) {
+          // Allow one alternate model (per-model soft limits), then stop — project-level
+          // 429s almost always hit every remaining candidate and re-upload audio for nothing.
           anyQuotaExceeded = true;
+          quotaHits++;
+          if (quotaHits >= 2) {
+            console.warn(`Gemini model ${model} hit quota/rate limit (${errMsg}). Stopping model walk.`);
+            break;
+          }
           console.warn(`Gemini model ${model} hit quota/rate limit (${errMsg}). Trying next candidate model...`);
           continue;
         }
@@ -297,7 +323,17 @@ export class AIService {
           msg.includes('deprecated') ||
           msg.includes('retired');
 
-        if (isQuota) anyQuotaExceeded = true;
+        if (isQuota) {
+          anyQuotaExceeded = true;
+          quotaHits++;
+          if (quotaHits >= 2) {
+            console.warn(`Gemini model ${model} fetch hit quota (${msg}). Stopping model walk.`);
+            break;
+          }
+          console.warn(`Gemini model ${model} fetch hit quota (${msg}). Trying next candidate...`);
+          lastError = fetchErr;
+          continue;
+        }
         if (isServerOverloaded) {
           if (this.activeGeminiModel === model) {
             this.activeGeminiModel = null;
@@ -312,10 +348,7 @@ export class AIService {
           console.warn(`Gemini model ${model} not available or retired (${msg}). Trying next candidate...`);
           continue;
         }
-        if (!isQuota) {
-          throw fetchErr;
-        }
-        lastError = fetchErr;
+        throw fetchErr;
       }
     }
 
@@ -399,8 +432,8 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
    */
   async translateNatural(text) {
     if (!text || !text.trim()) return '';
-    // If user has AI key configured, attempt full AI translate only if not in quota cooldown
-    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
+    // Use any configured provider (Gemini cooldown is skipped inside translate())
+    if (this.getCandidateProviders().length) {
       try {
         const res = await this.translate(text);
         if (res && res.natural) return res.natural;
@@ -452,8 +485,9 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
       return [naturalText.trim()];
     }
 
-    // 1. If AI API key is configured (Gemini / OpenAI), use prompt to partition natural Korean
-    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
+    // 1. If any AI provider is configured, use prompt to partition natural Korean
+    //    (Gemini cooldown is skipped per-candidate inside the loop / translate path)
+    if (this.getCandidateProviders().length) {
       try {
         const prompt = `You are an expert English-Korean linguist specialized in sequential interpretation (직독직해).
 We have an English sentence: "${englishSentence || cleanChunks.join(' ')}"
@@ -560,13 +594,18 @@ CRITICAL RULES:
       // 2. Transliteration / Dictionary / English tokens
       const enTokens = cleanStr(enText).split(/\s+/).filter(Boolean);
       for (const token of enTokens) {
-        if (DICTIONARY && DICTIONARY[token]) {
+        if (DICTIONARY && Object.prototype.hasOwnProperty.call(DICTIONARY, token)) {
           const koVal = cleanStr(DICTIONARY[token]);
-          if (cleanKo.includes(koVal) || koVal.includes(cleanKo)) return 12;
+          if (koVal && (cleanKo.includes(koVal) || koVal.includes(cleanKo))) return 12;
         }
-        if (VERB_MAP && VERB_MAP[token]) {
-          const vKo = cleanStr(VERB_MAP[token]);
-          if (cleanKo.includes(vKo) || vKo.includes(cleanKo)) return 11;
+        if (VERB_MAP && Object.prototype.hasOwnProperty.call(VERB_MAP, token)) {
+          // VERB_MAP values are objects ({ base, past, pres, gerund }) or strings
+          const vObj = VERB_MAP[token];
+          const vList = typeof vObj === 'string' ? [vObj] : Object.values(vObj || {});
+          for (const vVal of vList) {
+            const vKo = cleanStr(vVal);
+            if (vKo && (cleanKo.includes(vKo) || vKo.includes(cleanKo))) return 11;
+          }
         }
         if (PRONOUNS && PRONOUNS[token]) {
           const pObj = PRONOUNS[token];
@@ -726,13 +765,31 @@ Respond ONLY with valid JSON:
       };
 
       const result = await this.postToGemini(payload, AI_AUDIO_TIMEOUT_MS);
-      if (result && Array.isArray(result.alignments)) {
+      if (result && Array.isArray(result.alignments) && result.alignments.length === sentences.length) {
+        // Sort by sentence_index when provided, then validate monotonic finite ranges.
+        // Invalid AI timestamps must return null so the caller falls back to VAD.
+        const sorted = result.alignments
+          .map((a, i) => ({
+            sentence_index: Number.isFinite(Number(a.sentence_index)) ? Number(a.sentence_index) : i,
+            start: Number(a.start),
+            end: Number(a.end)
+          }))
+          .sort((a, b) => a.sentence_index - b.sentence_index);
+
+        let prevStart = -Infinity;
+        for (const a of sorted) {
+          if (!Number.isFinite(a.start) || !Number.isFinite(a.end) || a.end <= a.start || a.start < prevStart) {
+            console.warn('AI alignment timestamps invalid; falling back to VAD:', a);
+            return null;
+          }
+          prevStart = a.start;
+        }
+
         // Raw timestamps only — end padding is applied ONCE in audio/boundary-utils.js
-        // (previously padded here AND again in InputView, i.e. +1.5s on every sentence end)
-        return result.alignments.map((a, i) => ({
-          sentence_index: a.sentence_index ?? i,
-          start: Number(a.start) || 0,
-          end: Number(a.end) || 0
+        return sorted.map(a => ({
+          sentence_index: a.sentence_index,
+          start: a.start,
+          end: a.end
         }));
       }
     } catch (err) {
@@ -823,7 +880,7 @@ Respond ONLY with valid JSON:
   }
 
   async callOpenAI(text, systemPrompt) {
-    const openaiKey = this.getKeyForProvider('openai') || this.apiKey;
+    const openaiKey = this.getKeyForProvider('openai');
     if (!openaiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다.');
     const url = 'https://api.openai.com/v1/chat/completions';
     const payload = {
@@ -858,7 +915,7 @@ Respond ONLY with valid JSON:
   }
 
   async callClaude(text, systemPrompt) {
-    const claudeKey = this.getKeyForProvider('claude') || this.apiKey;
+    const claudeKey = this.getKeyForProvider('claude');
     if (!claudeKey) throw new Error('Claude API 키가 설정되지 않았습니다.');
 
     const candidateModels = [
@@ -916,7 +973,7 @@ Respond ONLY with valid JSON:
   }
 
   async callOpenRouter(text, systemPrompt) {
-    const openrouterKey = this.getKeyForProvider('openrouter') || this.apiKey;
+    const openrouterKey = this.getKeyForProvider('openrouter');
     if (!openrouterKey) throw new Error('OpenRouter API 키가 설정되지 않았습니다.');
 
     const candidateModels = [

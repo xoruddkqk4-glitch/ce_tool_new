@@ -27,6 +27,7 @@ export class PlaybackController {
     this.owner = null; // 'input' | 'practice' | 'memorize' | null
     this.segmentToken = 0;
     this.segmentFrame = null;
+    this._timeupdateHandler = null;
   }
 
   getPlayer() {
@@ -65,6 +66,15 @@ export class PlaybackController {
     this.segmentToken++;
     cancelFrame(this.segmentFrame);
     this.segmentFrame = null;
+    this._detachTimeupdate();
+  }
+
+  _detachTimeupdate() {
+    const player = this.getPlayer();
+    if (player && this._timeupdateHandler && typeof player.removeEventListener === 'function') {
+      player.removeEventListener('timeupdate', this._timeupdateHandler);
+    }
+    this._timeupdateHandler = null;
   }
 
   /**
@@ -88,27 +98,46 @@ export class PlaybackController {
     }
 
     const hasEnd = typeof end === 'number' && isFinite(end);
+    let finished = false;
+    const finish = () => {
+      if (finished || token !== this.segmentToken) return;
+      finished = true;
+      if (typeof player.pause === 'function') player.pause();
+      cancelFrame(this.segmentFrame);
+      this.segmentFrame = null;
+      this._detachTimeupdate();
+      if (typeof onEnd === 'function') onEnd();
+    };
     const watch = () => {
-      if (token !== this.segmentToken) return;
+      if (token !== this.segmentToken || finished) return;
       if ((hasEnd && player.currentTime >= end) || player.ended) {
-        if (typeof player.pause === 'function') player.pause();
-        this.segmentFrame = null;
-        if (typeof onEnd === 'function') onEnd();
+        finish();
         return;
       }
       if (player.paused) {
         // Paused by the user or another control: stop watching silently (no onEnd)
         this.segmentFrame = null;
+        this._detachTimeupdate();
         return;
       }
       this.segmentFrame = scheduleFrame(watch);
     };
 
+    // timeupdate keeps the end-boundary alive when the tab is backgrounded (rAF throttles/stops)
+    this._detachTimeupdate();
+    if (typeof player.addEventListener === 'function') {
+      this._timeupdateHandler = () => {
+        if (token !== this.segmentToken || finished) return;
+        if ((hasEnd && player.currentTime >= end) || player.ended) finish();
+      };
+      player.addEventListener('timeupdate', this._timeupdateHandler);
+    }
+
     return Promise.resolve(player.play()).then(() => {
       if (token !== this.segmentToken) return false;
       this.segmentFrame = scheduleFrame(watch);
       return true;
-    });
+    }).catch(() => false);
   }
 
   /** Cancels the active segment watcher and pauses playback. */

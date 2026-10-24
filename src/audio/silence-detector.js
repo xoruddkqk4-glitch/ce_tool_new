@@ -358,18 +358,22 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
           const minAllowedIdx = Math.floor((lastStart + 0.5) / windowSec);
           const maxAllowedIdx = Math.floor((speechEnd - 0.5) / windowSec);
 
-          const startIdx = Math.max(minAllowedIdx, expectedIdx - searchRadius);
-          const endIdx = Math.min(maxAllowedIdx, expectedIdx + searchRadius);
+          let startIdx = Math.max(minAllowedIdx, expectedIdx - searchRadius);
+          let endIdx = Math.min(maxAllowedIdx, expectedIdx + searchRadius);
 
           let minVal = Infinity;
           let bestIdx = expectedIdx;
-
-          for (let k = startIdx; k <= endIdx; k++) {
-            const distFromExp = Math.abs(k - expectedIdx) / searchRadius;
-            const score = smoothed[k] * (1.0 + 0.3 * distFromExp);
-            if (score < minVal) {
-              minVal = score;
-              bestIdx = k;
+          // When the allowed window is empty (too many sentences for a short audio), clamp
+          if (startIdx > endIdx) {
+            bestIdx = Math.max(minAllowedIdx, Math.min(maxAllowedIdx, expectedIdx));
+          } else {
+            for (let k = startIdx; k <= endIdx; k++) {
+              const distFromExp = Math.abs(k - expectedIdx) / Math.max(1, searchRadius);
+              const score = smoothed[k] * (1.0 + 0.3 * distFromExp);
+              if (score < minVal) {
+                minVal = score;
+                bestIdx = k;
+              }
             }
           }
 
@@ -404,7 +408,14 @@ export function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDurat
           curSentenceStart = nextSentenceStart;
         }
 
-        boundaries.push({ start: curSentenceStart, end: speechEnd });
+        // Clamp so start < end ≤ speechEnd even when many short sentences force starts past speechEnd
+        const clampedLastStart = Math.min(curSentenceStart, Math.max(speechStart, speechEnd - 0.3));
+        boundaries.push({ start: clampedLastStart, end: speechEnd });
+        for (const b of boundaries) {
+          if (!b || b.start == null || b.end == null) continue;
+          if (b.end <= b.start) b.end = Math.min(speechEnd, b.start + 0.3);
+          if (b.end > speechEnd) b.end = speechEnd;
+        }
         return boundaries;
       }
     } catch (e) {

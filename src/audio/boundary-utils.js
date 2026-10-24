@@ -65,6 +65,11 @@ export async function resolveSentenceBoundaries({ audioBuffer = null, sentences 
     const introSec = detectKoreanIntroDuration(audioBuffer, sentences);
     if (introSec > BOUNDARY_INTRO_MIN_SEC && boundaries[0].start !== null && boundaries[0].start < introSec - BOUNDARY_INTRO_TOLERANCE_SEC) {
       boundaries[0].start = introSec;
+      // Keep start < end after pushing the start forward
+      if (boundaries[0].end !== null && boundaries[0].end !== undefined &&
+          boundaries[0].end < introSec + BOUNDARY_MIN_SEGMENT_SEC) {
+        boundaries[0].end = introSec + BOUNDARY_MIN_SEGMENT_SEC;
+      }
     }
   }
 

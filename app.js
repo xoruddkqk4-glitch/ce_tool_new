@@ -607,6 +607,11 @@ function verifyAnswer(userVal, expectedWord) {
 
 
 
+/** Own-property lookup so prototype keys like `constructor` never match a dictionary. */
+function ownGet(dict, key) {
+  return (dict && Object.prototype.hasOwnProperty.call(dict, key)) ? dict[key] : undefined;
+}
+
 class RuleChunkEngine {
   constructor() {}
 
@@ -680,24 +685,30 @@ class RuleChunkEngine {
       // 2. Transliteration / Dictionary / English tokens
       const enTokens = cleanStr(enText).split(/\s+/).filter(Boolean);
       for (const token of enTokens) {
-        if (DICTIONARY && DICTIONARY[token]) {
-          const koVal = cleanStr(DICTIONARY[token]);
-          if (cleanKo.includes(koVal) || koVal.includes(cleanKo)) return 12;
+        const dictVal = ownGet(DICTIONARY, token);
+        if (dictVal !== undefined) {
+          const koVal = cleanStr(dictVal);
+          if (koVal && (cleanKo.includes(koVal) || koVal.includes(cleanKo))) return 12;
         }
-        if (VERB_MAP && VERB_MAP[token]) {
-          const vKo = cleanStr(VERB_MAP[token]);
-          if (cleanKo.includes(vKo) || vKo.includes(cleanKo)) return 11;
+        const vObj = ownGet(VERB_MAP, token);
+        if (vObj !== undefined) {
+          const vList = typeof vObj === 'string' ? [vObj] : Object.values(vObj || {});
+          for (const vVal of vList) {
+            const vKo = cleanStr(vVal);
+            if (vKo && (cleanKo.includes(vKo) || vKo.includes(cleanKo))) return 11;
+          }
         }
-        if (PRONOUNS && PRONOUNS[token]) {
-          const pObj = PRONOUNS[token];
+        const pObj = ownGet(PRONOUNS, token);
+        if (pObj !== undefined) {
           const pList = typeof pObj === 'string' ? [pObj] : Object.values(pObj);
           for (const pVal of pList) {
             const pKo = cleanStr(pVal);
             if (pKo && (cleanKo.includes(pKo) || pKo.includes(cleanKo))) return 11;
           }
         }
-        if (ADVERBS && ADVERBS[token]) {
-          const aKo = cleanStr(ADVERBS[token]);
+        const aVal = ownGet(ADVERBS, token);
+        if (aVal !== undefined) {
+          const aKo = cleanStr(aVal);
           if (aKo && (cleanKo.includes(aKo) || aKo.includes(cleanKo))) return 11;
         }
         if (cleanKo.includes(token)) return 8;
@@ -817,7 +828,7 @@ class RuleChunkEngine {
       }
 
       // Prepositional Phrase
-      if (PREPOSITIONS[word]) {
+      if (ownGet(PREPOSITIONS, word) !== undefined) {
         const prepChunk = this.extractPrepositionalPhrase(words, i);
         chunks.push(prepChunk);
         i = prepChunk.nextIndex;
@@ -825,10 +836,11 @@ class RuleChunkEngine {
       }
 
       // Adverb
-      if (ADVERBS[word]) {
+      const advKo = ownGet(ADVERBS, word);
+      if (advKo !== undefined) {
         chunks.push({
           en: words[i],
-          ko: ADVERBS[word],
+          ko: advKo,
           type: 'adverb'
         });
         i++;
@@ -863,16 +875,17 @@ class RuleChunkEngine {
     if (startIndex >= words.length) return null;
     const w0 = words[startIndex].toLowerCase();
 
-    if (PRONOUNS[w0]) {
+    const subjPron = ownGet(PRONOUNS, w0);
+    if (subjPron) {
       return {
         en: words[startIndex],
-        ko: PRONOUNS[w0].subj,
+        ko: subjPron.subj,
         type: 'subject',
         nextIndex: startIndex + 1
       };
     }
 
-    if (w0.endsWith('ing') && this.isVerb(w0.slice(0, -3)) || VERB_MAP[w0]) {
+    if (w0.endsWith('ing') && this.isVerb(w0.slice(0, -3)) || ownGet(VERB_MAP, w0)) {
       let endIndex = startIndex + 1;
       while (endIndex < words.length && !this.isMainVerb(words[endIndex])) {
         endIndex++;
@@ -1052,9 +1065,12 @@ class RuleChunkEngine {
     const parts = tokens.map(t => {
       const l = t.toLowerCase();
       if (['the', 'a', 'an'].includes(l)) return '';
-      if (DICTIONARY[l]) return DICTIONARY[l];
-      if (VERB_MAP[l]) return VERB_MAP[l].base.replace(/다$/, '');
-      if (PRONOUNS[l]) return PRONOUNS[l].poss;
+      const d = ownGet(DICTIONARY, l);
+      if (d !== undefined) return d;
+      const v = ownGet(VERB_MAP, l);
+      if (v && v.base) return v.base.replace(/다$/, '');
+      const p = ownGet(PRONOUNS, l);
+      if (p) return p.poss;
       return t;
     }).filter(Boolean);
 
@@ -1063,12 +1079,13 @@ class RuleChunkEngine {
 
   translateWord(w) {
     const lower = w.toLowerCase();
-    return DICTIONARY[lower] || w;
+    const d = ownGet(DICTIONARY, lower);
+    return d !== undefined ? d : w;
   }
 
   isVerb(w) {
     const lower = w.toLowerCase();
-    return !!VERB_MAP[lower] || ['is', 'are', 'was', 'were', 'am'].includes(lower);
+    return ownGet(VERB_MAP, lower) !== undefined || ['is', 'are', 'was', 'were', 'am'].includes(lower);
   }
 
   isMainVerb(w) {
@@ -1541,12 +1558,23 @@ class AIService {
 
   saveSettings(provider, apiKey, customPrompt, extraKeys = {}) {
     this.provider = provider;
+    extraKeys = extraKeys || {};
     if (extraKeys.geminiKey !== undefined) this.geminiKey = extraKeys.geminiKey;
     if (extraKeys.openaiKey !== undefined) this.openaiKey = extraKeys.openaiKey;
     if (extraKeys.claudeKey !== undefined) this.claudeKey = extraKeys.claudeKey;
     if (extraKeys.openrouterKey !== undefined) this.openrouterKey = extraKeys.openrouterKey;
     if (extraKeys.autoFailover !== undefined) this.autoFailover = !!extraKeys.autoFailover;
-    this.apiKey = this.getKeyForProvider(provider) || apiKey;
+
+    // Legacy call form saveSettings(provider, key, prompt) (no per-provider keys):
+    // `apiKey` belongs to the selected provider ONLY.
+    const ownField = { gemini: 'geminiKey', openai: 'openaiKey', claude: 'claudeKey', openrouter: 'openrouterKey' }[provider];
+    if (ownField && extraKeys[ownField] === undefined) {
+      this[ownField] = apiKey || '';
+    }
+
+    // Selected provider's own key only: a cleared/empty key must stay empty
+    // (never fall back to another provider's key).
+    this.apiKey = this.getKeyForProvider(provider);
     this.customPrompt = customPrompt;
     this.activeGeminiModel = null; // Reset cached model on settings update
     this.quotaExceededUntil = 0;
@@ -1560,11 +1588,12 @@ class AIService {
   }
 
   getKeyForProvider(provider = this.provider) {
-    if (provider === 'gemini') return this.geminiKey || (this.provider === 'gemini' ? this.apiKey : '');
-    if (provider === 'openai') return this.openaiKey || (this.provider === 'openai' ? this.apiKey : '');
-    if (provider === 'claude') return this.claudeKey || (this.provider === 'claude' ? this.apiKey : '');
-    if (provider === 'openrouter') return this.openrouterKey || (this.provider === 'openrouter' ? this.apiKey : '');
-    return this.apiKey || '';
+    // Each provider returns ONLY its own key (never another provider's)
+    if (provider === 'gemini') return this.geminiKey || '';
+    if (provider === 'openai') return this.openaiKey || '';
+    if (provider === 'claude') return this.claudeKey || '';
+    if (provider === 'openrouter') return this.openrouterKey || '';
+    return '';
   }
 
   hasKey(provider = this.provider) {
@@ -1572,8 +1601,14 @@ class AIService {
     return !!(k && k.trim());
   }
 
+  /** True while Gemini itself is in the 60s quota cooldown (regardless of which provider is primary). */
+  isGeminiCoolingDown() {
+    return Date.now() < (this.quotaExceededUntil || 0);
+  }
+
+  /** @deprecated Prefer isGeminiCoolingDown(); kept for call sites that meant "skip Gemini". */
   isQuotaExceededCoolingDown() {
-    return this.provider === 'gemini' && Date.now() < (this.quotaExceededUntil || 0);
+    return this.isGeminiCoolingDown();
   }
 
   /**
@@ -1651,6 +1686,7 @@ class AIService {
 
     let lastError = null;
     let anyQuotaExceeded = false;
+    let quotaHits = 0; // project-level 429s rarely recover on the next model — cap retries
     const geminiKey = this.getKeyForProvider('gemini');
 
     for (const model of uniqueCandidates) {
@@ -1703,7 +1739,14 @@ class AIService {
           errMsg.includes('retired');
 
         if (isQuota) {
+          // Allow one alternate model (per-model soft limits), then stop — project-level
+          // 429s almost always hit every remaining candidate and re-upload audio for nothing.
           anyQuotaExceeded = true;
+          quotaHits++;
+          if (quotaHits >= 2) {
+            console.warn(`Gemini model ${model} hit quota/rate limit (${errMsg}). Stopping model walk.`);
+            break;
+          }
           console.warn(`Gemini model ${model} hit quota/rate limit (${errMsg}). Trying next candidate model...`);
           continue;
         }
@@ -1748,7 +1791,17 @@ class AIService {
           msg.includes('deprecated') ||
           msg.includes('retired');
 
-        if (isQuota) anyQuotaExceeded = true;
+        if (isQuota) {
+          anyQuotaExceeded = true;
+          quotaHits++;
+          if (quotaHits >= 2) {
+            console.warn(`Gemini model ${model} fetch hit quota (${msg}). Stopping model walk.`);
+            break;
+          }
+          console.warn(`Gemini model ${model} fetch hit quota (${msg}). Trying next candidate...`);
+          lastError = fetchErr;
+          continue;
+        }
         if (isServerOverloaded) {
           if (this.activeGeminiModel === model) {
             this.activeGeminiModel = null;
@@ -1763,10 +1816,7 @@ class AIService {
           console.warn(`Gemini model ${model} not available or retired (${msg}). Trying next candidate...`);
           continue;
         }
-        if (!isQuota) {
-          throw fetchErr;
-        }
-        lastError = fetchErr;
+        throw fetchErr;
       }
     }
 
@@ -1850,8 +1900,8 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
    */
   async translateNatural(text) {
     if (!text || !text.trim()) return '';
-    // If user has AI key configured, attempt full AI translate only if not in quota cooldown
-    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
+    // Use any configured provider (Gemini cooldown is skipped inside translate())
+    if (this.getCandidateProviders().length) {
       try {
         const res = await this.translate(text);
         if (res && res.natural) return res.natural;
@@ -1903,8 +1953,9 @@ ${this.customPrompt ? `Additional User Instructions: ${this.customPrompt}` : ''}
       return [naturalText.trim()];
     }
 
-    // 1. If AI API key is configured (Gemini / OpenAI), use prompt to partition natural Korean
-    if (this.hasKey() && !this.isQuotaExceededCoolingDown()) {
+    // 1. If any AI provider is configured, use prompt to partition natural Korean
+    //    (Gemini cooldown is skipped per-candidate inside the loop / translate path)
+    if (this.getCandidateProviders().length) {
       try {
         const prompt = `You are an expert English-Korean linguist specialized in sequential interpretation (직독직해).
 We have an English sentence: "${englishSentence || cleanChunks.join(' ')}"
@@ -2011,13 +2062,18 @@ CRITICAL RULES:
       // 2. Transliteration / Dictionary / English tokens
       const enTokens = cleanStr(enText).split(/\s+/).filter(Boolean);
       for (const token of enTokens) {
-        if (DICTIONARY && DICTIONARY[token]) {
+        if (DICTIONARY && Object.prototype.hasOwnProperty.call(DICTIONARY, token)) {
           const koVal = cleanStr(DICTIONARY[token]);
-          if (cleanKo.includes(koVal) || koVal.includes(cleanKo)) return 12;
+          if (koVal && (cleanKo.includes(koVal) || koVal.includes(cleanKo))) return 12;
         }
-        if (VERB_MAP && VERB_MAP[token]) {
-          const vKo = cleanStr(VERB_MAP[token]);
-          if (cleanKo.includes(vKo) || vKo.includes(cleanKo)) return 11;
+        if (VERB_MAP && Object.prototype.hasOwnProperty.call(VERB_MAP, token)) {
+          // VERB_MAP values are objects ({ base, past, pres, gerund }) or strings
+          const vObj = VERB_MAP[token];
+          const vList = typeof vObj === 'string' ? [vObj] : Object.values(vObj || {});
+          for (const vVal of vList) {
+            const vKo = cleanStr(vVal);
+            if (vKo && (cleanKo.includes(vKo) || vKo.includes(cleanKo))) return 11;
+          }
         }
         if (PRONOUNS && PRONOUNS[token]) {
           const pObj = PRONOUNS[token];
@@ -2177,13 +2233,31 @@ Respond ONLY with valid JSON:
       };
 
       const result = await this.postToGemini(payload, AI_AUDIO_TIMEOUT_MS);
-      if (result && Array.isArray(result.alignments)) {
+      if (result && Array.isArray(result.alignments) && result.alignments.length === sentences.length) {
+        // Sort by sentence_index when provided, then validate monotonic finite ranges.
+        // Invalid AI timestamps must return null so the caller falls back to VAD.
+        const sorted = result.alignments
+          .map((a, i) => ({
+            sentence_index: Number.isFinite(Number(a.sentence_index)) ? Number(a.sentence_index) : i,
+            start: Number(a.start),
+            end: Number(a.end)
+          }))
+          .sort((a, b) => a.sentence_index - b.sentence_index);
+
+        let prevStart = -Infinity;
+        for (const a of sorted) {
+          if (!Number.isFinite(a.start) || !Number.isFinite(a.end) || a.end <= a.start || a.start < prevStart) {
+            console.warn('AI alignment timestamps invalid; falling back to VAD:', a);
+            return null;
+          }
+          prevStart = a.start;
+        }
+
         // Raw timestamps only — end padding is applied ONCE in audio/boundary-utils.js
-        // (previously padded here AND again in InputView, i.e. +1.5s on every sentence end)
-        return result.alignments.map((a, i) => ({
-          sentence_index: a.sentence_index ?? i,
-          start: Number(a.start) || 0,
-          end: Number(a.end) || 0
+        return sorted.map(a => ({
+          sentence_index: a.sentence_index,
+          start: a.start,
+          end: a.end
         }));
       }
     } catch (err) {
@@ -2274,7 +2348,7 @@ Respond ONLY with valid JSON:
   }
 
   async callOpenAI(text, systemPrompt) {
-    const openaiKey = this.getKeyForProvider('openai') || this.apiKey;
+    const openaiKey = this.getKeyForProvider('openai');
     if (!openaiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다.');
     const url = 'https://api.openai.com/v1/chat/completions';
     const payload = {
@@ -2309,7 +2383,7 @@ Respond ONLY with valid JSON:
   }
 
   async callClaude(text, systemPrompt) {
-    const claudeKey = this.getKeyForProvider('claude') || this.apiKey;
+    const claudeKey = this.getKeyForProvider('claude');
     if (!claudeKey) throw new Error('Claude API 키가 설정되지 않았습니다.');
 
     const candidateModels = [
@@ -2367,7 +2441,7 @@ Respond ONLY with valid JSON:
   }
 
   async callOpenRouter(text, systemPrompt) {
-    const openrouterKey = this.getKeyForProvider('openrouter') || this.apiKey;
+    const openrouterKey = this.getKeyForProvider('openrouter');
     if (!openrouterKey) throw new Error('OpenRouter API 키가 설정되지 않았습니다.');
 
     const candidateModels = [
@@ -2958,18 +3032,22 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
           const minAllowedIdx = Math.floor((lastStart + 0.5) / windowSec);
           const maxAllowedIdx = Math.floor((speechEnd - 0.5) / windowSec);
 
-          const startIdx = Math.max(minAllowedIdx, expectedIdx - searchRadius);
-          const endIdx = Math.min(maxAllowedIdx, expectedIdx + searchRadius);
+          let startIdx = Math.max(minAllowedIdx, expectedIdx - searchRadius);
+          let endIdx = Math.min(maxAllowedIdx, expectedIdx + searchRadius);
 
           let minVal = Infinity;
           let bestIdx = expectedIdx;
-
-          for (let k = startIdx; k <= endIdx; k++) {
-            const distFromExp = Math.abs(k - expectedIdx) / searchRadius;
-            const score = smoothed[k] * (1.0 + 0.3 * distFromExp);
-            if (score < minVal) {
-              minVal = score;
-              bestIdx = k;
+          // When the allowed window is empty (too many sentences for a short audio), clamp
+          if (startIdx > endIdx) {
+            bestIdx = Math.max(minAllowedIdx, Math.min(maxAllowedIdx, expectedIdx));
+          } else {
+            for (let k = startIdx; k <= endIdx; k++) {
+              const distFromExp = Math.abs(k - expectedIdx) / Math.max(1, searchRadius);
+              const score = smoothed[k] * (1.0 + 0.3 * distFromExp);
+              if (score < minVal) {
+                minVal = score;
+                bestIdx = k;
+              }
             }
           }
 
@@ -3004,7 +3082,14 @@ function detectAudioSentenceBoundaries(audioBuffer, sentences, totalDuration) {
           curSentenceStart = nextSentenceStart;
         }
 
-        boundaries.push({ start: curSentenceStart, end: speechEnd });
+        // Clamp so start < end ≤ speechEnd even when many short sentences force starts past speechEnd
+        const clampedLastStart = Math.min(curSentenceStart, Math.max(speechStart, speechEnd - 0.3));
+        boundaries.push({ start: clampedLastStart, end: speechEnd });
+        for (const b of boundaries) {
+          if (!b || b.start == null || b.end == null) continue;
+          if (b.end <= b.start) b.end = Math.min(speechEnd, b.start + 0.3);
+          if (b.end > speechEnd) b.end = speechEnd;
+        }
         return boundaries;
       }
     } catch (e) {
@@ -3111,6 +3196,11 @@ async function resolveSentenceBoundaries({ audioBuffer = null, sentences = [], a
     const introSec = detectKoreanIntroDuration(audioBuffer, sentences);
     if (introSec > BOUNDARY_INTRO_MIN_SEC && boundaries[0].start !== null && boundaries[0].start < introSec - BOUNDARY_INTRO_TOLERANCE_SEC) {
       boundaries[0].start = introSec;
+      // Keep start < end after pushing the start forward
+      if (boundaries[0].end !== null && boundaries[0].end !== undefined &&
+          boundaries[0].end < introSec + BOUNDARY_MIN_SEGMENT_SEC) {
+        boundaries[0].end = introSec + BOUNDARY_MIN_SEGMENT_SEC;
+      }
     }
   }
 
@@ -3167,7 +3257,7 @@ function audioBufferToWavBlob(buffer) {
     for (let chan = 0; chan < numOfChan; chan++) {
       let sample = channels[chan][i];
       sample = Math.max(-1, Math.min(1, sample));
-      sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0;
+      sample = (sample < 0 ? sample * 32768 : sample * 32767) | 0;
       view.setInt16(pos, sample, true);
       pos += 2;
     }
@@ -3220,8 +3310,35 @@ function synthesizeSilentAudioForScript(text, audioCtx) {
   };
 }
 
-function speakText(text, lang = 'en-US', rate = 0.95) {
-  if (!('speechSynthesis' in window) || !text) return;
+/**
+ * Speak text via Web Speech API.
+ * Usage: speakText(text, 'en-US', 0.95)  or  speakText(text, { lang, rate, onEnd })
+ * `onEnd` fires exactly once when speech finishes, errors, or TTS is unavailable
+ * (so "play all" sequences never stall).
+ */
+function speakText(text, langOrOpts = 'en-US', rateArg = 0.95) {
+  let lang = 'en-US';
+  let rate = rateArg;
+  let onEnd = null;
+  if (langOrOpts && typeof langOrOpts === 'object') {
+    if (typeof langOrOpts.lang === 'string') lang = langOrOpts.lang;
+    if (typeof langOrOpts.rate === 'number') rate = langOrOpts.rate;
+    if (typeof langOrOpts.onEnd === 'function') onEnd = langOrOpts.onEnd;
+  } else if (typeof langOrOpts === 'string') {
+    lang = langOrOpts;
+  }
+
+  let ended = false;
+  const finish = () => {
+    if (ended) return;
+    ended = true;
+    if (onEnd) onEnd();
+  };
+
+  if (!('speechSynthesis' in window) || !text) {
+    finish();
+    return;
+  }
   try {
     window.speechSynthesis.cancel();
     if (window.speechSynthesis.paused) {
@@ -3230,6 +3347,12 @@ function speakText(text, lang = 'en-US', rate = 0.95) {
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = lang;
     utter.rate = rate;
+    utter.onend = finish;
+    utter.onerror = (ev) => {
+      // cancel()/interrupt by a newer utterance must not advance a sequence
+      if (ev && (ev.error === 'canceled' || ev.error === 'interrupted')) return;
+      finish();
+    };
 
     // Pick authentic voice if available
     const voices = window.speechSynthesis.getVoices();
@@ -3241,6 +3364,7 @@ function speakText(text, lang = 'en-US', rate = 0.95) {
     window.speechSynthesis.speak(utter);
   } catch (e) {
     console.warn('TTS playback error:', e);
+    finish();
   }
 }
 
@@ -3444,9 +3568,9 @@ class WaveformRenderer {
     ctx.lineTo(width, centerY);
     ctx.stroke();
 
-    // Sentence time window
-    const stnStart = (activeSentence && activeSentence.audioStart !== null) ? activeSentence.audioStart : 0;
-    const stnEnd = (activeSentence && activeSentence.audioEnd !== null) ? activeSentence.audioEnd : totalDuration;
+    // Sentence time window (treat undefined the same as null — otherwise NaN blanks the bars)
+    const stnStart = (activeSentence && Number.isFinite(activeSentence.audioStart)) ? activeSentence.audioStart : 0;
+    const stnEnd = (activeSentence && Number.isFinite(activeSentence.audioEnd)) ? activeSentence.audioEnd : totalDuration;
     const stnDuration = Math.max(0.1, stnEnd - stnStart);
 
     const curTime = currentTime || 0;
@@ -4283,15 +4407,16 @@ class MasterWaveformTimeline {
 
 
 function formatPreciseTime(seconds) {
-  if (isNaN(seconds) || seconds < 0) return '00:00.0';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  const tenths = Math.floor((seconds % 1) * 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00.0';
+  const totalTenths = Math.round(seconds * 10);
+  const mins = Math.floor(totalTenths / 600);
+  const secs = Math.floor((totalTenths % 600) / 10);
+  const tenths = totalTenths % 10;
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${tenths}`;
 }
 
 function formatTime(seconds) {
-  if (isNaN(seconds) || seconds < 0) return '00:00';
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
@@ -4327,7 +4452,10 @@ class LooperEngine {
    */
   checkBoundary() {
     const player = this.audioPlayer;
-    if (!player || player.paused || player.ended) return;
+    // `ended` must still run boundary logic (last sentence often ends at media duration).
+    // When media ends, `paused` is also true — so allow `ended` through.
+    if (!player) return;
+    if (player.paused && !player.ended) return;
 
     const cur = player.currentTime;
     const { loopStart, loopEnd, targetLoopCount, isShadowingWaiting } = this.appState;
@@ -4350,7 +4478,12 @@ class LooperEngine {
 
     if (effectiveStart === null || effectiveEnd === null) return;
 
-    if (cur >= effectiveEnd) {
+    // Keep the loop end just short of media duration so `ended` and the boundary agree
+    if (Number.isFinite(player.duration) && player.duration > 0) {
+      effectiveEnd = Math.min(effectiveEnd, Math.max(effectiveStart, player.duration - 0.05));
+    }
+
+    if (player.ended || cur >= effectiveEnd) {
       player.pause();
       this.appState.currentLoopCount++;
       this.callbacks.onLoopCountUpdate(this.appState.currentLoopCount, targetLoopCount);
@@ -4370,6 +4503,8 @@ class LooperEngine {
 
           clearTimeout(this.shadowTimer);
           this.shadowTimer = setTimeout(() => {
+            // reset()/setLoopRange() may have cancelled the wait in the meantime
+            if (!this.appState.isShadowingWaiting) return;
             this.appState.isShadowingWaiting = false;
             this.callbacks.onShadowingWait(false);
             this.restartLoop(effectiveStart);
@@ -4437,6 +4572,7 @@ class PlaybackController {
     this.owner = null; // 'input' | 'practice' | 'memorize' | null
     this.segmentToken = 0;
     this.segmentFrame = null;
+    this._timeupdateHandler = null;
   }
 
   getPlayer() {
@@ -4475,6 +4611,15 @@ class PlaybackController {
     this.segmentToken++;
     cancelFrame(this.segmentFrame);
     this.segmentFrame = null;
+    this._detachTimeupdate();
+  }
+
+  _detachTimeupdate() {
+    const player = this.getPlayer();
+    if (player && this._timeupdateHandler && typeof player.removeEventListener === 'function') {
+      player.removeEventListener('timeupdate', this._timeupdateHandler);
+    }
+    this._timeupdateHandler = null;
   }
 
   /**
@@ -4498,27 +4643,46 @@ class PlaybackController {
     }
 
     const hasEnd = typeof end === 'number' && isFinite(end);
+    let finished = false;
+    const finish = () => {
+      if (finished || token !== this.segmentToken) return;
+      finished = true;
+      if (typeof player.pause === 'function') player.pause();
+      cancelFrame(this.segmentFrame);
+      this.segmentFrame = null;
+      this._detachTimeupdate();
+      if (typeof onEnd === 'function') onEnd();
+    };
     const watch = () => {
-      if (token !== this.segmentToken) return;
+      if (token !== this.segmentToken || finished) return;
       if ((hasEnd && player.currentTime >= end) || player.ended) {
-        if (typeof player.pause === 'function') player.pause();
-        this.segmentFrame = null;
-        if (typeof onEnd === 'function') onEnd();
+        finish();
         return;
       }
       if (player.paused) {
         // Paused by the user or another control: stop watching silently (no onEnd)
         this.segmentFrame = null;
+        this._detachTimeupdate();
         return;
       }
       this.segmentFrame = scheduleFrame(watch);
     };
 
+    // timeupdate keeps the end-boundary alive when the tab is backgrounded (rAF throttles/stops)
+    this._detachTimeupdate();
+    if (typeof player.addEventListener === 'function') {
+      this._timeupdateHandler = () => {
+        if (token !== this.segmentToken || finished) return;
+        if ((hasEnd && player.currentTime >= end) || player.ended) finish();
+      };
+      player.addEventListener('timeupdate', this._timeupdateHandler);
+    }
+
     return Promise.resolve(player.play()).then(() => {
       if (token !== this.segmentToken) return false;
       this.segmentFrame = scheduleFrame(watch);
       return true;
-    });
+    }).catch(() => false);
   }
 
   /** Cancels the active segment watcher and pauses playback. */
@@ -4606,6 +4770,7 @@ class ProjectService {
     this.lastDirectoryHandle = null;
     this.currentProjectName = '새 프로젝트';
     this.isDirty = false;
+    this.dirtySeq = 0; // bumps on every markDirty; used so in-flight saves don't clear newer edits
     this.dbPromise = null;
     this.onStateChangeCallbacks = [];
   }
@@ -4636,16 +4801,24 @@ class ProjectService {
   }
 
   markDirty() {
+    this.dirtySeq++;
     if (!this.isDirty) {
       this.isDirty = true;
       this.notifyStateChange();
     }
   }
 
-  markClean(name = this.currentProjectName) {
+  markClean(name = this.currentProjectName, { expectedDirtySeq = null } = {}) {
+    // If the caller captured a dirtySeq before serializing, only clear when nothing newer arrived
+    if (expectedDirtySeq !== null && expectedDirtySeq !== this.dirtySeq) {
+      this.currentProjectName = name;
+      this.notifyStateChange();
+      return false;
+    }
     this.isDirty = false;
     this.currentProjectName = name;
     this.notifyStateChange();
+    return true;
   }
 
   resetProject() {
@@ -4813,6 +4986,9 @@ class ProjectService {
       }
       appState.isSynthesizedAudio = !!data.audio.isSynthesized;
 
+      // Never keep the previous project's PCM if this decode fails
+      appState.audioBuffer = null;
+
       try {
         if (typeof decodeAudioFile === 'function') {
           appState.audioBuffer = await decodeAudioFile(audioFile);
@@ -4870,6 +5046,7 @@ class ProjectService {
    * ------------------------------------------------------------------------- */
   async openProject(inputView) {
     if (typeof window !== 'undefined' && typeof window.showOpenFilePicker === 'function') {
+      let handle = null;
       try {
         const pickerOpts = {
           id: PROJECT_PICKER_ID, // Chromium MRU automatic folder memory!
@@ -4885,12 +5062,21 @@ class ProjectService {
           pickerOpts.startIn = savedDir;
         }
 
-        const [handle] = await window.showOpenFilePicker(pickerOpts);
-        if (!handle) return;
+        const picked = await window.showOpenFilePicker(pickerOpts);
+        handle = picked && picked[0] ? picked[0] : null;
+      } catch (err) {
+        if (err.name === 'AbortError') return; // User canceled
+        console.warn('Native file picker failed, falling back to input:', err);
+        this.openWithFileInputFallback(inputView);
+        return;
+      }
 
+      if (!handle) return;
+
+      // Deserialize failures must NOT fall through to a second file picker
+      try {
         const file = await handle.getFile();
         const text = await file.text();
-
         await this.deserializeAndApply(text, inputView);
 
         this.currentFileHandle = handle;
@@ -4899,11 +5085,10 @@ class ProjectService {
         this.saveHandleToIDB('last_file_handle', handle);
 
         toast.show(`📂 프로젝트 '${handle.name}'를 성공적으로 불러왔습니다.`);
-        return;
       } catch (err) {
-        if (err.name === 'AbortError') return; // User canceled
-        console.warn('Native file picker failed, falling back to input:', err);
+        toast.show(`❌ 프로젝트 불러오기 실패: ${err.message || err}`);
       }
+      return;
     }
 
     // Fallback: <input type="file">
@@ -4950,13 +5135,25 @@ class ProjectService {
       }
 
       toast.show('💾 프로젝트 저장 중...');
+      const seqAtStart = this.dirtySeq;
       const jsonStr = await this.serializeProject();
-      const writable = await this.currentFileHandle.createWritable();
-      await writable.write(jsonStr);
-      await writable.close();
+      let writable = null;
+      try {
+        writable = await this.currentFileHandle.createWritable();
+        await writable.write(jsonStr);
+        await writable.close();
+        writable = null;
+      } catch (writeErr) {
+        if (writable && typeof writable.abort === 'function') {
+          try { await writable.abort(); } catch (_) {}
+        }
+        throw writeErr;
+      }
 
-      this.markClean(this.currentFileHandle.name);
-      toast.show(`💾 프로젝트 '${this.currentFileHandle.name}' 저장 완료!`);
+      const cleared = this.markClean(this.currentFileHandle.name, { expectedDirtySeq: seqAtStart });
+      toast.show(cleared
+        ? `💾 프로젝트 '${this.currentFileHandle.name}' 저장 완료!`
+        : `💾 프로젝트 '${this.currentFileHandle.name}' 저장 완료 (저장 중 추가 수정 있음)`);
     } catch (err) {
       console.error('In-place save failed, attempting Save As:', err);
       return this.saveProjectAs(inputView);
@@ -4986,17 +5183,29 @@ class ProjectService {
         if (!handle) return;
 
         toast.show('💾 프로젝트 저장 중...');
+        const seqAtStart = this.dirtySeq;
         const jsonStr = await this.serializeProject();
-        const writable = await handle.createWritable();
-        await writable.write(jsonStr);
-        await writable.close();
+        let writable = null;
+        try {
+          writable = await handle.createWritable();
+          await writable.write(jsonStr);
+          await writable.close();
+          writable = null;
+        } catch (writeErr) {
+          if (writable && typeof writable.abort === 'function') {
+            try { await writable.abort(); } catch (_) {}
+          }
+          throw writeErr;
+        }
 
         this.currentFileHandle = handle;
-        this.markClean(handle.name);
+        const cleared = this.markClean(handle.name, { expectedDirtySeq: seqAtStart });
         this.saveLastProjectMeta(handle.name);
         this.saveHandleToIDB('last_file_handle', handle);
 
-        toast.show(`💾 프로젝트 '${handle.name}'로 새로 저장되었습니다.`);
+        toast.show(cleared
+          ? `💾 프로젝트 '${handle.name}'로 새로 저장되었습니다.`
+          : `💾 프로젝트 '${handle.name}'로 새로 저장되었습니다 (저장 중 추가 수정 있음)`);
         return;
       } catch (err) {
         if (err.name === 'AbortError') return; // User canceled
@@ -5020,7 +5229,7 @@ class ProjectService {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
 
       this.markClean(filename);
       this.saveLastProjectMeta(filename);
@@ -5947,8 +6156,14 @@ class ShortcutManager {
     const isTyping = target && (
       target.tagName === 'INPUT' ||
       target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' ||
       target.isContentEditable
     );
+    const isButtonFocus = target && (
+      target.tagName === 'BUTTON' ||
+      (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')
+    );
+    if (e.repeat) return;
 
     // Typing protection: If user is actively typing in a form field
     if (isTyping) {
@@ -5995,6 +6210,11 @@ class ShortcutManager {
           return;
         }
       }
+      return;
+    }
+
+    // Let focused buttons keep native Enter / Space activation
+    if (isButtonFocus && (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
       return;
     }
 
@@ -6729,6 +6949,11 @@ class InputView {
   }
 
   async handleAudioFile(file) {
+    // Invalidate any in-flight analysis so a late translate cannot overwrite this upload
+    this.analysisGen = (this.analysisGen || 0) + 1;
+    // Stop whatever is playing before the old source is released
+    playbackController.stop();
+
     appState.uploadedAudioFile = file;
     if (appState.uploadedAudioUrl) {
       URL.revokeObjectURL(appState.uploadedAudioUrl);
@@ -6736,13 +6961,22 @@ class InputView {
     appState.uploadedAudioUrl = URL.createObjectURL(file);
     appState.isSynthesizedAudio = false;
 
+    // Point the shared <audio> at the new file (never leave it on a revoked/old URL)
+    playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+
+    // A previous file's PCM must never survive a new upload (or a failed decode)
+    appState.audioBuffer = null;
+    const loadToken = (this.audioLoadToken = (this.audioLoadToken || 0) + 1);
+
     // Decode PCM buffer
     try {
       toast.show('⏳ 오디오 파형 분석 중...');
       const audioBuffer = await decodeAudioFile(file);
+      if (loadToken !== this.audioLoadToken) return; // a newer upload superseded this decode
       appState.audioBuffer = audioBuffer;
       toast.show(`🎵 음성 파일 첨부 완료: ${file.name}`);
     } catch (err) {
+      if (loadToken !== this.audioLoadToken) return;
       console.warn('Audio decoding fallback:', err);
       toast.show(`🎵 음성 파일 첨부 완료: ${file.name}`);
     }
@@ -6782,6 +7016,13 @@ class InputView {
   }
 
   resetAudioFile() {
+    // Invalidate any in-flight decode and stop playback before releasing the source
+    this.audioLoadToken = (this.audioLoadToken || 0) + 1;
+    playbackController.stop();
+    if (this.nativeAudioPlayer) {
+      if (typeof this.nativeAudioPlayer.removeAttribute === 'function') this.nativeAudioPlayer.removeAttribute('src');
+      if (typeof this.nativeAudioPlayer.load === 'function') this.nativeAudioPlayer.load();
+    }
     if (appState.uploadedAudioUrl) {
       URL.revokeObjectURL(appState.uploadedAudioUrl);
       appState.uploadedAudioUrl = null;
@@ -6823,6 +7064,10 @@ class InputView {
         return;
       }
     }
+
+    // Cancel in-flight translate / auto-sync so their results are discarded
+    this.analysisGen = (this.analysisGen || 0) + 1;
+    this.isAutoSyncing = false;
 
     // 1. Stop any active audio playback
     playbackController.stopAll();
@@ -6903,6 +7148,7 @@ class InputView {
     // Ctrl+Enter / preset chips can fire while a request is already running (button is disabled then)
     if (this.btnTranslate && this.btnTranslate.disabled === true) return false;
     const mode = appState.currentMode;
+    const analysisGen = (this.analysisGen = (this.analysisGen || 0) + 1);
 
     // Mode 2: Audio Only (STT)
     if (mode === 'audio') {
@@ -6925,8 +7171,10 @@ class InputView {
       this.setLoading(true);
       try {
         const base64Audio = await this.getAudioBase64(appState.uploadedAudioFile);
+        if (analysisGen !== this.analysisGen) return false;
         const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
         const aiResult = await aiService.transcribeAndTranslateAudio(base64Audio, mimeType);
+        if (analysisGen !== this.analysisGen) return false;
 
         const scriptText = aiResult.script || '';
         if (this.inputEnglish) {
@@ -6935,7 +7183,9 @@ class InputView {
         }
 
         const rawSentences = splitIntoSentences(scriptText, { filterKorean: true });
-        const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+        // Prefer shared boundary path (AI align → VAD → intro skip → end padding)
+        const boundaries = await this.computeSentenceBoundaries(rawSentences);
+        if (analysisGen !== this.analysisGen) return false;
 
         // Partition AI chunks sequentially across each sentence so S1 never contains S2/S3 chunks
         const distributedChunks = distributeChunksSequentially(rawSentences, aiResult.chunks || []);
@@ -6943,7 +7193,12 @@ class InputView {
         const sentenceList = rawSentences.map((stnText, idx) => {
           let result;
           const directStn = aiResult.sentences && aiResult.sentences[idx];
-          if (directStn && directStn.chunks && directStn.chunks.length > 0) {
+          // Only trust per-index AI sentence results when the text roughly matches
+          const directTextOk = directStn && typeof directStn.text === 'string'
+            ? directStn.text.trim().toLowerCase() === stnText.trim().toLowerCase()
+            : !!(directStn && directStn.chunks && directStn.chunks.length > 0 &&
+                 rawSentences.length === (aiResult.sentences || []).length);
+          if (directTextOk && directStn.chunks && directStn.chunks.length > 0) {
             result = {
               natural: directStn.natural || this.ruleEngine.process(stnText).natural || '',
               chunk_text: directStn.chunks.map(c => c.ko).join(' || '),
@@ -6972,6 +7227,7 @@ class InputView {
           };
         });
 
+        if (analysisGen !== this.analysisGen) return false;
         appState.scriptText = scriptText;
         appState.setSentenceList(sentenceList);
         success = true; // data is ready even if a later UI render step fails
@@ -6980,6 +7236,7 @@ class InputView {
         this.renderParsedResults({ scrollToSection: true });
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 완료! 아래에서 청크와 해석을 확인하세요.`);
       } catch (err) {
+        if (analysisGen !== this.analysisGen) return false;
         console.error(err);
         if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
           toast.show('⚠️ Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. 잠시 후(약 1분 뒤) 다시 시도하시거나, 스크립트 직접 입력 모드를 이용해 주세요.');
@@ -6987,7 +7244,7 @@ class InputView {
           toast.show(`❌ 음성 추출 오류: ${err.message}`);
         }
       } finally {
-        this.setLoading(false);
+        if (analysisGen === this.analysisGen) this.setLoading(false);
       }
       return success;
     }
@@ -7029,11 +7286,13 @@ class InputView {
 
       // AI alignment (optional) → VAD fallback → Korean intro check → end padding (see audio/boundary-utils.js)
       const boundaries = await this.computeSentenceBoundaries(rawSentences);
+      if (analysisGen !== this.analysisGen) return false;
 
       // Parallel fetch natural Korean translation for all sentences
       const naturalTranslations = await Promise.all(
         rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
       );
+      if (analysisGen !== this.analysisGen) return false;
 
       const sentenceList = rawSentences.map((stnText, idx) => {
         const natural = naturalTranslations[idx];
@@ -7074,6 +7333,7 @@ class InputView {
         })
       );
 
+      if (analysisGen !== this.analysisGen) return false;
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
       success = true; // data is ready even if a later UI render step fails
@@ -7086,6 +7346,7 @@ class InputView {
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
       }
     } catch (err) {
+      if (analysisGen !== this.analysisGen) return false;
       console.error('Translation error:', err);
       if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
         toast.show('⚠️ Gemini API 사용량 한도가 초과되어 내장 규칙 엔진 결과로 자동 전환합니다.');
@@ -7093,7 +7354,7 @@ class InputView {
         toast.show(`❌ 오류: ${err.message}`);
       }
     } finally {
-      this.setLoading(false);
+      if (analysisGen === this.analysisGen) this.setLoading(false);
     }
     return success;
   }
@@ -7106,18 +7367,29 @@ class InputView {
       toast.show('⚠️ 먼저 MP3 음성 파일과 스크립트를 입력해주세요.');
       return;
     }
+    if (this.isAutoSyncing) {
+      toast.show('⏳ 이미 오디오 동기화 중입니다...');
+      return;
+    }
 
+    this.isAutoSyncing = true;
+    const syncGen = (this.analysisGen = (this.analysisGen || 0) + 1);
+    const listSnapshot = appState.sentenceList;
     toast.show('⚡ 음성과 스크립트 자동 Sync 계산 중...');
     try {
-      const rawSentences = appState.sentenceList.map(s => s.text);
+      const rawSentences = listSnapshot.map(s => s.text);
       const boundaries = await this.computeSentenceBoundaries(rawSentences);
+      if (syncGen !== this.analysisGen || appState.sentenceList !== listSnapshot) return;
 
-      if (boundaries && boundaries.length === appState.sentenceList.length) {
-        appState.sentenceList.forEach((stn, i) => {
+      if (boundaries && boundaries.length === listSnapshot.length) {
+        listSnapshot.forEach((stn, i) => {
           stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
           stn.cachedPeaks = null;
         });
+        if (typeof projectService !== 'undefined' && projectService.markDirty) {
+          projectService.markDirty();
+        }
         const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
         this.renderParsedResults({ scrollContext: { scrollYBefore: scrollY } });
         toast.show('✨ 음성-스크립트 자동 Sync 완료! 문장별 재생 구간이 최적화되었습니다.');
@@ -7129,6 +7401,8 @@ class InputView {
       } else {
         toast.show(`❌ 자동 Sync 오류: ${err.message}`);
       }
+    } finally {
+      this.isAutoSyncing = false;
     }
   }
 
@@ -7212,9 +7486,9 @@ class InputView {
       text1 += '.';
     }
 
-    const totalDuration = (cur.audioStart !== null && cur.audioEnd !== null)
-      ? Math.max(0.6, cur.audioEnd - cur.audioStart)
-      : null;
+    const hasAudioRange = (cur.audioStart !== null && cur.audioEnd !== null &&
+      Number.isFinite(cur.audioStart) && Number.isFinite(cur.audioEnd) && cur.audioEnd > cur.audioStart);
+    const totalDuration = hasAudioRange ? (cur.audioEnd - cur.audioStart) : null;
     let part1Start = cur.audioStart;
     let part1End = null;
     let part2Start = null;
@@ -7222,7 +7496,9 @@ class InputView {
 
     if (totalDuration !== null) {
       const fraction1 = wordsPart1.length / words.length;
-      const splitTime = Math.round((cur.audioStart + totalDuration * fraction1) * 10) / 10;
+      let splitTime = Math.round((cur.audioStart + totalDuration * fraction1) * 10) / 10;
+      // Keep both halves non-empty and within [audioStart, audioEnd]
+      splitTime = Math.min(cur.audioEnd - 0.05, Math.max(cur.audioStart + 0.05, splitTime));
       part1End = splitTime;
       part2Start = splitTime;
     }
@@ -7546,22 +7822,27 @@ class InputView {
         timeBadge.addEventListener('click', () => {
           if (this.trimmerModal && appState.audioBuffer) {
             this.trimmerModal.open(stn, appState.audioBuffer, (newStart, newEnd) => {
+              // Drop stale callbacks if the list was rebuilt while the modal was open
+              if (!appState.sentenceList || appState.sentenceList[idx] !== stn) return;
               stn.audioStart = newStart;
               stn.audioEnd = newEnd;
               stn.cachedPeaks = null;
               timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
 
-              // Synchronize adjacent sentences so no overlap occurs
+              // Synchronize adjacent sentences so no overlap / zero-length ranges occur
+              const MIN_SEG = 0.2;
               const prevStn = idx > 0 ? appState.sentenceList[idx - 1] : null;
               const nextStn = idx < appState.sentenceList.length - 1 ? appState.sentenceList[idx + 1] : null;
               if (prevStn && prevStn.audioEnd !== null && Math.abs(prevStn.audioEnd - newStart) > 0.05) {
-                prevStn.audioEnd = newStart;
+                const prevStart = (prevStn.audioStart != null) ? prevStn.audioStart : 0;
+                prevStn.audioEnd = Math.max(prevStart + MIN_SEG, newStart);
                 prevStn.cachedPeaks = null;
                 const prevBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .stn-audio-time`);
                 if (prevBadge) prevBadge.textContent = `⏱ ${this.formatSec(prevStn.audioStart)} ~ ${this.formatSec(prevStn.audioEnd)}`;
               }
               if (nextStn && nextStn.audioStart !== null && Math.abs(nextStn.audioStart - newEnd) > 0.05) {
-                nextStn.audioStart = newEnd;
+                const nextEnd = (nextStn.audioEnd != null) ? nextStn.audioEnd : newEnd + MIN_SEG;
+                nextStn.audioStart = Math.min(nextEnd - MIN_SEG, newEnd);
                 nextStn.cachedPeaks = null;
                 const nextBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx + 1}"] .stn-audio-time`);
                 if (nextBadge) nextBadge.textContent = `⏱ ${this.formatSec(nextStn.audioStart)} ~ ${this.formatSec(nextStn.audioEnd)}`;
@@ -8346,7 +8627,7 @@ class InputView {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast.show('📥 A4 양면 유인물 HTML 파일이 다운로드되었습니다.');
   }
 
@@ -8646,6 +8927,8 @@ class PracticeView {
    * Page 2 started the current playback. Prevents pausing Page 1 / Page 3 segment playback.
    */
   isLooperActive() {
+    // Whole-script play-all owns the player as 'practice' but must not trigger A-B / sentence repeats
+    if (this.isPlayingAllSentences) return false;
     const onPracticePage = !this.router || typeof this.router.getCurrentPage !== 'function'
       || this.router.getCurrentPage() === 'practice';
     return onPracticePage && playbackController.isOwnedBy('practice');
@@ -8797,6 +9080,9 @@ class PracticeView {
 
     // Listen to AppState events
     appState.on('sentencesLoaded', (list) => {
+      // The previously rendered inputs belong to the OLD list: never save them into the new one
+      this.currentRenderedSentenceIndex = null;
+      this.felsBlanks = [];
       this.renderSentenceNavigator();
       this.loadSentence(0);
     });
@@ -8822,7 +9108,10 @@ class PracticeView {
     if (this.chunksContainer && this.chunksContainer.parentElement && typeof ResizeObserver !== 'undefined') {
       let lastObservedW = 0;
       const roChunks = new ResizeObserver((entries) => {
-        if (appState.currentView === 'practice') {
+        const onPractice = this.router && typeof this.router.getCurrentPage === 'function'
+          ? this.router.getCurrentPage() === 'practice'
+          : true;
+        if (onPractice) {
           const entry = entries[0];
           const currentW = entry ? Math.round(entry.contentRect.width) : 0;
           if (currentW > 0 && Math.abs(currentW - lastObservedW) >= 4) {
@@ -8921,14 +9210,19 @@ class PracticeView {
     const targetStn = appState.sentenceList[renderedIdx];
     if (!targetStn.userAnswers) targetStn.userAnswers = {};
 
+    let changed = false;
     const inputs = this.chunksContainer.querySelectorAll('.fels-blank-input');
     inputs.forEach((input, fallbackIdx) => {
       const bIdxAttr = input.getAttribute('data-blank-idx');
       const bIdx = (bIdxAttr !== null && !isNaN(parseInt(bIdxAttr, 10))) ? parseInt(bIdxAttr, 10) : fallbackIdx;
-      targetStn.userAnswers[bIdx] = input.value;
+      const next = input.value;
+      if (targetStn.userAnswers[bIdx] !== next) {
+        targetStn.userAnswers[bIdx] = next;
+        changed = true;
+      }
     });
 
-    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+    if (changed && typeof projectService !== 'undefined' && projectService.markDirty) {
       projectService.markDirty();
     }
   }
@@ -8938,14 +9232,18 @@ class PracticeView {
     if (!appState.sentenceList || idx < 0 || idx >= appState.sentenceList.length) return;
     appState.activeSentenceIndex = idx;
     const targetStn = appState.sentenceList[idx];
+    const loadToken = (this.sentenceLoadToken = (this.sentenceLoadToken || 0) + 1);
 
     // Compute or fetch 3x1 chunk result
     if (!targetStn.result) {
       if (aiService.hasKey()) {
         try {
           toast.show(`🤖 문장 S${idx + 1} AI 3x1 해석 생성 중...`);
-          targetStn.result = await aiService.translate(targetStn.text);
+          const translated = await aiService.translate(targetStn.text);
+          if (loadToken !== this.sentenceLoadToken) return;
+          targetStn.result = translated || this.ruleEngine.process(targetStn.text);
         } catch (e) {
+          if (loadToken !== this.sentenceLoadToken) return;
           console.warn('AI translation failed, using rule engine:', e);
           if (e.isQuotaExceeded || (e.message && (e.message.includes('Quota') || e.message.includes('429')))) {
             toast.show('⚠️ Gemini API 사용량 한도가 일시 초과되어 내장 규칙 엔진 결과를 적용합니다.');
@@ -8955,6 +9253,10 @@ class PracticeView {
       } else {
         targetStn.result = this.ruleEngine.process(targetStn.text);
       }
+    }
+    if (loadToken !== this.sentenceLoadToken) return;
+    if (!targetStn.result) {
+      targetStn.result = this.ruleEngine.process(targetStn.text);
     }
 
     // Sanity check: Ensure this sentence does not contain foreign chunks belonging to other sentences
@@ -10485,6 +10787,24 @@ class PracticeView {
 
   onDeactivated() {
     this.saveCurrentSentenceAnswers();
+
+    // Silently tear down every timer that could restart playback on another page
+    if (this.isPlayingAllSentences) {
+      this.isPlayingAllSentences = false;
+      this.updatePlayAllSentencesButtonUI(false);
+    }
+    clearTimeout(this.playAllTimer);
+    this.playAllTimer = null;
+    if (this.playAllEndHandler && this.nativeAudioPlayer) {
+      this.nativeAudioPlayer.removeEventListener('timeupdate', this.playAllEndHandler);
+      this.playAllEndHandler = null;
+    }
+    if (this.looperEngine && typeof this.looperEngine.reset === 'function') {
+      this.looperEngine.reset();
+    }
+    if (typeof this.closeTranslationModal === 'function') {
+      this.closeTranslationModal();
+    }
     if (this.nativeAudioPlayer && typeof this.nativeAudioPlayer.pause === 'function') {
       try {
         if (!this.nativeAudioPlayer.paused) {

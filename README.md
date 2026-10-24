@@ -735,3 +735,19 @@ npm test               # = node tools/run-tests.js
 pm run check: 28개 파일 구문 검사 통과.
   - 
 pm test: 작업 폴더 pp.js 기준 41/46 통과, src/로 새로 빌드한 번들 기준 46/46 통과.
+
+## [2026-10-24 14:56] 업데이트 이력 (Commit ID: PENDING_HASH)
+- **수정 내용**:
+  - /apply로 코드 리뷰 수정 계획서(docs/implementation/20261024_1445_code_review_fix_plan.md) 반영.
+  - 0단계: pp.js/styles.css 재빌드, 	ools/run-tests.js 번들 신선도 경고 추가.
+  - 1단계 High: TTS speakText({ onEnd }), 오디오 소스·디코드 경쟁 가드, Practice 2 이탈 시 타이머 정리, 프로젝트 로드 시 답안 덮어쓰기 방지, AI 제공자 키 격리, VERB_MAP 정렬 수정.
+  - 2단계 Medium: Gemini 쿨다운 분리·429 재시도 제한, AI 정렬 타임스탬프 검증, 프로젝트 열기/저장(dirtySeq) 안정화, nalysisGen/loadToken, 단축키 SELECT·버튼 포커스, 루퍼·재생 컨트롤러·VAD·문장 분리/구간 조정 보완.
+  - 3단계 Low(일부): ormatPreciseTime, WAV 부호 분기, 다운로드 revoke 지연, 사전 ownGet 조회.
+  - 회귀 테스트 scratch/test_review_fixes_stage1.js 추가, 	est_playback_controller.js 기대값 갱신.
+- **검증 결과**:
+  - 
+pm run check: 28개 파일 구문 검사 통과.
+  - 
+pm run build: 단독 번들 빌드 성공 (pp.js 441.0 KB).
+  - 
+pm test: 전체 47/47개 테스트 스위트 통과.

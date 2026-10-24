@@ -193,9 +193,9 @@ export class WaveformRenderer {
     ctx.lineTo(width, centerY);
     ctx.stroke();
 
-    // Sentence time window
-    const stnStart = (activeSentence && activeSentence.audioStart !== null) ? activeSentence.audioStart : 0;
-    const stnEnd = (activeSentence && activeSentence.audioEnd !== null) ? activeSentence.audioEnd : totalDuration;
+    // Sentence time window (treat undefined the same as null — otherwise NaN blanks the bars)
+    const stnStart = (activeSentence && Number.isFinite(activeSentence.audioStart)) ? activeSentence.audioStart : 0;
+    const stnEnd = (activeSentence && Number.isFinite(activeSentence.audioEnd)) ? activeSentence.audioEnd : totalDuration;
     const stnDuration = Math.max(0.1, stnEnd - stnStart);
 
     const curTime = currentTime || 0;

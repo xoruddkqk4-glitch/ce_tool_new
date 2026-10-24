@@ -16,6 +16,29 @@ const files = fs.readdirSync(TEST_DIR)
   .filter(f => /^test_.*\.js$/.test(f) && f.includes(filter))
   .sort();
 
+// Bundle freshness guard: tests execute the built app.js, so a stale bundle gives misleading results.
+function newestMtime(dir) {
+  let newest = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    const t = entry.isDirectory() ? newestMtime(full) : fs.statSync(full).mtimeMs;
+    if (t > newest) newest = t;
+  }
+  return newest;
+}
+try {
+  const bundleTime = Math.min(
+    fs.statSync(path.join(ROOT, 'app.js')).mtimeMs,
+    fs.statSync(path.join(ROOT, 'styles.css')).mtimeMs
+  );
+  const srcTime = Math.max(newestMtime(path.join(ROOT, 'src')), newestMtime(path.join(ROOT, 'styles')));
+  if (srcTime > bundleTime + 1000) {
+    console.log('⚠️  app.js / styles.css are OLDER than src/ or styles/. Run `npm run build` first, or test results may be stale.\n');
+  }
+} catch (e) {
+  console.log(`⚠️  Could not verify bundle freshness: ${e.message}\n`);
+}
+
 let failed = 0;
 const started = Date.now();
 

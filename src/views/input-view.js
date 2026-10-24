@@ -559,6 +559,11 @@ export class InputView {
   }
 
   async handleAudioFile(file) {
+    // Invalidate any in-flight analysis so a late translate cannot overwrite this upload
+    this.analysisGen = (this.analysisGen || 0) + 1;
+    // Stop whatever is playing before the old source is released
+    playbackController.stop();
+
     appState.uploadedAudioFile = file;
     if (appState.uploadedAudioUrl) {
       URL.revokeObjectURL(appState.uploadedAudioUrl);
@@ -566,13 +571,22 @@ export class InputView {
     appState.uploadedAudioUrl = URL.createObjectURL(file);
     appState.isSynthesizedAudio = false;
 
+    // Point the shared <audio> at the new file (never leave it on a revoked/old URL)
+    playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
+
+    // A previous file's PCM must never survive a new upload (or a failed decode)
+    appState.audioBuffer = null;
+    const loadToken = (this.audioLoadToken = (this.audioLoadToken || 0) + 1);
+
     // Decode PCM buffer
     try {
       toast.show('⏳ 오디오 파형 분석 중...');
       const audioBuffer = await decodeAudioFile(file);
+      if (loadToken !== this.audioLoadToken) return; // a newer upload superseded this decode
       appState.audioBuffer = audioBuffer;
       toast.show(`🎵 음성 파일 첨부 완료: ${file.name}`);
     } catch (err) {
+      if (loadToken !== this.audioLoadToken) return;
       console.warn('Audio decoding fallback:', err);
       toast.show(`🎵 음성 파일 첨부 완료: ${file.name}`);
     }
@@ -612,6 +626,13 @@ export class InputView {
   }
 
   resetAudioFile() {
+    // Invalidate any in-flight decode and stop playback before releasing the source
+    this.audioLoadToken = (this.audioLoadToken || 0) + 1;
+    playbackController.stop();
+    if (this.nativeAudioPlayer) {
+      if (typeof this.nativeAudioPlayer.removeAttribute === 'function') this.nativeAudioPlayer.removeAttribute('src');
+      if (typeof this.nativeAudioPlayer.load === 'function') this.nativeAudioPlayer.load();
+    }
     if (appState.uploadedAudioUrl) {
       URL.revokeObjectURL(appState.uploadedAudioUrl);
       appState.uploadedAudioUrl = null;
@@ -653,6 +674,10 @@ export class InputView {
         return;
       }
     }
+
+    // Cancel in-flight translate / auto-sync so their results are discarded
+    this.analysisGen = (this.analysisGen || 0) + 1;
+    this.isAutoSyncing = false;
 
     // 1. Stop any active audio playback
     playbackController.stopAll();
@@ -733,6 +758,7 @@ export class InputView {
     // Ctrl+Enter / preset chips can fire while a request is already running (button is disabled then)
     if (this.btnTranslate && this.btnTranslate.disabled === true) return false;
     const mode = appState.currentMode;
+    const analysisGen = (this.analysisGen = (this.analysisGen || 0) + 1);
 
     // Mode 2: Audio Only (STT)
     if (mode === 'audio') {
@@ -755,8 +781,10 @@ export class InputView {
       this.setLoading(true);
       try {
         const base64Audio = await this.getAudioBase64(appState.uploadedAudioFile);
+        if (analysisGen !== this.analysisGen) return false;
         const mimeType = appState.uploadedAudioFile.type || 'audio/mp3';
         const aiResult = await aiService.transcribeAndTranslateAudio(base64Audio, mimeType);
+        if (analysisGen !== this.analysisGen) return false;
 
         const scriptText = aiResult.script || '';
         if (this.inputEnglish) {
@@ -765,7 +793,9 @@ export class InputView {
         }
 
         const rawSentences = splitIntoSentences(scriptText, { filterKorean: true });
-        const boundaries = detectAudioSentenceBoundaries(appState.audioBuffer, rawSentences);
+        // Prefer shared boundary path (AI align → VAD → intro skip → end padding)
+        const boundaries = await this.computeSentenceBoundaries(rawSentences);
+        if (analysisGen !== this.analysisGen) return false;
 
         // Partition AI chunks sequentially across each sentence so S1 never contains S2/S3 chunks
         const distributedChunks = distributeChunksSequentially(rawSentences, aiResult.chunks || []);
@@ -773,7 +803,12 @@ export class InputView {
         const sentenceList = rawSentences.map((stnText, idx) => {
           let result;
           const directStn = aiResult.sentences && aiResult.sentences[idx];
-          if (directStn && directStn.chunks && directStn.chunks.length > 0) {
+          // Only trust per-index AI sentence results when the text roughly matches
+          const directTextOk = directStn && typeof directStn.text === 'string'
+            ? directStn.text.trim().toLowerCase() === stnText.trim().toLowerCase()
+            : !!(directStn && directStn.chunks && directStn.chunks.length > 0 &&
+                 rawSentences.length === (aiResult.sentences || []).length);
+          if (directTextOk && directStn.chunks && directStn.chunks.length > 0) {
             result = {
               natural: directStn.natural || this.ruleEngine.process(stnText).natural || '',
               chunk_text: directStn.chunks.map(c => c.ko).join(' || '),
@@ -802,6 +837,7 @@ export class InputView {
           };
         });
 
+        if (analysisGen !== this.analysisGen) return false;
         appState.scriptText = scriptText;
         appState.setSentenceList(sentenceList);
         success = true; // data is ready even if a later UI render step fails
@@ -810,6 +846,7 @@ export class InputView {
         this.renderParsedResults({ scrollToSection: true });
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 완료! 아래에서 청크와 해석을 확인하세요.`);
       } catch (err) {
+        if (analysisGen !== this.analysisGen) return false;
         console.error(err);
         if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
           toast.show('⚠️ Gemini API 사용량 한도(Quota / 분당 요청수)가 초과되었습니다. 잠시 후(약 1분 뒤) 다시 시도하시거나, 스크립트 직접 입력 모드를 이용해 주세요.');
@@ -817,7 +854,7 @@ export class InputView {
           toast.show(`❌ 음성 추출 오류: ${err.message}`);
         }
       } finally {
-        this.setLoading(false);
+        if (analysisGen === this.analysisGen) this.setLoading(false);
       }
       return success;
     }
@@ -859,11 +896,13 @@ export class InputView {
 
       // AI alignment (optional) → VAD fallback → Korean intro check → end padding (see audio/boundary-utils.js)
       const boundaries = await this.computeSentenceBoundaries(rawSentences);
+      if (analysisGen !== this.analysisGen) return false;
 
       // Parallel fetch natural Korean translation for all sentences
       const naturalTranslations = await Promise.all(
         rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
       );
+      if (analysisGen !== this.analysisGen) return false;
 
       const sentenceList = rawSentences.map((stnText, idx) => {
         const natural = naturalTranslations[idx];
@@ -904,6 +943,7 @@ export class InputView {
         })
       );
 
+      if (analysisGen !== this.analysisGen) return false;
       appState.scriptText = text;
       appState.setSentenceList(sentenceList);
       success = true; // data is ready even if a later UI render step fails
@@ -916,6 +956,7 @@ export class InputView {
         toast.show(`✨ 총 ${rawSentences.length}개 문장 파싱 및 자연스러운 직독직해 분석 완료!`);
       }
     } catch (err) {
+      if (analysisGen !== this.analysisGen) return false;
       console.error('Translation error:', err);
       if (err.isQuotaExceeded || (err.message && (err.message.includes('Quota') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
         toast.show('⚠️ Gemini API 사용량 한도가 초과되어 내장 규칙 엔진 결과로 자동 전환합니다.');
@@ -923,7 +964,7 @@ export class InputView {
         toast.show(`❌ 오류: ${err.message}`);
       }
     } finally {
-      this.setLoading(false);
+      if (analysisGen === this.analysisGen) this.setLoading(false);
     }
     return success;
   }
@@ -936,18 +977,29 @@ export class InputView {
       toast.show('⚠️ 먼저 MP3 음성 파일과 스크립트를 입력해주세요.');
       return;
     }
+    if (this.isAutoSyncing) {
+      toast.show('⏳ 이미 오디오 동기화 중입니다...');
+      return;
+    }
 
+    this.isAutoSyncing = true;
+    const syncGen = (this.analysisGen = (this.analysisGen || 0) + 1);
+    const listSnapshot = appState.sentenceList;
     toast.show('⚡ 음성과 스크립트 자동 Sync 계산 중...');
     try {
-      const rawSentences = appState.sentenceList.map(s => s.text);
+      const rawSentences = listSnapshot.map(s => s.text);
       const boundaries = await this.computeSentenceBoundaries(rawSentences);
+      if (syncGen !== this.analysisGen || appState.sentenceList !== listSnapshot) return;
 
-      if (boundaries && boundaries.length === appState.sentenceList.length) {
-        appState.sentenceList.forEach((stn, i) => {
+      if (boundaries && boundaries.length === listSnapshot.length) {
+        listSnapshot.forEach((stn, i) => {
           stn.audioStart = boundaries[i]?.start ?? stn.audioStart;
           stn.audioEnd = boundaries[i]?.end ?? stn.audioEnd;
           stn.cachedPeaks = null;
         });
+        if (typeof projectService !== 'undefined' && projectService.markDirty) {
+          projectService.markDirty();
+        }
         const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
         this.renderParsedResults({ scrollContext: { scrollYBefore: scrollY } });
         toast.show('✨ 음성-스크립트 자동 Sync 완료! 문장별 재생 구간이 최적화되었습니다.');
@@ -959,6 +1011,8 @@ export class InputView {
       } else {
         toast.show(`❌ 자동 Sync 오류: ${err.message}`);
       }
+    } finally {
+      this.isAutoSyncing = false;
     }
   }
 
@@ -1042,9 +1096,9 @@ export class InputView {
       text1 += '.';
     }
 
-    const totalDuration = (cur.audioStart !== null && cur.audioEnd !== null)
-      ? Math.max(0.6, cur.audioEnd - cur.audioStart)
-      : null;
+    const hasAudioRange = (cur.audioStart !== null && cur.audioEnd !== null &&
+      Number.isFinite(cur.audioStart) && Number.isFinite(cur.audioEnd) && cur.audioEnd > cur.audioStart);
+    const totalDuration = hasAudioRange ? (cur.audioEnd - cur.audioStart) : null;
     let part1Start = cur.audioStart;
     let part1End = null;
     let part2Start = null;
@@ -1052,7 +1106,9 @@ export class InputView {
 
     if (totalDuration !== null) {
       const fraction1 = wordsPart1.length / words.length;
-      const splitTime = Math.round((cur.audioStart + totalDuration * fraction1) * 10) / 10;
+      let splitTime = Math.round((cur.audioStart + totalDuration * fraction1) * 10) / 10;
+      // Keep both halves non-empty and within [audioStart, audioEnd]
+      splitTime = Math.min(cur.audioEnd - 0.05, Math.max(cur.audioStart + 0.05, splitTime));
       part1End = splitTime;
       part2Start = splitTime;
     }
@@ -1376,22 +1432,27 @@ export class InputView {
         timeBadge.addEventListener('click', () => {
           if (this.trimmerModal && appState.audioBuffer) {
             this.trimmerModal.open(stn, appState.audioBuffer, (newStart, newEnd) => {
+              // Drop stale callbacks if the list was rebuilt while the modal was open
+              if (!appState.sentenceList || appState.sentenceList[idx] !== stn) return;
               stn.audioStart = newStart;
               stn.audioEnd = newEnd;
               stn.cachedPeaks = null;
               timeBadge.textContent = `⏱ ${this.formatSec(stn.audioStart)} ~ ${this.formatSec(stn.audioEnd)}`;
 
-              // Synchronize adjacent sentences so no overlap occurs
+              // Synchronize adjacent sentences so no overlap / zero-length ranges occur
+              const MIN_SEG = 0.2;
               const prevStn = idx > 0 ? appState.sentenceList[idx - 1] : null;
               const nextStn = idx < appState.sentenceList.length - 1 ? appState.sentenceList[idx + 1] : null;
               if (prevStn && prevStn.audioEnd !== null && Math.abs(prevStn.audioEnd - newStart) > 0.05) {
-                prevStn.audioEnd = newStart;
+                const prevStart = (prevStn.audioStart != null) ? prevStn.audioStart : 0;
+                prevStn.audioEnd = Math.max(prevStart + MIN_SEG, newStart);
                 prevStn.cachedPeaks = null;
                 const prevBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx - 1}"] .stn-audio-time`);
                 if (prevBadge) prevBadge.textContent = `⏱ ${this.formatSec(prevStn.audioStart)} ~ ${this.formatSec(prevStn.audioEnd)}`;
               }
               if (nextStn && nextStn.audioStart !== null && Math.abs(nextStn.audioStart - newEnd) > 0.05) {
-                nextStn.audioStart = newEnd;
+                const nextEnd = (nextStn.audioEnd != null) ? nextStn.audioEnd : newEnd + MIN_SEG;
+                nextStn.audioStart = Math.min(nextEnd - MIN_SEG, newEnd);
                 nextStn.cachedPeaks = null;
                 const nextBadge = this.parsedSentenceList.querySelector(`[data-stn-idx="${idx + 1}"] .stn-audio-time`);
                 if (nextBadge) nextBadge.textContent = `⏱ ${this.formatSec(nextStn.audioStart)} ~ ${this.formatSec(nextStn.audioEnd)}`;
@@ -2176,7 +2237,7 @@ export class InputView {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast.show('📥 A4 양면 유인물 HTML 파일이 다운로드되었습니다.');
   }
 

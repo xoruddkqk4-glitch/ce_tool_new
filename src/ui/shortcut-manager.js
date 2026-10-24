@@ -64,8 +64,14 @@ export class ShortcutManager {
     const isTyping = target && (
       target.tagName === 'INPUT' ||
       target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' ||
       target.isContentEditable
     );
+    const isButtonFocus = target && (
+      target.tagName === 'BUTTON' ||
+      (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')
+    );
+    if (e.repeat) return;
 
     // Typing protection: If user is actively typing in a form field
     if (isTyping) {
@@ -112,6 +118,11 @@ export class ShortcutManager {
           return;
         }
       }
+      return;
+    }
+
+    // Let focused buttons keep native Enter / Space activation
+    if (isButtonFocus && (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
       return;
     }
 

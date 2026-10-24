@@ -18,6 +18,7 @@ export class ProjectService {
     this.lastDirectoryHandle = null;
     this.currentProjectName = '새 프로젝트';
     this.isDirty = false;
+    this.dirtySeq = 0; // bumps on every markDirty; used so in-flight saves don't clear newer edits
     this.dbPromise = null;
     this.onStateChangeCallbacks = [];
   }
@@ -48,16 +49,24 @@ export class ProjectService {
   }
 
   markDirty() {
+    this.dirtySeq++;
     if (!this.isDirty) {
       this.isDirty = true;
       this.notifyStateChange();
     }
   }
 
-  markClean(name = this.currentProjectName) {
+  markClean(name = this.currentProjectName, { expectedDirtySeq = null } = {}) {
+    // If the caller captured a dirtySeq before serializing, only clear when nothing newer arrived
+    if (expectedDirtySeq !== null && expectedDirtySeq !== this.dirtySeq) {
+      this.currentProjectName = name;
+      this.notifyStateChange();
+      return false;
+    }
     this.isDirty = false;
     this.currentProjectName = name;
     this.notifyStateChange();
+    return true;
   }
 
   resetProject() {
@@ -225,6 +234,9 @@ export class ProjectService {
       }
       appState.isSynthesizedAudio = !!data.audio.isSynthesized;
 
+      // Never keep the previous project's PCM if this decode fails
+      appState.audioBuffer = null;
+
       try {
         if (typeof decodeAudioFile === 'function') {
           appState.audioBuffer = await decodeAudioFile(audioFile);
@@ -282,6 +294,7 @@ export class ProjectService {
    * ------------------------------------------------------------------------- */
   async openProject(inputView) {
     if (typeof window !== 'undefined' && typeof window.showOpenFilePicker === 'function') {
+      let handle = null;
       try {
         const pickerOpts = {
           id: PROJECT_PICKER_ID, // Chromium MRU automatic folder memory!
@@ -297,12 +310,21 @@ export class ProjectService {
           pickerOpts.startIn = savedDir;
         }
 
-        const [handle] = await window.showOpenFilePicker(pickerOpts);
-        if (!handle) return;
+        const picked = await window.showOpenFilePicker(pickerOpts);
+        handle = picked && picked[0] ? picked[0] : null;
+      } catch (err) {
+        if (err.name === 'AbortError') return; // User canceled
+        console.warn('Native file picker failed, falling back to input:', err);
+        this.openWithFileInputFallback(inputView);
+        return;
+      }
 
+      if (!handle) return;
+
+      // Deserialize failures must NOT fall through to a second file picker
+      try {
         const file = await handle.getFile();
         const text = await file.text();
-
         await this.deserializeAndApply(text, inputView);
 
         this.currentFileHandle = handle;
@@ -311,11 +333,10 @@ export class ProjectService {
         this.saveHandleToIDB('last_file_handle', handle);
 
         toast.show(`📂 프로젝트 '${handle.name}'를 성공적으로 불러왔습니다.`);
-        return;
       } catch (err) {
-        if (err.name === 'AbortError') return; // User canceled
-        console.warn('Native file picker failed, falling back to input:', err);
+        toast.show(`❌ 프로젝트 불러오기 실패: ${err.message || err}`);
       }
+      return;
     }
 
     // Fallback: <input type="file">
@@ -362,13 +383,25 @@ export class ProjectService {
       }
 
       toast.show('💾 프로젝트 저장 중...');
+      const seqAtStart = this.dirtySeq;
       const jsonStr = await this.serializeProject();
-      const writable = await this.currentFileHandle.createWritable();
-      await writable.write(jsonStr);
-      await writable.close();
+      let writable = null;
+      try {
+        writable = await this.currentFileHandle.createWritable();
+        await writable.write(jsonStr);
+        await writable.close();
+        writable = null;
+      } catch (writeErr) {
+        if (writable && typeof writable.abort === 'function') {
+          try { await writable.abort(); } catch (_) {}
+        }
+        throw writeErr;
+      }
 
-      this.markClean(this.currentFileHandle.name);
-      toast.show(`💾 프로젝트 '${this.currentFileHandle.name}' 저장 완료!`);
+      const cleared = this.markClean(this.currentFileHandle.name, { expectedDirtySeq: seqAtStart });
+      toast.show(cleared
+        ? `💾 프로젝트 '${this.currentFileHandle.name}' 저장 완료!`
+        : `💾 프로젝트 '${this.currentFileHandle.name}' 저장 완료 (저장 중 추가 수정 있음)`);
     } catch (err) {
       console.error('In-place save failed, attempting Save As:', err);
       return this.saveProjectAs(inputView);
@@ -398,17 +431,29 @@ export class ProjectService {
         if (!handle) return;
 
         toast.show('💾 프로젝트 저장 중...');
+        const seqAtStart = this.dirtySeq;
         const jsonStr = await this.serializeProject();
-        const writable = await handle.createWritable();
-        await writable.write(jsonStr);
-        await writable.close();
+        let writable = null;
+        try {
+          writable = await handle.createWritable();
+          await writable.write(jsonStr);
+          await writable.close();
+          writable = null;
+        } catch (writeErr) {
+          if (writable && typeof writable.abort === 'function') {
+            try { await writable.abort(); } catch (_) {}
+          }
+          throw writeErr;
+        }
 
         this.currentFileHandle = handle;
-        this.markClean(handle.name);
+        const cleared = this.markClean(handle.name, { expectedDirtySeq: seqAtStart });
         this.saveLastProjectMeta(handle.name);
         this.saveHandleToIDB('last_file_handle', handle);
 
-        toast.show(`💾 프로젝트 '${handle.name}'로 새로 저장되었습니다.`);
+        toast.show(cleared
+          ? `💾 프로젝트 '${handle.name}'로 새로 저장되었습니다.`
+          : `💾 프로젝트 '${handle.name}'로 새로 저장되었습니다 (저장 중 추가 수정 있음)`);
         return;
       } catch (err) {
         if (err.name === 'AbortError') return; // User canceled
@@ -432,7 +477,7 @@ export class ProjectService {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
 
       this.markClean(filename);
       this.saveLastProjectMeta(filename);

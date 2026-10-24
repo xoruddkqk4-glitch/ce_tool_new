@@ -6,15 +6,16 @@
 import { CONSTANTS } from '../config/constants.js';
 
 export function formatPreciseTime(seconds) {
-  if (isNaN(seconds) || seconds < 0) return '00:00.0';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  const tenths = Math.floor((seconds % 1) * 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00.0';
+  const totalTenths = Math.round(seconds * 10);
+  const mins = Math.floor(totalTenths / 600);
+  const secs = Math.floor((totalTenths % 600) / 10);
+  const tenths = totalTenths % 10;
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${tenths}`;
 }
 
 export function formatTime(seconds) {
-  if (isNaN(seconds) || seconds < 0) return '00:00';
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
@@ -50,7 +51,10 @@ export class LooperEngine {
    */
   checkBoundary() {
     const player = this.audioPlayer;
-    if (!player || player.paused || player.ended) return;
+    // `ended` must still run boundary logic (last sentence often ends at media duration).
+    // When media ends, `paused` is also true — so allow `ended` through.
+    if (!player) return;
+    if (player.paused && !player.ended) return;
 
     const cur = player.currentTime;
     const { loopStart, loopEnd, targetLoopCount, isShadowingWaiting } = this.appState;
@@ -73,7 +77,12 @@ export class LooperEngine {
 
     if (effectiveStart === null || effectiveEnd === null) return;
 
-    if (cur >= effectiveEnd) {
+    // Keep the loop end just short of media duration so `ended` and the boundary agree
+    if (Number.isFinite(player.duration) && player.duration > 0) {
+      effectiveEnd = Math.min(effectiveEnd, Math.max(effectiveStart, player.duration - 0.05));
+    }
+
+    if (player.ended || cur >= effectiveEnd) {
       player.pause();
       this.appState.currentLoopCount++;
       this.callbacks.onLoopCountUpdate(this.appState.currentLoopCount, targetLoopCount);
@@ -93,6 +102,8 @@ export class LooperEngine {
 
           clearTimeout(this.shadowTimer);
           this.shadowTimer = setTimeout(() => {
+            // reset()/setLoopRange() may have cancelled the wait in the meantime
+            if (!this.appState.isShadowingWaiting) return;
             this.appState.isShadowingWaiting = false;
             this.callbacks.onShadowingWait(false);
             this.restartLoop(effectiveStart);

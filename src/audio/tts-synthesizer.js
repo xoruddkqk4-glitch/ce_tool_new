@@ -40,7 +40,7 @@ export function audioBufferToWavBlob(buffer) {
     for (let chan = 0; chan < numOfChan; chan++) {
       let sample = channels[chan][i];
       sample = Math.max(-1, Math.min(1, sample));
-      sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0;
+      sample = (sample < 0 ? sample * 32768 : sample * 32767) | 0;
       view.setInt16(pos, sample, true);
       pos += 2;
     }
@@ -93,8 +93,35 @@ export function synthesizeSilentAudioForScript(text, audioCtx) {
   };
 }
 
-export function speakText(text, lang = 'en-US', rate = 0.95) {
-  if (!('speechSynthesis' in window) || !text) return;
+/**
+ * Speak text via Web Speech API.
+ * Usage: speakText(text, 'en-US', 0.95)  or  speakText(text, { lang, rate, onEnd })
+ * `onEnd` fires exactly once when speech finishes, errors, or TTS is unavailable
+ * (so "play all" sequences never stall).
+ */
+export function speakText(text, langOrOpts = 'en-US', rateArg = 0.95) {
+  let lang = 'en-US';
+  let rate = rateArg;
+  let onEnd = null;
+  if (langOrOpts && typeof langOrOpts === 'object') {
+    if (typeof langOrOpts.lang === 'string') lang = langOrOpts.lang;
+    if (typeof langOrOpts.rate === 'number') rate = langOrOpts.rate;
+    if (typeof langOrOpts.onEnd === 'function') onEnd = langOrOpts.onEnd;
+  } else if (typeof langOrOpts === 'string') {
+    lang = langOrOpts;
+  }
+
+  let ended = false;
+  const finish = () => {
+    if (ended) return;
+    ended = true;
+    if (onEnd) onEnd();
+  };
+
+  if (!('speechSynthesis' in window) || !text) {
+    finish();
+    return;
+  }
   try {
     window.speechSynthesis.cancel();
     if (window.speechSynthesis.paused) {
@@ -103,6 +130,12 @@ export function speakText(text, lang = 'en-US', rate = 0.95) {
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = lang;
     utter.rate = rate;
+    utter.onend = finish;
+    utter.onerror = (ev) => {
+      // cancel()/interrupt by a newer utterance must not advance a sequence
+      if (ev && (ev.error === 'canceled' || ev.error === 'interrupted')) return;
+      finish();
+    };
 
     // Pick authentic voice if available
     const voices = window.speechSynthesis.getVoices();
@@ -114,5 +147,6 @@ export function speakText(text, lang = 'en-US', rate = 0.95) {
     window.speechSynthesis.speak(utter);
   } catch (e) {
     console.warn('TTS playback error:', e);
+    finish();
   }
 }

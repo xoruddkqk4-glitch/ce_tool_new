@@ -166,6 +166,8 @@ export class PracticeView {
    * Page 2 started the current playback. Prevents pausing Page 1 / Page 3 segment playback.
    */
   isLooperActive() {
+    // Whole-script play-all owns the player as 'practice' but must not trigger A-B / sentence repeats
+    if (this.isPlayingAllSentences) return false;
     const onPracticePage = !this.router || typeof this.router.getCurrentPage !== 'function'
       || this.router.getCurrentPage() === 'practice';
     return onPracticePage && playbackController.isOwnedBy('practice');
@@ -317,6 +319,9 @@ export class PracticeView {
 
     // Listen to AppState events
     appState.on('sentencesLoaded', (list) => {
+      // The previously rendered inputs belong to the OLD list: never save them into the new one
+      this.currentRenderedSentenceIndex = null;
+      this.felsBlanks = [];
       this.renderSentenceNavigator();
       this.loadSentence(0);
     });
@@ -342,7 +347,10 @@ export class PracticeView {
     if (this.chunksContainer && this.chunksContainer.parentElement && typeof ResizeObserver !== 'undefined') {
       let lastObservedW = 0;
       const roChunks = new ResizeObserver((entries) => {
-        if (appState.currentView === 'practice') {
+        const onPractice = this.router && typeof this.router.getCurrentPage === 'function'
+          ? this.router.getCurrentPage() === 'practice'
+          : true;
+        if (onPractice) {
           const entry = entries[0];
           const currentW = entry ? Math.round(entry.contentRect.width) : 0;
           if (currentW > 0 && Math.abs(currentW - lastObservedW) >= 4) {
@@ -441,14 +449,19 @@ export class PracticeView {
     const targetStn = appState.sentenceList[renderedIdx];
     if (!targetStn.userAnswers) targetStn.userAnswers = {};
 
+    let changed = false;
     const inputs = this.chunksContainer.querySelectorAll('.fels-blank-input');
     inputs.forEach((input, fallbackIdx) => {
       const bIdxAttr = input.getAttribute('data-blank-idx');
       const bIdx = (bIdxAttr !== null && !isNaN(parseInt(bIdxAttr, 10))) ? parseInt(bIdxAttr, 10) : fallbackIdx;
-      targetStn.userAnswers[bIdx] = input.value;
+      const next = input.value;
+      if (targetStn.userAnswers[bIdx] !== next) {
+        targetStn.userAnswers[bIdx] = next;
+        changed = true;
+      }
     });
 
-    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+    if (changed && typeof projectService !== 'undefined' && projectService.markDirty) {
       projectService.markDirty();
     }
   }
@@ -458,14 +471,18 @@ export class PracticeView {
     if (!appState.sentenceList || idx < 0 || idx >= appState.sentenceList.length) return;
     appState.activeSentenceIndex = idx;
     const targetStn = appState.sentenceList[idx];
+    const loadToken = (this.sentenceLoadToken = (this.sentenceLoadToken || 0) + 1);
 
     // Compute or fetch 3x1 chunk result
     if (!targetStn.result) {
       if (aiService.hasKey()) {
         try {
           toast.show(`🤖 문장 S${idx + 1} AI 3x1 해석 생성 중...`);
-          targetStn.result = await aiService.translate(targetStn.text);
+          const translated = await aiService.translate(targetStn.text);
+          if (loadToken !== this.sentenceLoadToken) return;
+          targetStn.result = translated || this.ruleEngine.process(targetStn.text);
         } catch (e) {
+          if (loadToken !== this.sentenceLoadToken) return;
           console.warn('AI translation failed, using rule engine:', e);
           if (e.isQuotaExceeded || (e.message && (e.message.includes('Quota') || e.message.includes('429')))) {
             toast.show('⚠️ Gemini API 사용량 한도가 일시 초과되어 내장 규칙 엔진 결과를 적용합니다.');
@@ -475,6 +492,10 @@ export class PracticeView {
       } else {
         targetStn.result = this.ruleEngine.process(targetStn.text);
       }
+    }
+    if (loadToken !== this.sentenceLoadToken) return;
+    if (!targetStn.result) {
+      targetStn.result = this.ruleEngine.process(targetStn.text);
     }
 
     // Sanity check: Ensure this sentence does not contain foreign chunks belonging to other sentences
@@ -2005,6 +2026,24 @@ export class PracticeView {
 
   onDeactivated() {
     this.saveCurrentSentenceAnswers();
+
+    // Silently tear down every timer that could restart playback on another page
+    if (this.isPlayingAllSentences) {
+      this.isPlayingAllSentences = false;
+      this.updatePlayAllSentencesButtonUI(false);
+    }
+    clearTimeout(this.playAllTimer);
+    this.playAllTimer = null;
+    if (this.playAllEndHandler && this.nativeAudioPlayer) {
+      this.nativeAudioPlayer.removeEventListener('timeupdate', this.playAllEndHandler);
+      this.playAllEndHandler = null;
+    }
+    if (this.looperEngine && typeof this.looperEngine.reset === 'function') {
+      this.looperEngine.reset();
+    }
+    if (typeof this.closeTranslationModal === 'function') {
+      this.closeTranslationModal();
+    }
     if (this.nativeAudioPlayer && typeof this.nativeAudioPlayer.pause === 'function') {
       try {
         if (!this.nativeAudioPlayer.paused) {

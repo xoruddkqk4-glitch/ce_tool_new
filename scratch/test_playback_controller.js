@@ -63,12 +63,12 @@ p.currentTime = 4;
 await wait(60);
 assert.strictEqual(e3, 0);
 
-// 6. play() rejection propagates to the caller (callers fall back to TTS)
+// 6. play() rejection must not surface as an unhandled rejection (resolves false)
 const bad = makePlayer();
 bad.play = () => Promise.reject(new Error('NotAllowedError'));
 const c2 = new PlaybackController();
 c2.player = bad;
-await assert.rejects(c2.playSegment(0, 1, { owner: 'input' }));
+assert.strictEqual(await c2.playSegment(0, 1, { owner: 'input' }), false);
 
 // 7. No player → resolves false (mock DOM safety)
 const c3 = new PlaybackController();

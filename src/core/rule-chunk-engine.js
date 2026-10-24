@@ -5,6 +5,11 @@
 
 import { PRESETS, PREPOSITIONS, ADVERBS, DICTIONARY, VERB_MAP, PRONOUNS } from '../config/fels-dict.js';
 
+/** Own-property lookup so prototype keys like `constructor` never match a dictionary. */
+function ownGet(dict, key) {
+  return (dict && Object.prototype.hasOwnProperty.call(dict, key)) ? dict[key] : undefined;
+}
+
 export class RuleChunkEngine {
   constructor() {}
 
@@ -78,24 +83,30 @@ export class RuleChunkEngine {
       // 2. Transliteration / Dictionary / English tokens
       const enTokens = cleanStr(enText).split(/\s+/).filter(Boolean);
       for (const token of enTokens) {
-        if (DICTIONARY && DICTIONARY[token]) {
-          const koVal = cleanStr(DICTIONARY[token]);
-          if (cleanKo.includes(koVal) || koVal.includes(cleanKo)) return 12;
+        const dictVal = ownGet(DICTIONARY, token);
+        if (dictVal !== undefined) {
+          const koVal = cleanStr(dictVal);
+          if (koVal && (cleanKo.includes(koVal) || koVal.includes(cleanKo))) return 12;
         }
-        if (VERB_MAP && VERB_MAP[token]) {
-          const vKo = cleanStr(VERB_MAP[token]);
-          if (cleanKo.includes(vKo) || vKo.includes(cleanKo)) return 11;
+        const vObj = ownGet(VERB_MAP, token);
+        if (vObj !== undefined) {
+          const vList = typeof vObj === 'string' ? [vObj] : Object.values(vObj || {});
+          for (const vVal of vList) {
+            const vKo = cleanStr(vVal);
+            if (vKo && (cleanKo.includes(vKo) || vKo.includes(cleanKo))) return 11;
+          }
         }
-        if (PRONOUNS && PRONOUNS[token]) {
-          const pObj = PRONOUNS[token];
+        const pObj = ownGet(PRONOUNS, token);
+        if (pObj !== undefined) {
           const pList = typeof pObj === 'string' ? [pObj] : Object.values(pObj);
           for (const pVal of pList) {
             const pKo = cleanStr(pVal);
             if (pKo && (cleanKo.includes(pKo) || pKo.includes(cleanKo))) return 11;
           }
         }
-        if (ADVERBS && ADVERBS[token]) {
-          const aKo = cleanStr(ADVERBS[token]);
+        const aVal = ownGet(ADVERBS, token);
+        if (aVal !== undefined) {
+          const aKo = cleanStr(aVal);
           if (aKo && (cleanKo.includes(aKo) || aKo.includes(cleanKo))) return 11;
         }
         if (cleanKo.includes(token)) return 8;
@@ -215,7 +226,7 @@ export class RuleChunkEngine {
       }
 
       // Prepositional Phrase
-      if (PREPOSITIONS[word]) {
+      if (ownGet(PREPOSITIONS, word) !== undefined) {
         const prepChunk = this.extractPrepositionalPhrase(words, i);
         chunks.push(prepChunk);
         i = prepChunk.nextIndex;
@@ -223,10 +234,11 @@ export class RuleChunkEngine {
       }
 
       // Adverb
-      if (ADVERBS[word]) {
+      const advKo = ownGet(ADVERBS, word);
+      if (advKo !== undefined) {
         chunks.push({
           en: words[i],
-          ko: ADVERBS[word],
+          ko: advKo,
           type: 'adverb'
         });
         i++;
@@ -261,16 +273,17 @@ export class RuleChunkEngine {
     if (startIndex >= words.length) return null;
     const w0 = words[startIndex].toLowerCase();
 
-    if (PRONOUNS[w0]) {
+    const subjPron = ownGet(PRONOUNS, w0);
+    if (subjPron) {
       return {
         en: words[startIndex],
-        ko: PRONOUNS[w0].subj,
+        ko: subjPron.subj,
         type: 'subject',
         nextIndex: startIndex + 1
       };
     }
 
-    if (w0.endsWith('ing') && this.isVerb(w0.slice(0, -3)) || VERB_MAP[w0]) {
+    if (w0.endsWith('ing') && this.isVerb(w0.slice(0, -3)) || ownGet(VERB_MAP, w0)) {
       let endIndex = startIndex + 1;
       while (endIndex < words.length && !this.isMainVerb(words[endIndex])) {
         endIndex++;
@@ -450,9 +463,12 @@ export class RuleChunkEngine {
     const parts = tokens.map(t => {
       const l = t.toLowerCase();
       if (['the', 'a', 'an'].includes(l)) return '';
-      if (DICTIONARY[l]) return DICTIONARY[l];
-      if (VERB_MAP[l]) return VERB_MAP[l].base.replace(/다$/, '');
-      if (PRONOUNS[l]) return PRONOUNS[l].poss;
+      const d = ownGet(DICTIONARY, l);
+      if (d !== undefined) return d;
+      const v = ownGet(VERB_MAP, l);
+      if (v && v.base) return v.base.replace(/다$/, '');
+      const p = ownGet(PRONOUNS, l);
+      if (p) return p.poss;
       return t;
     }).filter(Boolean);
 
@@ -461,12 +477,13 @@ export class RuleChunkEngine {
 
   translateWord(w) {
     const lower = w.toLowerCase();
-    return DICTIONARY[lower] || w;
+    const d = ownGet(DICTIONARY, lower);
+    return d !== undefined ? d : w;
   }
 
   isVerb(w) {
     const lower = w.toLowerCase();
-    return !!VERB_MAP[lower] || ['is', 'are', 'was', 'were', 'am'].includes(lower);
+    return ownGet(VERB_MAP, lower) !== undefined || ['is', 'are', 'was', 'were', 'am'].includes(lower);
   }
 
   isMainVerb(w) {
