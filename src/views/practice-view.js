@@ -1910,16 +1910,22 @@ export class PracticeView {
     }
 
     const loop = () => {
+      const onPractice = !this.router || typeof this.router.getCurrentPage !== 'function'
+        || this.router.getCurrentPage() === 'practice';
       if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
-        this.updateAudioProgress();
-        if (this.isLooperActive()) this.looperEngine.checkBoundary();
-        this.drawWaveform();
+        if (onPractice) {
+          this.updateAudioProgress();
+          if (this.isLooperActive()) this.looperEngine.checkBoundary();
+          this.drawWaveform();
+        }
         this.waveformRafId = requestAnimationFrame(loop);
       } else {
         this.isWaveformLoopRunning = false;
         this.waveformRafId = null;
-        this.updateAudioProgress();
-        this.drawWaveform();
+        if (onPractice) {
+          this.updateAudioProgress();
+          this.drawWaveform();
+        }
       }
     };
     this.waveformRafId = requestAnimationFrame(loop);

@@ -168,6 +168,9 @@ export class MemorizeView {
 
     const list = appState.sentenceList;
     if (!list || list.length === 0) {
+      if (this.memorizeStatsBadge) {
+        this.memorizeStatsBadge.textContent = '총 0개 문장';
+      }
       this.canvasContainer.innerHTML = `
         <div class="memorize-empty-state">
           <p>📝 아직 입력된 스크립트가 없습니다.</p>
@@ -468,14 +471,17 @@ export class MemorizeView {
     }
 
     this.isPlayingAll = true;
+    this.playRunId = (this.playRunId || 0) + 1;
+    const runId = this.playRunId;
     this.playCurrentSentenceIndex = 0;
     this.updatePlayAllButtonUI(true);
     toast.show('▶ 전체 스크립트 연속 낭독 재생을 시작합니다.');
-    this.playSentenceInSequence(0);
+    this.playSentenceInSequence(0, runId);
   }
 
   stopPlayAllScript() {
     this.isPlayingAll = false;
+    this.playRunId = (this.playRunId || 0) + 1; // invalidate any pending setTimeout / onEnd chain
     this.updatePlayAllButtonUI(false);
     playbackController.stop();
     if ('speechSynthesis' in window) {
@@ -507,8 +513,8 @@ export class MemorizeView {
     }
   }
 
-  playSentenceInSequence(idx) {
-    if (!this.isPlayingAll) return;
+  playSentenceInSequence(idx, runId = this.playRunId) {
+    if (!this.isPlayingAll || runId !== this.playRunId) return;
     const list = appState.sentenceList;
     if (idx >= list.length) {
       this.stopPlayAllScript();
@@ -520,6 +526,13 @@ export class MemorizeView {
     this.highlightActiveSentenceRow(idx);
 
     const targetStn = list[idx];
+    const advance = () => {
+      setTimeout(() => {
+        if (this.isPlayingAll && runId === this.playRunId) {
+          this.playSentenceInSequence(idx + 1, runId);
+        }
+      }, 400);
+    };
 
     // Real audio play (owner 'memorize' → the Practice looper no longer pauses it at S1's boundary)
     if (this.canPlayUploadedAudio()) {
@@ -529,33 +542,25 @@ export class MemorizeView {
       playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
       playbackController.playSegment(stnStart, stnEnd, {
         owner: 'memorize',
-        onEnd: () => {
-          // 0.4s pause between sentences
-          setTimeout(() => {
-            if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
-          }, 400);
-        }
+        onEnd: advance
       }).catch(e => {
         console.error(e);
-        if (this.isPlayingAll) this.stopPlayAllScript();
+        if (this.isPlayingAll && runId === this.playRunId) this.stopPlayAllScript();
       });
+    } else if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(targetStn.text);
+      utter.lang = 'en-US';
+      utter.rate = 0.95;
+      utter.onend = advance;
+      utter.onerror = (ev) => {
+        if (ev && (ev.error === 'canceled' || ev.error === 'interrupted')) return;
+        if (this.isPlayingAll && runId === this.playRunId) advance();
+      };
+      window.speechSynthesis.speak(utter);
     } else {
-      // Speech Synthesis
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(targetStn.text);
-        utter.lang = 'en-US';
-        utter.rate = 0.95;
-        utter.onend = () => {
-          setTimeout(() => {
-            if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
-          }, 400);
-        };
-        utter.onerror = () => {
-          if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
-        };
-        window.speechSynthesis.speak(utter);
-      }
+      this.stopPlayAllScript();
+      toast.show('⚠️ 이 환경에서는 음성 재생을 지원하지 않습니다.');
     }
   }
 

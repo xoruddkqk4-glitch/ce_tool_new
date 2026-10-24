@@ -4,8 +4,14 @@
  */
 
 const memStorage = {};
+/** Keys whose last successful write went to memStorage (localStorage quota/private mode). */
+const memPreferred = new Set();
 
 function safeGet(key, def = '') {
+  // Prefer in-memory value when localStorage.setItem previously failed for this key
+  if (memPreferred.has(key) && Object.prototype.hasOwnProperty.call(memStorage, key)) {
+    return memStorage[key];
+  }
   try {
     if (typeof localStorage !== 'undefined') {
       return localStorage.getItem(key) ?? def;
@@ -15,13 +21,17 @@ function safeGet(key, def = '') {
 }
 
 function safeSet(key, val) {
+  const str = String(val);
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, val);
+      localStorage.setItem(key, str);
+      memStorage[key] = str;
+      memPreferred.delete(key);
       return;
     }
   } catch (e) {}
-  memStorage[key] = String(val);
+  memStorage[key] = str;
+  memPreferred.add(key);
 }
 
 /**

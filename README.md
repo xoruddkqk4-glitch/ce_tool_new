@@ -751,3 +751,19 @@ pm run check: 28개 파일 구문 검사 통과.
 pm run build: 단독 번들 빌드 성공 (pp.js 441.0 KB).
   - 
 pm test: 전체 47/47개 테스트 스위트 통과.
+
+## [2026-10-24 15:02] 업데이트 이력 (Commit ID: PENDING_HASH)
+- **수정 내용**:
+  - 코드 리뷰 계획서 3단계(Low) 잔여 항목 이어서 적용.
+  - FELS 아포스트로피 정규화, text-splitter lookbehind 제거, R 단축키(되감기 재생).
+  - 마스터 파형 HiDPI·좌클릭 전용·hover 재그리기 최적화, memorize playRunId, practice 타 페이지 파형 루프 생략.
+  - trimmer Escape/oundRect 폴백, storage 메모리 우선 폴백, setActiveSentenceIndex(NaN) 가드.
+  - input-view markDirty/번역 동시성 3/문장 결합·분리 dataVersion, TTS voices 캐시.
+  - 회귀 테스트 scratch/test_review_fixes_stage3.js 추가, pp.js 재빌드(446.6 KB).
+- **검증 결과**:
+  - 
+pm run check: 28개 파일 구문 검사 통과.
+  - 
+pm run build: 단독 번들 빌드 성공.
+  - 
+pm test: 전체 48/48개 테스트 스위트 통과.

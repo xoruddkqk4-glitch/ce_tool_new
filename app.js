@@ -490,8 +490,12 @@ function splitIntoSentences(text, options = {}) {
     const re = new RegExp('\\b' + abbr.replace(/\./g, '\\.') + '\\.', 'gi');
     processed = processed.replace(re, match => match.slice(0, -1) + '__ABBR_DOT__');
   });
-  // Also split after a closing quote/paren that follows the terminator: `He said, "Hi." Then...`
-  const parts = processed.split(/(?<=[.?!]["'”’)]?)\s+|\n+/);
+  // Split after terminator (+ optional closing quote/paren) without lookbehind
+  // (Safari < 16.4 cannot parse lookbehind and would fail to load the whole IIFE bundle)
+  const withBreaks = processed
+    .replace(/([.?!]["'”’)]?)[ \t]+/g, '$1\n')
+    .replace(/\r\n/g, '\n');
+  const parts = withBreaks.split(/\n+/);
   return parts
     .map(p => p.replace(/__ELLIPSIS__/g, '...').replace(/__DECIMAL_DOT__/g, '.').replace(/__ABBR_DOT__/g, '.').trim())
     .map(p => cleanPracticeSentence(p))
@@ -581,17 +585,22 @@ function calculateUniformBlankWidth(chunks) {
   return Math.min(Math.max(maxLen * 11 + 20, 68), 120);
 }
 
+/** Normalize curly / typographic apostrophes to ASCII so don’t === don't. */
+function normalizeApostrophe(s) {
+  return String(s || '').replace(/[\u2018\u2019\u201B\u2032]/g, "'");
+}
+
 function parseTokenPunctuation(token) {
   const match = token.match(/^(.*?)([.,!?;:]*)$/);
   const base = match ? match[1] : token;
   const punct = match ? match[2] : '';
-  const clean = base.toLowerCase().replace(/[^a-z']/g, '');
+  const clean = normalizeApostrophe(base).toLowerCase().replace(/[^a-z']/g, '');
   return { base, punct, clean };
 }
 
 function verifyAnswer(userVal, expectedWord) {
-  const normUser = (userVal || '').trim().toLowerCase();
-  const normExp = (expectedWord || '').trim().toLowerCase();
+  const normUser = normalizeApostrophe(userVal).trim().toLowerCase();
+  const normExp = normalizeApostrophe(expectedWord).trim().toLowerCase();
   return normUser === normExp;
 }
 
@@ -1252,7 +1261,7 @@ class AppState {
   }
 
   setActiveSentenceIndex(idx) {
-    if (idx < 0 || idx >= this.sentenceList.length) return;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= this.sentenceList.length) return;
     this.activeSentenceIndex = idx;
     this.clearLoop();
     this.emit('activeSentenceChanged', {
@@ -1314,8 +1323,14 @@ const appState = new AppState();
  */
 
 const memStorage = {};
+/** Keys whose last successful write went to memStorage (localStorage quota/private mode). */
+const memPreferred = new Set();
 
 function safeGet(key, def = '') {
+  // Prefer in-memory value when localStorage.setItem previously failed for this key
+  if (memPreferred.has(key) && Object.prototype.hasOwnProperty.call(memStorage, key)) {
+    return memStorage[key];
+  }
   try {
     if (typeof localStorage !== 'undefined') {
       return localStorage.getItem(key) ?? def;
@@ -1325,13 +1340,17 @@ function safeGet(key, def = '') {
 }
 
 function safeSet(key, val) {
+  const str = String(val);
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, val);
+      localStorage.setItem(key, str);
+      memStorage[key] = str;
+      memPreferred.delete(key);
       return;
     }
   } catch (e) {}
-  memStorage[key] = String(val);
+  memStorage[key] = str;
+  memPreferred.add(key);
 }
 
 /**
@@ -3310,6 +3329,19 @@ function synthesizeSilentAudioForScript(text, audioCtx) {
   };
 }
 
+let cachedVoices = null;
+function getSpeechVoices() {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return [];
+  if (cachedVoices && cachedVoices.length) return cachedVoices;
+  cachedVoices = window.speechSynthesis.getVoices() || [];
+  if (!cachedVoices.length && typeof window.speechSynthesis.addEventListener === 'function') {
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      cachedVoices = window.speechSynthesis.getVoices() || [];
+    }, { once: true });
+  }
+  return cachedVoices;
+}
+
 /**
  * Speak text via Web Speech API.
  * Usage: speakText(text, 'en-US', 0.95)  or  speakText(text, { lang, rate, onEnd })
@@ -3354,8 +3386,8 @@ function speakText(text, langOrOpts = 'en-US', rateArg = 0.95) {
       finish();
     };
 
-    // Pick authentic voice if available
-    const voices = window.speechSynthesis.getVoices();
+    // Pick authentic voice if available (voices may load async via voiceschanged)
+    const voices = getSpeechVoices();
     if (voices && voices.length) {
       const matchVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang.toLowerCase().split('-')[0]) && (v.name.includes('Natural') || v.name.includes('Google') || !v.localService)) ||
                          voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang.toLowerCase().split('-')[0]));
@@ -3766,6 +3798,9 @@ class MasterWaveformTimeline {
     this.minZoom = 1.0;
     this.maxZoom = 10.0;
     this.baseWidth = 0;
+    this._cssWidth = 0;
+    this._cssHeight = 0;
+    this._dpr = 1;
 
     this.playbackTime = null;
     this.isPlaying = false;
@@ -3844,11 +3879,20 @@ class MasterWaveformTimeline {
     }
   }
 
+  /** CSS-pixel width used for layout/hit-testing (backing store may be larger under HiDPI). */
+  getCssWidth() {
+    return this._cssWidth || this.canvas.clientWidth || this.canvas.width || 800;
+  }
+
+  getCssHeight() {
+    return this._cssHeight || this.canvas.clientHeight || this.canvas.height || 86;
+  }
+
   draw() {
     if (!this.canvas || !this.ctx) return;
     const ctx = this.ctx;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.getCssWidth();
+    const h = this.getCssHeight();
     if (w <= 0 || h <= 0) return;
 
     ctx.clearRect(0, 0, w, h);
@@ -4023,7 +4067,7 @@ class MasterWaveformTimeline {
         const rect = wrap.getBoundingClientRect();
         const mouseViewportX = e.clientX - rect.left;
         const contentX = wrap.scrollLeft + mouseViewportX;
-        const anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+        const anchorTime = (contentX / Math.max(1, this.getCssWidth())) * duration;
 
         const factor = e.deltaY < 0 ? 1.25 : 0.8;
         const nextZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoomLevel * factor));
@@ -4044,18 +4088,33 @@ class MasterWaveformTimeline {
     if (!this.canvas || !this.canvas.parentElement) return;
     const wrap = this.canvas.parentElement;
     const baseW = Math.floor(wrap.clientWidth);
-    if (baseW > 0) {
-      this.baseWidth = baseW;
-      const targetW = Math.round(baseW * this.zoomLevel);
-      if (targetW !== this.canvas.width) {
-        this.canvas.width = targetW;
-        if (this.zoomLevel > 1.0) {
-          this.canvas.style.width = `${targetW}px`;
-        } else {
-          this.canvas.style.width = '100%';
-        }
-        this.draw();
+    if (baseW <= 0) return;
+    this.baseWidth = baseW;
+    const targetW = Math.round(baseW * this.zoomLevel);
+    const attrH = (typeof this.canvas.getAttribute === 'function')
+      ? parseInt(this.canvas.getAttribute('height'), 10)
+      : NaN;
+    const cssH = this.canvas.clientHeight || (Number.isFinite(attrH) ? attrH : 0) || 86;
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+    const pixelW = Math.round(targetW * dpr);
+    const pixelH = Math.round(cssH * dpr);
+    const sizeChanged = pixelW !== this.canvas.width || pixelH !== this.canvas.height
+      || this._cssWidth !== targetW || this._dpr !== dpr;
+    this._cssWidth = targetW;
+    this._cssHeight = cssH;
+    this._dpr = dpr;
+    if (this.zoomLevel > 1.0) {
+      this.canvas.style.width = `${targetW}px`;
+    } else {
+      this.canvas.style.width = '100%';
+    }
+    if (sizeChanged) {
+      this.canvas.width = pixelW;
+      this.canvas.height = pixelH;
+      if (this.ctx && typeof this.ctx.setTransform === 'function') {
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
+      this.draw();
     }
   }
 
@@ -4077,13 +4136,14 @@ class MasterWaveformTimeline {
     if (anchorTime === null && wrap) {
       const mouseViewportX = wrap.clientWidth / 2;
       const contentX = wrap.scrollLeft + mouseViewportX;
-      anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+      anchorTime = (contentX / Math.max(1, this.getCssWidth())) * duration;
       anchorViewportX = mouseViewportX;
     }
 
     this.zoomLevel = clamped;
     const newWidth = Math.round(baseW * this.zoomLevel);
-    this.canvas.width = newWidth;
+    this._cssWidth = 0; // force HiDPI sync
+    this.syncCanvasSize();
 
     if (this.zoomLevel > 1.0) {
       this.canvas.style.width = `${newWidth}px`;
@@ -4156,6 +4216,13 @@ class MasterWaveformTimeline {
       }
     }
 
+    const prev = this.hoverInfo;
+    const same = prev && found
+      && prev.type === found.type
+      && prev.index === found.index
+      && prev.edge === found.edge
+      && prev.listIdx === found.listIdx;
+    const bothNull = !prev && !found;
     this.hoverInfo = found;
     if (found && found.type === 'boundary') {
       this.canvas.style.cursor = 'col-resize';
@@ -4175,10 +4242,12 @@ class MasterWaveformTimeline {
       this.canvas.title = '';
     }
 
-    this.draw();
+    if (!same && !bothNull) this.draw();
   }
 
   handleMouseDown(e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (typeof e.preventDefault === 'function') e.preventDefault();
     if (!this.audioBuffer || !this.sentenceList.length) return;
 
     if (this.hoverInfo && this.hoverInfo.type === 'boundary') {
@@ -4378,7 +4447,7 @@ class MasterWaveformTimeline {
     if (this.zoomLevel > 1.0 && this.audioBuffer && this.canvas && this.canvas.parentElement) {
       const wrap = this.canvas.parentElement;
       const duration = this.audioBuffer.duration;
-      const playheadX = (time / duration) * this.canvas.width;
+      const playheadX = (time / duration) * this.getCssWidth();
       const wrapW = wrap.clientWidth;
       const curScroll = wrap.scrollLeft;
 
@@ -5844,10 +5913,14 @@ class SentenceTrimmerModal {
     ctx.lineTo(x, h);
     ctx.stroke();
 
-    // Top Handle Badge
+    // Top Handle Badge (roundRect falls back to rect on older browsers)
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.roundRect(x - 18, 4, 36, 18, 4);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x - 18, 4, 36, 18, 4);
+    } else {
+      ctx.rect(x - 18, 4, 36, 18);
+    }
     ctx.fill();
 
     ctx.fillStyle = '#ffffff';
@@ -5914,6 +5987,17 @@ class SentenceTrimmerModal {
       this.modalEl.addEventListener('click', (e) => {
         if (e.target === this.modalEl) this.close();
       });
+    }
+
+    // Escape closes the modal while it is open
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      this._onKeyDown = (e) => {
+        if (e.key !== 'Escape') return;
+        if (!this.modalEl || this.modalEl.classList.contains('hidden')) return;
+        e.preventDefault();
+        this.close();
+      };
+      window.addEventListener('keydown', this._onKeyDown);
     }
   }
 
@@ -6327,6 +6411,13 @@ class ShortcutManager {
     if (key === '\\' || key === '¥' || key === '₩') {
       e.preventDefault();
       if (this.handlers.onClearRegion) this.handlers.onClearRegion();
+      return;
+    }
+
+    // 4b. R / r / ㄱ : rewind-and-play (다시 듣기)
+    if (key === 'r' || key === 'R' || key === 'ㄱ') {
+      e.preventDefault();
+      if (this.handlers.onRewindAndPlay) this.handlers.onRewindAndPlay();
       return;
     }
 
@@ -7288,10 +7379,20 @@ class InputView {
       const boundaries = await this.computeSentenceBoundaries(rawSentences);
       if (analysisGen !== this.analysisGen) return false;
 
-      // Parallel fetch natural Korean translation for all sentences
-      const naturalTranslations = await Promise.all(
-        rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
-      );
+      // Fetch natural Korean with a small concurrency pool (avoids bursting into 429 on long scripts)
+      const naturalTranslations = new Array(rawSentences.length);
+      {
+        const CONCURRENCY = 3;
+        let nextIdx = 0;
+        const worker = async () => {
+          while (nextIdx < rawSentences.length) {
+            const i = nextIdx++;
+            naturalTranslations[i] = await aiService.translateNatural(rawSentences[i]).catch(() => null);
+            if (analysisGen !== this.analysisGen) return;
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rawSentences.length) }, () => worker()));
+      }
       if (analysisGen !== this.analysisGen) return false;
 
       const sentenceList = rawSentences.map((stnText, idx) => {
@@ -7443,6 +7544,10 @@ class InputView {
     appState.sentenceList.splice(idx, 1);
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+    appState.dataVersion++;
+    if (appState.activeSentenceIndex >= appState.sentenceList.length) {
+      appState.activeSentenceIndex = Math.max(0, appState.sentenceList.length - 1);
+    }
     projectService.markDirty();
 
     this.renderParsedResults({
@@ -7525,6 +7630,7 @@ class InputView {
     appState.sentenceList.splice(idx, 1, newStn1, newStn2);
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+    appState.dataVersion++;
     projectService.markDirty();
 
     this.renderParsedResults({
@@ -7633,6 +7739,9 @@ class InputView {
           }
         }
 
+        if (typeof projectService !== 'undefined' && projectService.markDirty) {
+          projectService.markDirty();
+        }
         toast.show('✨ 자연스러운 해석 및 직독직해가 업데이트되었습니다!');
       } else {
         toast.show('⚠️ 번역 결과를 가져오지 못했습니다.');
@@ -7933,6 +8042,9 @@ class InputView {
         naturalInput.addEventListener('input', () => {
           if (!stn.result) stn.result = {};
           stn.result.natural = naturalInput.value;
+          if (typeof projectService !== 'undefined' && projectService.markDirty) {
+            projectService.markDirty();
+          }
         });
         naturalInput.addEventListener('change', () => {
           if (!stn.result) stn.result = {};
@@ -7946,6 +8058,9 @@ class InputView {
               directInput.value = this.getDirectChunkString(stn.result.chunks);
             }
             this.scheduleDirectChunkAiRefinement(stn, directInput);
+          }
+          if (typeof projectService !== 'undefined' && projectService.markDirty) {
+            projectService.markDirty();
           }
         });
       }
@@ -8222,6 +8337,9 @@ class InputView {
 
     stn.result.chunk_text = chunks.map(c => c.ko).join(' || ');
     stn.result.direct = chunks.map(c => c.ko).join(' / ');
+    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+      projectService.markDirty();
+    }
     toast.show('🧩 직독직해 해석이 저장되었습니다.');
     return true;
   }
@@ -8251,6 +8369,9 @@ class InputView {
 
     // Sync global script text
     appState.scriptText = (appState.sentenceList || []).map(s => s.text).join(' ');
+    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+      projectService.markDirty();
+    }
     toast.show(`📝 문장 S${stn.index + 1} 원문이 수정되었습니다.`);
 
     // Auto-translate natural in background and regenerate 직독직해
@@ -10671,16 +10792,22 @@ class PracticeView {
     }
 
     const loop = () => {
+      const onPractice = !this.router || typeof this.router.getCurrentPage !== 'function'
+        || this.router.getCurrentPage() === 'practice';
       if (this.nativeAudioPlayer && !this.nativeAudioPlayer.paused && !this.nativeAudioPlayer.ended) {
-        this.updateAudioProgress();
-        if (this.isLooperActive()) this.looperEngine.checkBoundary();
-        this.drawWaveform();
+        if (onPractice) {
+          this.updateAudioProgress();
+          if (this.isLooperActive()) this.looperEngine.checkBoundary();
+          this.drawWaveform();
+        }
         this.waveformRafId = requestAnimationFrame(loop);
       } else {
         this.isWaveformLoopRunning = false;
         this.waveformRafId = null;
-        this.updateAudioProgress();
-        this.drawWaveform();
+        if (onPractice) {
+          this.updateAudioProgress();
+          this.drawWaveform();
+        }
       }
     };
     this.waveformRafId = requestAnimationFrame(loop);
@@ -10995,6 +11122,9 @@ class MemorizeView {
 
     const list = appState.sentenceList;
     if (!list || list.length === 0) {
+      if (this.memorizeStatsBadge) {
+        this.memorizeStatsBadge.textContent = '총 0개 문장';
+      }
       this.canvasContainer.innerHTML = `
         <div class="memorize-empty-state">
           <p>📝 아직 입력된 스크립트가 없습니다.</p>
@@ -11295,14 +11425,17 @@ class MemorizeView {
     }
 
     this.isPlayingAll = true;
+    this.playRunId = (this.playRunId || 0) + 1;
+    const runId = this.playRunId;
     this.playCurrentSentenceIndex = 0;
     this.updatePlayAllButtonUI(true);
     toast.show('▶ 전체 스크립트 연속 낭독 재생을 시작합니다.');
-    this.playSentenceInSequence(0);
+    this.playSentenceInSequence(0, runId);
   }
 
   stopPlayAllScript() {
     this.isPlayingAll = false;
+    this.playRunId = (this.playRunId || 0) + 1; // invalidate any pending setTimeout / onEnd chain
     this.updatePlayAllButtonUI(false);
     playbackController.stop();
     if ('speechSynthesis' in window) {
@@ -11334,8 +11467,8 @@ class MemorizeView {
     }
   }
 
-  playSentenceInSequence(idx) {
-    if (!this.isPlayingAll) return;
+  playSentenceInSequence(idx, runId = this.playRunId) {
+    if (!this.isPlayingAll || runId !== this.playRunId) return;
     const list = appState.sentenceList;
     if (idx >= list.length) {
       this.stopPlayAllScript();
@@ -11347,6 +11480,13 @@ class MemorizeView {
     this.highlightActiveSentenceRow(idx);
 
     const targetStn = list[idx];
+    const advance = () => {
+      setTimeout(() => {
+        if (this.isPlayingAll && runId === this.playRunId) {
+          this.playSentenceInSequence(idx + 1, runId);
+        }
+      }, 400);
+    };
 
     // Real audio play (owner 'memorize' → the Practice looper no longer pauses it at S1's boundary)
     if (this.canPlayUploadedAudio()) {
@@ -11356,33 +11496,25 @@ class MemorizeView {
       playbackController.setSource(appState.uploadedAudioUrl, { muted: false });
       playbackController.playSegment(stnStart, stnEnd, {
         owner: 'memorize',
-        onEnd: () => {
-          // 0.4s pause between sentences
-          setTimeout(() => {
-            if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
-          }, 400);
-        }
+        onEnd: advance
       }).catch(e => {
         console.error(e);
-        if (this.isPlayingAll) this.stopPlayAllScript();
+        if (this.isPlayingAll && runId === this.playRunId) this.stopPlayAllScript();
       });
+    } else if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(targetStn.text);
+      utter.lang = 'en-US';
+      utter.rate = 0.95;
+      utter.onend = advance;
+      utter.onerror = (ev) => {
+        if (ev && (ev.error === 'canceled' || ev.error === 'interrupted')) return;
+        if (this.isPlayingAll && runId === this.playRunId) advance();
+      };
+      window.speechSynthesis.speak(utter);
     } else {
-      // Speech Synthesis
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(targetStn.text);
-        utter.lang = 'en-US';
-        utter.rate = 0.95;
-        utter.onend = () => {
-          setTimeout(() => {
-            if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
-          }, 400);
-        };
-        utter.onerror = () => {
-          if (this.isPlayingAll) this.playSentenceInSequence(idx + 1);
-        };
-        window.speechSynthesis.speak(utter);
-      }
+      this.stopPlayAllScript();
+      toast.show('⚠️ 이 환경에서는 음성 재생을 지원하지 않습니다.');
     }
   }
 

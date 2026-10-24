@@ -50,8 +50,12 @@ export function splitIntoSentences(text, options = {}) {
     const re = new RegExp('\\b' + abbr.replace(/\./g, '\\.') + '\\.', 'gi');
     processed = processed.replace(re, match => match.slice(0, -1) + '__ABBR_DOT__');
   });
-  // Also split after a closing quote/paren that follows the terminator: `He said, "Hi." Then...`
-  const parts = processed.split(/(?<=[.?!]["'”’)]?)\s+|\n+/);
+  // Split after terminator (+ optional closing quote/paren) without lookbehind
+  // (Safari < 16.4 cannot parse lookbehind and would fail to load the whole IIFE bundle)
+  const withBreaks = processed
+    .replace(/([.?!]["'”’)]?)[ \t]+/g, '$1\n')
+    .replace(/\r\n/g, '\n');
+  const parts = withBreaks.split(/\n+/);
   return parts
     .map(p => p.replace(/__ELLIPSIS__/g, '...').replace(/__DECIMAL_DOT__/g, '.').replace(/__ABBR_DOT__/g, '.').trim())
     .map(p => cleanPracticeSentence(p))

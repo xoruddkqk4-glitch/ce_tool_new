@@ -19,16 +19,21 @@ export function calculateUniformBlankWidth(chunks) {
   return Math.min(Math.max(maxLen * 11 + 20, 68), 120);
 }
 
+/** Normalize curly / typographic apostrophes to ASCII so don’t === don't. */
+function normalizeApostrophe(s) {
+  return String(s || '').replace(/[\u2018\u2019\u201B\u2032]/g, "'");
+}
+
 export function parseTokenPunctuation(token) {
   const match = token.match(/^(.*?)([.,!?;:]*)$/);
   const base = match ? match[1] : token;
   const punct = match ? match[2] : '';
-  const clean = base.toLowerCase().replace(/[^a-z']/g, '');
+  const clean = normalizeApostrophe(base).toLowerCase().replace(/[^a-z']/g, '');
   return { base, punct, clean };
 }
 
 export function verifyAnswer(userVal, expectedWord) {
-  const normUser = (userVal || '').trim().toLowerCase();
-  const normExp = (expectedWord || '').trim().toLowerCase();
+  const normUser = normalizeApostrophe(userVal).trim().toLowerCase();
+  const normExp = normalizeApostrophe(expectedWord).trim().toLowerCase();
   return normUser === normExp;
 }

@@ -28,6 +28,9 @@ export class MasterWaveformTimeline {
     this.minZoom = 1.0;
     this.maxZoom = 10.0;
     this.baseWidth = 0;
+    this._cssWidth = 0;
+    this._cssHeight = 0;
+    this._dpr = 1;
 
     this.playbackTime = null;
     this.isPlaying = false;
@@ -106,11 +109,20 @@ export class MasterWaveformTimeline {
     }
   }
 
+  /** CSS-pixel width used for layout/hit-testing (backing store may be larger under HiDPI). */
+  getCssWidth() {
+    return this._cssWidth || this.canvas.clientWidth || this.canvas.width || 800;
+  }
+
+  getCssHeight() {
+    return this._cssHeight || this.canvas.clientHeight || this.canvas.height || 86;
+  }
+
   draw() {
     if (!this.canvas || !this.ctx) return;
     const ctx = this.ctx;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.getCssWidth();
+    const h = this.getCssHeight();
     if (w <= 0 || h <= 0) return;
 
     ctx.clearRect(0, 0, w, h);
@@ -285,7 +297,7 @@ export class MasterWaveformTimeline {
         const rect = wrap.getBoundingClientRect();
         const mouseViewportX = e.clientX - rect.left;
         const contentX = wrap.scrollLeft + mouseViewportX;
-        const anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+        const anchorTime = (contentX / Math.max(1, this.getCssWidth())) * duration;
 
         const factor = e.deltaY < 0 ? 1.25 : 0.8;
         const nextZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoomLevel * factor));
@@ -306,18 +318,33 @@ export class MasterWaveformTimeline {
     if (!this.canvas || !this.canvas.parentElement) return;
     const wrap = this.canvas.parentElement;
     const baseW = Math.floor(wrap.clientWidth);
-    if (baseW > 0) {
-      this.baseWidth = baseW;
-      const targetW = Math.round(baseW * this.zoomLevel);
-      if (targetW !== this.canvas.width) {
-        this.canvas.width = targetW;
-        if (this.zoomLevel > 1.0) {
-          this.canvas.style.width = `${targetW}px`;
-        } else {
-          this.canvas.style.width = '100%';
-        }
-        this.draw();
+    if (baseW <= 0) return;
+    this.baseWidth = baseW;
+    const targetW = Math.round(baseW * this.zoomLevel);
+    const attrH = (typeof this.canvas.getAttribute === 'function')
+      ? parseInt(this.canvas.getAttribute('height'), 10)
+      : NaN;
+    const cssH = this.canvas.clientHeight || (Number.isFinite(attrH) ? attrH : 0) || 86;
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+    const pixelW = Math.round(targetW * dpr);
+    const pixelH = Math.round(cssH * dpr);
+    const sizeChanged = pixelW !== this.canvas.width || pixelH !== this.canvas.height
+      || this._cssWidth !== targetW || this._dpr !== dpr;
+    this._cssWidth = targetW;
+    this._cssHeight = cssH;
+    this._dpr = dpr;
+    if (this.zoomLevel > 1.0) {
+      this.canvas.style.width = `${targetW}px`;
+    } else {
+      this.canvas.style.width = '100%';
+    }
+    if (sizeChanged) {
+      this.canvas.width = pixelW;
+      this.canvas.height = pixelH;
+      if (this.ctx && typeof this.ctx.setTransform === 'function') {
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
+      this.draw();
     }
   }
 
@@ -339,13 +366,14 @@ export class MasterWaveformTimeline {
     if (anchorTime === null && wrap) {
       const mouseViewportX = wrap.clientWidth / 2;
       const contentX = wrap.scrollLeft + mouseViewportX;
-      anchorTime = (contentX / Math.max(1, this.canvas.width)) * duration;
+      anchorTime = (contentX / Math.max(1, this.getCssWidth())) * duration;
       anchorViewportX = mouseViewportX;
     }
 
     this.zoomLevel = clamped;
     const newWidth = Math.round(baseW * this.zoomLevel);
-    this.canvas.width = newWidth;
+    this._cssWidth = 0; // force HiDPI sync
+    this.syncCanvasSize();
 
     if (this.zoomLevel > 1.0) {
       this.canvas.style.width = `${newWidth}px`;
@@ -418,6 +446,13 @@ export class MasterWaveformTimeline {
       }
     }
 
+    const prev = this.hoverInfo;
+    const same = prev && found
+      && prev.type === found.type
+      && prev.index === found.index
+      && prev.edge === found.edge
+      && prev.listIdx === found.listIdx;
+    const bothNull = !prev && !found;
     this.hoverInfo = found;
     if (found && found.type === 'boundary') {
       this.canvas.style.cursor = 'col-resize';
@@ -437,10 +472,12 @@ export class MasterWaveformTimeline {
       this.canvas.title = '';
     }
 
-    this.draw();
+    if (!same && !bothNull) this.draw();
   }
 
   handleMouseDown(e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (typeof e.preventDefault === 'function') e.preventDefault();
     if (!this.audioBuffer || !this.sentenceList.length) return;
 
     if (this.hoverInfo && this.hoverInfo.type === 'boundary') {
@@ -640,7 +677,7 @@ export class MasterWaveformTimeline {
     if (this.zoomLevel > 1.0 && this.audioBuffer && this.canvas && this.canvas.parentElement) {
       const wrap = this.canvas.parentElement;
       const duration = this.audioBuffer.duration;
-      const playheadX = (time / duration) * this.canvas.width;
+      const playheadX = (time / duration) * this.getCssWidth();
       const wrapW = wrap.clientWidth;
       const curScroll = wrap.scrollLeft;
 

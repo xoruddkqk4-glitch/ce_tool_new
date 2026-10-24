@@ -226,10 +226,14 @@ export class SentenceTrimmerModal {
     ctx.lineTo(x, h);
     ctx.stroke();
 
-    // Top Handle Badge
+    // Top Handle Badge (roundRect falls back to rect on older browsers)
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.roundRect(x - 18, 4, 36, 18, 4);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x - 18, 4, 36, 18, 4);
+    } else {
+      ctx.rect(x - 18, 4, 36, 18);
+    }
     ctx.fill();
 
     ctx.fillStyle = '#ffffff';
@@ -296,6 +300,17 @@ export class SentenceTrimmerModal {
       this.modalEl.addEventListener('click', (e) => {
         if (e.target === this.modalEl) this.close();
       });
+    }
+
+    // Escape closes the modal while it is open
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      this._onKeyDown = (e) => {
+        if (e.key !== 'Escape') return;
+        if (!this.modalEl || this.modalEl.classList.contains('hidden')) return;
+        e.preventDefault();
+        this.close();
+      };
+      window.addEventListener('keydown', this._onKeyDown);
     }
   }
 

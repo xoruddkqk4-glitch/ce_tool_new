@@ -238,6 +238,13 @@ export class ShortcutManager {
       return;
     }
 
+    // 4b. R / r / ㄱ : rewind-and-play (다시 듣기)
+    if (key === 'r' || key === 'R' || key === 'ㄱ') {
+      e.preventDefault();
+      if (this.handlers.onRewindAndPlay) this.handlers.onRewindAndPlay();
+      return;
+    }
+
     // 5. F6 / ArrowLeft : prevSentence (앞문장으로 이동)
     if (key === 'F6' || key === 'ArrowLeft') {
       e.preventDefault();

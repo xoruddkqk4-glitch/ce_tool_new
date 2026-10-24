@@ -93,6 +93,19 @@ export function synthesizeSilentAudioForScript(text, audioCtx) {
   };
 }
 
+let cachedVoices = null;
+function getSpeechVoices() {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return [];
+  if (cachedVoices && cachedVoices.length) return cachedVoices;
+  cachedVoices = window.speechSynthesis.getVoices() || [];
+  if (!cachedVoices.length && typeof window.speechSynthesis.addEventListener === 'function') {
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      cachedVoices = window.speechSynthesis.getVoices() || [];
+    }, { once: true });
+  }
+  return cachedVoices;
+}
+
 /**
  * Speak text via Web Speech API.
  * Usage: speakText(text, 'en-US', 0.95)  or  speakText(text, { lang, rate, onEnd })
@@ -137,8 +150,8 @@ export function speakText(text, langOrOpts = 'en-US', rateArg = 0.95) {
       finish();
     };
 
-    // Pick authentic voice if available
-    const voices = window.speechSynthesis.getVoices();
+    // Pick authentic voice if available (voices may load async via voiceschanged)
+    const voices = getSpeechVoices();
     if (voices && voices.length) {
       const matchVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang.toLowerCase().split('-')[0]) && (v.name.includes('Natural') || v.name.includes('Google') || !v.localService)) ||
                          voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang.toLowerCase().split('-')[0]));

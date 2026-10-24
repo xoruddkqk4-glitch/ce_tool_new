@@ -898,10 +898,20 @@ export class InputView {
       const boundaries = await this.computeSentenceBoundaries(rawSentences);
       if (analysisGen !== this.analysisGen) return false;
 
-      // Parallel fetch natural Korean translation for all sentences
-      const naturalTranslations = await Promise.all(
-        rawSentences.map(stnText => aiService.translateNatural(stnText).catch(() => null))
-      );
+      // Fetch natural Korean with a small concurrency pool (avoids bursting into 429 on long scripts)
+      const naturalTranslations = new Array(rawSentences.length);
+      {
+        const CONCURRENCY = 3;
+        let nextIdx = 0;
+        const worker = async () => {
+          while (nextIdx < rawSentences.length) {
+            const i = nextIdx++;
+            naturalTranslations[i] = await aiService.translateNatural(rawSentences[i]).catch(() => null);
+            if (analysisGen !== this.analysisGen) return;
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rawSentences.length) }, () => worker()));
+      }
       if (analysisGen !== this.analysisGen) return false;
 
       const sentenceList = rawSentences.map((stnText, idx) => {
@@ -1053,6 +1063,10 @@ export class InputView {
     appState.sentenceList.splice(idx, 1);
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+    appState.dataVersion++;
+    if (appState.activeSentenceIndex >= appState.sentenceList.length) {
+      appState.activeSentenceIndex = Math.max(0, appState.sentenceList.length - 1);
+    }
     projectService.markDirty();
 
     this.renderParsedResults({
@@ -1135,6 +1149,7 @@ export class InputView {
     appState.sentenceList.splice(idx, 1, newStn1, newStn2);
     appState.sentenceList.forEach((s, i) => { s.index = i; });
     appState.scriptText = appState.sentenceList.map(s => s.text).join(' ');
+    appState.dataVersion++;
     projectService.markDirty();
 
     this.renderParsedResults({
@@ -1243,6 +1258,9 @@ export class InputView {
           }
         }
 
+        if (typeof projectService !== 'undefined' && projectService.markDirty) {
+          projectService.markDirty();
+        }
         toast.show('✨ 자연스러운 해석 및 직독직해가 업데이트되었습니다!');
       } else {
         toast.show('⚠️ 번역 결과를 가져오지 못했습니다.');
@@ -1543,6 +1561,9 @@ export class InputView {
         naturalInput.addEventListener('input', () => {
           if (!stn.result) stn.result = {};
           stn.result.natural = naturalInput.value;
+          if (typeof projectService !== 'undefined' && projectService.markDirty) {
+            projectService.markDirty();
+          }
         });
         naturalInput.addEventListener('change', () => {
           if (!stn.result) stn.result = {};
@@ -1556,6 +1577,9 @@ export class InputView {
               directInput.value = this.getDirectChunkString(stn.result.chunks);
             }
             this.scheduleDirectChunkAiRefinement(stn, directInput);
+          }
+          if (typeof projectService !== 'undefined' && projectService.markDirty) {
+            projectService.markDirty();
           }
         });
       }
@@ -1832,6 +1856,9 @@ export class InputView {
 
     stn.result.chunk_text = chunks.map(c => c.ko).join(' || ');
     stn.result.direct = chunks.map(c => c.ko).join(' / ');
+    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+      projectService.markDirty();
+    }
     toast.show('🧩 직독직해 해석이 저장되었습니다.');
     return true;
   }
@@ -1861,6 +1888,9 @@ export class InputView {
 
     // Sync global script text
     appState.scriptText = (appState.sentenceList || []).map(s => s.text).join(' ');
+    if (typeof projectService !== 'undefined' && projectService.markDirty) {
+      projectService.markDirty();
+    }
     toast.show(`📝 문장 S${stn.index + 1} 원문이 수정되었습니다.`);
 
     // Auto-translate natural in background and regenerate 직독직해

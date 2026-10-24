@@ -100,7 +100,7 @@ export class AppState {
   }
 
   setActiveSentenceIndex(idx) {
-    if (idx < 0 || idx >= this.sentenceList.length) return;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= this.sentenceList.length) return;
     this.activeSentenceIndex = idx;
     this.clearLoop();
     this.emit('activeSentenceChanged', {
